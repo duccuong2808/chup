@@ -85,35 +85,44 @@ impl Overlay {
     }
 
     /// Hiện overlay; `focus` = overlay dưới con trỏ (nhận phím Esc).
+    /// DIB và dòng gợi ý được giữ lại giữa các lần chọn vùng liên tiếp; `release` mới giải phóng.
     pub fn show(&self, focus: bool) {
         let (w, h) = (self.mon.rect.w as i32, self.mon.rect.h as i32);
         let t0 = std::time::Instant::now();
-        let Some(surface) = Surface::new(w, h) else {
-            log::error!("Không cấp được bộ nhớ cho overlay {w}×{h}");
-            return;
-        };
-        let scale = self.mon.scale as f32;
-        let hint = pill(
-            HINT,
-            13.0 * scale,
-            12.0 * scale,
-            6.0 * scale,
-            999.0,
-            Color::rgba(0, 0, 0, 0.7),
-            Color::rgba(255, 255, 255, 1.0),
-        )
-        .map(|s| {
-            let at = Rect::new((w - s.w) / 2, self.s(24.0), s.w as u32, s.h as u32);
-            Sprite { s, at }
-        });
         {
             let mut st = self.st.borrow_mut();
-            *st = State { surface: Some(surface), hint, ..State::default() };
-            paint(&mut st, Rect::new(0, 0, w as u32, h as u32));
-            if let Some(s) = st.surface.as_ref() {
-                s.present(self.hwnd, (self.mon.rect.x, self.mon.rect.y), 255, None);
+            if st.surface.is_none() {
+                st.surface = Surface::new(w, h);
+            }
+            if st.surface.is_none() {
+                log::error!("Không cấp được bộ nhớ cho overlay {w}×{h}");
+                return;
             }
         }
+        let t_alloc = t0.elapsed();
+        if self.st.borrow().hint.is_none() {
+            let k = self.mon.scale as f32;
+            let white = Color::rgba(255, 255, 255, 1.0);
+            let hint = pill(HINT, 13.0 * k, 12.0 * k, 6.0 * k, 999.0, Color::rgba(0, 0, 0, 0.7), white).map(|s| {
+                let at = Rect::new((w - s.w) / 2, self.s(24.0), s.w as u32, s.h as u32);
+                Sprite { s, at }
+            });
+            self.st.borrow_mut().hint = hint;
+        }
+        let t_hint = t0.elapsed();
+        {
+            let mut st = self.st.borrow_mut();
+            st.start = None;
+            st.sel = None;
+            st.label_at = None;
+            st.label_text.clear();
+            paint(&mut st, Rect::new(0, 0, w as u32, h as u32));
+        }
+        let t_paint = t0.elapsed();
+        if let Some(s) = self.st.borrow().surface.as_ref() {
+            s.present(self.hwnd, (self.mon.rect.x, self.mon.rect.y), 255, None);
+        }
+        let t_present = t0.elapsed();
         unsafe {
             let _ = ShowWindow(self.hwnd, if focus { SW_SHOW } else { SW_SHOWNA });
             let _ = SetWindowPos(self.hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
@@ -122,14 +131,34 @@ impl Overlay {
                 let _ = SetFocus(Some(self.hwnd));
             }
         }
-        log::debug!("overlay {} hiện sau {:?}", self.mon.key, t0.elapsed());
+        log::debug!(
+            "overlay {} {w}×{h}: cấp {:?}, gợi ý {:?}, tô {:?}, đẩy {:?}, tổng {:?}",
+            self.mon.key,
+            t_alloc,
+            t_hint - t_alloc,
+            t_paint - t_hint,
+            t_present - t_paint,
+            t0.elapsed()
+        );
     }
 
     pub fn hide(&self) {
         unsafe {
             let _ = ShowWindow(self.hwnd, SW_HIDE);
+            if windows::Win32::UI::Input::KeyboardAndMouse::GetCapture() == self.hwnd {
+                let _ = ReleaseCapture();
+            }
         }
-        // Giải phóng DIB (vài chục MB ở 4K) ngay khi ẩn.
+        let mut st = self.st.borrow_mut();
+        st.start = None;
+        st.sel = None;
+    }
+
+    /// Giải phóng DIB (khoảng 30 MB ở 4K) và bộ đệm chữ. Gọi khi app rảnh.
+    pub fn release(&self) {
+        if unsafe { windows::Win32::UI::WindowsAndMessaging::IsWindowVisible(self.hwnd) }.as_bool() {
+            return;
+        }
         *self.st.borrow_mut() = State::default();
     }
 

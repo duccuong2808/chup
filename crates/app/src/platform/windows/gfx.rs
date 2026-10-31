@@ -343,6 +343,15 @@ fn with_factories<T>(f: impl FnOnce(&Factories) -> T) -> Option<T> {
     })
 }
 
+/// Tạo sẵn factory Direct2D/DirectWrite và nạp font, để lần hiện overlay đầu tiên không chậm.
+pub fn warm_up() {
+    let t0 = std::time::Instant::now();
+    if let Some(f) = Font::new(13.0, false, Align::Leading, false) {
+        let _ = f.measure("Chụp", 100.0);
+    }
+    log::debug!("làm nóng Direct2D/DirectWrite mất {:?}", t0.elapsed());
+}
+
 pub fn rectf(x: f32, y: f32, w: f32, h: f32) -> D2D_RECT_F {
     D2D_RECT_F { left: x, top: y, right: x + w, bottom: y + h }
 }

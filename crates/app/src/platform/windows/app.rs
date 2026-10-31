@@ -200,6 +200,25 @@ impl App {
         self.apply(fx);
     }
 
+    /// App đang rảnh: không chọn vùng, không có frame, Cài đặt đã đóng.
+    pub fn is_idle(&self) -> bool {
+        !self.model.selecting && self.model.mode == FrameMode::Hidden && self.settings.is_none()
+    }
+
+    /// Rảnh đủ lâu: giải phóng DIB của overlay và trả working set lại cho Windows.
+    /// Trang nhớ chỉ bị đưa ra khỏi RAM (không mất dữ liệu); lần dùng sau nạp lại rất nhanh.
+    pub fn trim(&self) {
+        for o in &self.overlays {
+            o.release();
+        }
+        unsafe {
+            let _ = windows::Win32::System::ProcessStatus::EmptyWorkingSet(
+                windows::Win32::System::Threading::GetCurrentProcess(),
+            );
+        }
+        log::debug!("đã trim working set");
+    }
+
     fn with_shot_file(&mut self, id: &str, f: impl FnOnce(&std::path::Path) -> Result<(), String>) -> Vec<Effect> {
         let (path, mut fx) = self.model.ensure_shot_file(id);
         if let Some(p) = path {

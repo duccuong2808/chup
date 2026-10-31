@@ -46,6 +46,11 @@ thread_local! {
 
 const TIMER_RETRY: usize = 1;
 const TIMER_DISPLAY: usize = 2;
+/// Làm nóng Direct2D sau khi khởi động.
+const TIMER_WARM: usize = 3;
+/// Trim working set khi rảnh đủ lâu.
+const TIMER_TRIM: usize = 4;
+const TRIM_AFTER_MS: u32 = 15_000;
 
 /// Cửa sổ ẩn của app: nhận Action, broadcast đổi màn hình, yêu cầu mở Cài đặt từ instance khác.
 struct AppWindow;
@@ -74,16 +79,33 @@ impl Handler for AppWindow {
                 unsafe {
                     let _ = KillTimer(Some(hwnd), wp.0);
                 }
-                if wp.0 == TIMER_DISPLAY {
-                    emit(Action::DisplayChanged);
-                } else {
-                    drain(hwnd);
+                match wp.0 {
+                    TIMER_DISPLAY => emit(Action::DisplayChanged),
+                    TIMER_WARM => {
+                        gfx::warm_up();
+                        arm_trim(hwnd);
+                    }
+                    TIMER_TRIM => APP.with(|cell| {
+                        if let Ok(guard) = cell.try_borrow() {
+                            match guard.as_ref() {
+                                Some(app) if app.is_idle() => app.trim(),
+                                Some(_) => arm_trim(hwnd),
+                                None => {}
+                            }
+                        }
+                    }),
+                    _ => drain(hwnd),
                 }
                 Some(LRESULT(0))
             }
             _ => None,
         }
     }
+}
+
+fn arm_trim(hwnd: HWND) {
+    // SetTimer với cùng id thay thế hẹn giờ cũ: mỗi lần có hoạt động là đếm lại từ đầu.
+    unsafe { SetTimer(Some(hwnd), TIMER_TRIM, TRIM_AFTER_MS, None) };
 }
 
 /// Xử lý hết Action đang chờ. Nếu App đang bận (re-entrancy) thì hẹn lại sau 10 ms.
@@ -103,6 +125,7 @@ fn drain(hwnd: HWND) {
                 app.handle(a);
             }
         }
+        arm_trim(hwnd);
     });
 }
 
@@ -180,6 +203,7 @@ pub fn run() -> i32 {
         emit(Action::Toast(Toast::error(w)));
     }
     log::info!("sẵn sàng");
+    unsafe { SetTimer(Some(app_hwnd), TIMER_WARM, 1000, None) };
 
     let mut msg = MSG::default();
     unsafe {

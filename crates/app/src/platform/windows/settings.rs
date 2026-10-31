@@ -249,6 +249,7 @@ impl Settings {
             )
         })?;
         me.build();
+        me.set_icon();
         SETTINGS_HWND.with(|c| c.set(me.hwnd.0 as isize));
         Ok(me)
     }
@@ -344,6 +345,21 @@ impl Settings {
         let _ = &mut h;
         *self.h.borrow_mut() = h;
         self.apply_dpi();
+    }
+
+    /// Icon của exe (resource id 1, nhúng lúc build trên Windows).
+    fn set_icon(&self) {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetSystemMetrics, LoadImageW, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_SHARED, SM_CXICON, SM_CXSMICON,
+            WM_SETICON,
+        };
+        for (which, metric) in [(ICON_BIG, SM_CXICON), (ICON_SMALL, SM_CXSMICON)] {
+            let sz = unsafe { GetSystemMetrics(metric) };
+            let icon = unsafe { LoadImageW(Some(hinstance()), PCWSTR(1 as *const u16), IMAGE_ICON, sz, sz, LR_SHARED) };
+            if let Ok(h) = icon {
+                unsafe { SendMessageW(self.hwnd, WM_SETICON, Some(WPARAM(which as usize)), Some(LPARAM(h.0 as isize))) };
+            }
+        }
     }
 
     fn dpi(&self) -> u32 {
@@ -683,6 +699,14 @@ unsafe extern "system" fn hotkey_proc(
             LRESULT(0)
         }
         WM_CHAR | WM_SYSCHAR => LRESULT(0),
+        // Ô ghi phím không cho bôi đen chữ (click, kéo, hay Tab tới đều không chọn).
+        windows::Win32::UI::Controls::EM_SETSEL => LRESULT(0),
+        windows::Win32::UI::WindowsAndMessaging::WM_LBUTTONDOWN
+        | windows::Win32::UI::WindowsAndMessaging::WM_LBUTTONDBLCLK => {
+            let _ = SetFocus(Some(hwnd));
+            LRESULT(0)
+        }
+        windows::Win32::UI::WindowsAndMessaging::WM_MOUSEMOVE => LRESULT(0),
         _ => DefSubclassProc(hwnd, msg, wp, lp),
     }
 }

@@ -5,7 +5,7 @@ Tauri v2 + Rust + TypeScript thuần + SCSS + Vite multi-page.
 
 - **Đặc tả là nguồn sự thật: [SPEC.md](SPEC.md).** Mọi thay đổi hành vi phải khớp SPEC; nếu cần lệch thì cập nhật SPEC và ghi vào mục "Khác với SPEC" trong README.
 - Trạng thái: Phase 1 (bước 1.0–1.4) đã code xong, **chưa test trên Windows thật**. Danh sách rủi ro cần test nằm trong README, mục "Đã kiểm chứng và chưa kiểm chứng".
-- Phase tiếp theo: 2.1 Freeze (SPEC mục 14), rồi OCR (SPEC mục 15).
+- Phase tiếp theo: 2.1 Freeze (SPEC mục 14), rồi OCR (SPEC mục 15), rồi tự động chọn vùng (SPEC mục 16).
 
 ## Lệnh
 

@@ -39,10 +39,13 @@ pub fn apply<R: Runtime>(app: &AppHandle<R>) {
         if accel.is_empty() {
             continue;
         }
+        // Lỗi gốc của crate là chuỗi debug tiếng Anh (vd. "HotKey already registered: HotKey { .. }"):
+        // chỉ ghi log, người dùng chỉ thấy câu tiếng Việt.
         let shortcut: Shortcut = match accel.parse() {
             Ok(s) => s,
             Err(e) => {
-                errors.insert(name.to_string(), format!("Phím tắt \"{accel}\" không hợp lệ: {e}"));
+                log::warn!("parse hotkey {name}={accel:?}: {e}");
+                errors.insert(name.to_string(), invalid_message(&accel));
                 continue;
             }
         };
@@ -52,15 +55,22 @@ pub fn apply<R: Runtime>(app: &AppHandle<R>) {
             }
         });
         if let Err(e) = res {
-            errors.insert(
-                name.to_string(),
-                format!("Không đăng ký được {accel}, có thể app khác đang dùng ({e})"),
-            );
+            log::warn!("register hotkey {name}={accel}: {e}");
+            errors.insert(name.to_string(), taken_message(&accel));
         }
     }
 
     app.state::<AppState>().lock().hotkey_errors = errors;
     tray::refresh_tooltip(app);
+}
+
+/// Trên Windows, RegisterHotKey thất bại gần như luôn vì tổ hợp đã có chủ (app khác hoặc chính Windows).
+fn taken_message(accel: &str) -> String {
+    format!("Không dùng được {accel} vì app khác (hoặc Windows) đang dùng tổ hợp này. Hãy chọn tổ hợp khác.")
+}
+
+fn invalid_message(accel: &str) -> String {
+    format!("Phím tắt \"{accel}\" không hợp lệ. Hãy bấm vào ô và nhấn lại tổ hợp phím.")
 }
 
 /// Tạm tắt khi màn hình Cài đặt đang ghi phím, để tổ hợp cũ không kích hoạt.

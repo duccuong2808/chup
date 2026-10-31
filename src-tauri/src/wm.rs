@@ -22,6 +22,13 @@ pub const STACK_WIDTH_CSS: f64 = 184.0;
 pub const TOOLBAR_NORMAL_CSS: (f64, f64) = (220.0, 44.0);
 pub const TOOLBAR_FADED_CSS: (f64, f64) = (116.0, 40.0);
 
+/// Tham số cho WebView2, dùng chung cho **mọi** cửa sổ: WebView2 từ chối tạo webview nếu tham số khác
+/// với webview đã có trong cùng data directory.
+/// - Giữ nguyên 3 feature mà wry tắt mặc định (set tham số là ghi đè mặc định của wry).
+/// - `--renderer-process-limit=1`: các cửa sổ cùng origin dùng chung renderer thay vì mỗi cửa sổ một
+///   process. Đo trên Windows 11 lúc vừa khởi động: 125,6 MB -> 101,3 MB (private working set).
+const BROWSER_ARGS: &str = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --renderer-process-limit=1";
+
 fn page(name: &str) -> WebviewUrl {
     WebviewUrl::App(format!("windows/{name}/index.html").into())
 }
@@ -38,6 +45,7 @@ fn tool_window<'a, R: Runtime>(app: &'a AppHandle<R>, label: &'a str, page_name:
         .resizable(false)
         .visible(false)
         .focused(false)
+        .additional_browser_args(BROWSER_ARGS)
 }
 
 pub fn read_monitors<R: Runtime>(app: &AppHandle<R>) -> Vec<MonitorInfo> {
@@ -138,6 +146,7 @@ pub fn open_settings<R: Runtime>(app: &AppHandle<R>) {
         .min_inner_size(480.0, 520.0)
         .center()
         .focused(true)
+        .additional_browser_args(BROWSER_ARGS)
         .build();
     if let Err(e) = built {
         log::error!("Không mở được cửa sổ cài đặt: {e}");

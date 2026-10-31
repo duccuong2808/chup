@@ -4,7 +4,7 @@
 >
 > Lộ trình chia 3 phase:
 > - **Phase 1** = v1 cho Windows.
-> - **Phase 2** = v2, gồm Freeze và OCR.
+> - **Phase 2** = v2, gồm Freeze, OCR và tự động chọn vùng.
 > - **Phase 3** = mở rộng sang macOS và Linux.
 >
 > Các câu hỏi mở đã được chốt ở mục 13.
@@ -26,7 +26,8 @@
 - **OCR** copy text từ ảnh: làm ở Phase 2, xem mục 15.
 - Chỉnh sửa / vẽ / annotate ảnh, làm mờ thông tin nhạy cảm.
 - Quay video, GIF.
-- Chụp cửa sổ tự nhận diện, chụp cuộn (scroll capture).
+- Tự động chọn vùng (nhận diện cửa sổ, phần tử UI): làm ở Phase 2, xem mục 16.
+- Chụp cuộn (scroll capture).
 - Vùng chọn vắt qua nhiều màn hình (giới hạn trong 1 màn hình).
 - Upload cloud / share link.
 - Linux **Wayland** (lý do ở mục 11).
@@ -415,6 +416,8 @@ Mục tiêu; đo thực tế ở bước 1.4 rồi chỉnh lại.
 | 2.1 | Freeze mode (mục 14) | Pass mục 14.7 |
 | 2.2 | Spike OCR (mục 15.6) | Chốt engine và các ngưỡng |
 | 2.3 | OCR (mục 15) | Pass mục 15.8 |
+| 2.4 | Spike tự động chọn vùng (mục 16.6) | Chốt có làm khung từ ảnh hay không |
+| 2.5 | Tự động chọn vùng (mục 16) | Pass mục 16.7 |
 | **Phase 3 — đa nền tảng** | | |
 | 3.1 | macOS | Pass mục 10 và 14.7 trên macOS |
 | 3.2 | Linux X11 | Pass mục 10 trên X11 |
@@ -635,3 +638,89 @@ src-tauri/src/ocr/
 - [ ] Mất mạng lúc tải gói OCR: báo lỗi, thử lại được, không để lại file hỏng.
 - [ ] Sau 5 phút không dùng: RAM giảm về mức Phase 1.
 - [ ] "Chụp text" không tạo file, không thêm vào stack.
+
+---
+
+## 16. Phase 2 — Tự động chọn vùng
+
+### 16.1 Mục tiêu
+
+- Khi overlay đang hiện, **rê chuột là thấy ngay khung chữ nhật** của thứ nằm dưới con trỏ: cửa sổ, panel, nút, ô nhập, ảnh, khung chat...
+- **Click một lần** (không kéo) là chọn đúng khung đó, không phải kéo tay cho khớp mép.
+- Kéo chuột vẫn chọn vùng tự do như Phase 1. Tự động chọn chỉ là lối tắt, không thay thế.
+- Dùng được trong cả **Live mode** và **Freeze mode** (mục 14).
+
+### 16.2 Luồng
+
+1. Nhấn hotkey Chọn vùng (hoặc Freeze). Overlay hiện như bình thường.
+2. **Rê chuột**: khung nằm dưới con trỏ được **tô viền nét đứt** (màu accent), kèm nhãn nhỏ `W × H` và loại khung (ví dụ "Cửa sổ", "Nút", "Vùng ảnh").
+   - Khung luôn bị cắt trong màn hình đang có con trỏ (giữ quy tắc 1 màn hình của Phase 1).
+3. **Đổi cấp khung** (ví dụ đang tô nút, muốn lấy cả toolbar chứa nút đó):
+   - Cuộn chuột lên: lên khung cha. Cuộn xuống: về khung con.
+   - Phím tương đương: `↑` lên cha, `↓` xuống con.
+4. **Chọn**:
+   - Click trái mà không di chuột quá 4px: lấy khung đang tô làm region. Từ đây giống hệt bước 4 của mục 5.1 (Live mode: hiện frame và toolbar; Freeze: hiện handle và toolbar trong overlay).
+   - Nhấn giữ và kéo ≥ 4px: chọn vùng tự do như Phase 1, bỏ qua khung đang tô.
+5. **Tạm tắt**: giữ `Shift` trong lúc rê thì không tô khung nào (để kéo tay chính xác ở vùng có nhiều khung lồng nhau).
+6. Huỷ: `Esc` hoặc click phải, như cũ.
+
+### 16.3 Nguồn khung (Windows)
+
+Lấy theo thứ tự ưu tiên. Khung được tô là **khung nhỏ nhất chứa con trỏ**, ở cấp mà người dùng đang chọn.
+
+| # | Nguồn | Cách lấy | Ghi chú |
+|---|---|---|---|
+| 1 | Cửa sổ top-level | `EnumWindows` theo z-order; bỏ cửa sổ ẩn, cửa sổ bị cloak (`DWMWA_CLOAKED`) và cửa sổ của Chup | Dùng `DWMWA_EXTENDED_FRAME_BOUNDS` thay cho `GetWindowRect`, để không dính viền resize vô hình và bóng đổ của Windows 10/11 |
+| 2 | Phần tử UI trong cửa sổ | UI Automation: từ element của cửa sổ dưới con trỏ (`ElementFromHandle`), đi xuống phần tử sâu nhất có `BoundingRectangle` chứa con trỏ, theo Control View | Không dùng `ElementFromPoint`, vì điểm đó luôn trúng overlay của Chup |
+| 3 | Khung nhận diện từ ảnh | Tìm cạnh thẳng ngang/dọc trên ảnh chụp màn hình rồi ghép thành hình chữ nhật | Cho những app không khai báo UI Automation: canvas, game, ảnh trong trang web, app Electron cũ. **Cần spike** (mục 16.6) |
+
+- **Cây khung** = cửa sổ → phần tử UIA lồng nhau → (khung từ ảnh nằm trong phần tử sâu nhất). "Lên cha / xuống con" đi theo cây này.
+- Bỏ các khung **nhỏ hơn 8×8 px** hoặc **trùng khít khung cha** (chênh dưới 2px mỗi cạnh), để cuộn chuột không phải đi qua nhiều cấp giống hệt nhau.
+
+### 16.4 Kỹ thuật
+
+- **Chụp nhanh danh sách cửa sổ trước khi hiện overlay**: cùng lúc với bước chụp ảnh của Freeze. Mất vài ms, không làm chậm hotkey.
+  - Live mode: danh sách cửa sổ có thể cũ đi nếu người dùng chờ lâu trong overlay. Chấp nhận, vì overlay đang phủ màn hình nên hầu như không có cửa sổ nào đổi chỗ.
+- **UI Automation chạy lazy, trên thread riêng**:
+  - Một thread COM (MTA) cố định, nhận yêu cầu "điểm (x, y) trong cửa sổ H" qua channel. Chỉ xử lý yêu cầu mới nhất (debounce khoảng 30 ms khi chuột đang di).
+  - Dùng `CacheRequest` lấy `BoundingRectangle`, `ControlType`, `Name` trong một lượt, tránh mỗi thuộc tính một lần gọi cross-process.
+  - Cache kết quả theo cửa sổ trong suốt một lần chọn vùng; xoá cache khi overlay đóng.
+  - Đặt timeout (`IUIAutomation2::ConnectionTimeout`, `TransactionTimeout` khoảng 200 ms). App bị treo hoặc chạy quyền admin (Chup không đọc được UIA của nó) thì chỉ dùng khung cửa sổ.
+- **Toạ độ**: Chup là app Per-Monitor DPI Aware v2, nên DWM và UIA trả về **physical px**. Dùng thẳng làm `Rect` (mục 6.3), không quy đổi.
+- **Freeze mode**: lấy danh sách cửa sổ và UIA ngay lúc chụp đóng băng, nên menu, tooltip vẫn còn trong cây UI và chọn được đúng khung của chúng.
+- **Không để UIA làm chậm việc vẽ**: overlay tô ngay khung cửa sổ (đã có sẵn), rồi thay bằng khung UIA khi kết quả về.
+- **IPC bổ sung**:
+  - Event `autodetect:hover { rect, kind, depth }` từ Rust xuống overlay (rect đổi sang CSS px của màn hình đó).
+  - Overlay gửi `autodetect_point { monitor_id, x, y }` khi chuột di, và `autodetect_level { delta: 1 | -1 }` khi cuộn hoặc bấm phím.
+  - Click chọn khung dùng lại command xác nhận vùng của Phase 1, gửi kèm rect của khung.
+- **Config**: thêm `autoDetect: { enabled: true, imageEdges: false }`, gộp vào lần tăng `version` lên 2 của Freeze (mục 14.4).
+- **Phase 3**:
+  - macOS: `CGWindowListCopyWindowInfo` cho cửa sổ, Accessibility API (`AXUIElement`) cho phần tử. Cần quyền Accessibility.
+  - Linux X11: `XQueryTree` cho cửa sổ; phần tử qua AT-SPI nếu có, không thì chỉ cửa sổ.
+
+### 16.5 Ngân sách
+
+| Chỉ số | Mục tiêu |
+|---|---|
+| Thêm vào thời gian từ hotkey đến lúc overlay hiện | ≤ 10 ms |
+| Từ lúc di chuột đến lúc khung cửa sổ được tô | ≤ 16 ms (1 frame) |
+| Từ lúc di chuột đến lúc khung UIA được tô (lần đầu trong cửa sổ đó) | ≤ 100 ms |
+| CPU khi idle (overlay đã đóng) | ~0%, thread UIA ngủ |
+
+### 16.6 Spike (khoảng 1 ngày)
+
+- Đo UIA trên các app hay dùng: Chrome, Edge, Explorer, VS Code, Zalo PC, Slack, Word, Excel, Teams. Ghi lại:
+  - Thời gian lần đầu lấy cây và các lần sau (đã cache).
+  - App nào trả về cây rỗng hoặc chỉ có một khung lớn (thường gặp ở app Electron, game).
+- Thử nhận diện khung từ ảnh trên khoảng 20 ảnh chụp các app ở trên: tỉ lệ khung đúng, khung thừa (nhiễu), thời gian xử lý màn hình 4K.
+- **Kết quả cần chốt**: có làm nguồn 3 (khung từ ảnh) ở Phase 2 không; nếu có thì bật mặc định hay để tuỳ chọn.
+
+### 16.7 Nghiệm thu
+
+- [ ] Rê chuột qua cửa sổ Explorer, Chrome: khung khớp mép cửa sổ, không dính bóng đổ hay viền vô hình.
+- [ ] Trong Chrome: tô được thanh địa chỉ, một ảnh trong trang, một khung bài viết. Cuộn chuột lên cha và xuống con được.
+- [ ] Click chọn khung rồi chụp: ảnh đúng kích thước khung, đúng pixel ở scale 100% và 150%.
+- [ ] Giữ `Shift`: không tô khung; kéo tay vẫn chọn vùng như cũ.
+- [ ] Freeze mode: mở menu chuột phải, nhấn `F1`, click chọn được đúng khung của menu.
+- [ ] App đang treo hoặc chạy quyền admin: overlay không bị đứng, vẫn tô được khung cửa sổ.
+- [ ] Cửa sổ vắt qua 2 màn hình: khung bị cắt trong màn hình đang có con trỏ.

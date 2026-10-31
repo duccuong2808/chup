@@ -21,6 +21,10 @@ const hotkeyInputs = Array.from(document.querySelectorAll<HTMLInputElement>("inp
 
 let current: SettingsState | null = null;
 let recording: HTMLInputElement | null = null;
+/** Phím chính đã thấy keydown trong lần ghi hiện tại (theo `KeyboardEvent.code`). */
+const seenKeyDown = new Set<string>();
+/** Lỗi phát hiện ngay trong lúc ghi (chưa lưu vào config), ưu tiên hơn lỗi từ Rust. */
+const recordErrors: Partial<Record<HotkeyName, string>> = {};
 
 function render(s: SettingsState) {
   current = s;
@@ -45,8 +49,9 @@ function render(s: SettingsState) {
     const name = input.dataset.name as HotkeyName;
     if (input !== recording) input.value = c.hotkeys[name] || "Không dùng";
     const err = document.querySelector<HTMLElement>(`[data-error="${name}"]`)!;
-    err.textContent = s.hotkeyErrors[name] ?? "";
-    err.hidden = !s.hotkeyErrors[name];
+    const msg = recordErrors[name] ?? s.hotkeyErrors[name] ?? "";
+    err.textContent = msg;
+    err.hidden = !msg;
   }
 }
 
@@ -142,6 +147,9 @@ for (const input of hotkeyInputs) {
 
   input.addEventListener("focus", () => {
     recording = input;
+    seenKeyDown.clear();
+    delete recordErrors[name];
+    if (current) render(current);
     input.classList.add("recording");
     input.value = "Nhấn tổ hợp phím…";
     // Tạm tắt hotkey để tổ hợp cũ không kích hoạt chụp trong lúc ghi.
@@ -152,8 +160,10 @@ for (const input of hotkeyInputs) {
 
   input.addEventListener("keydown", async (e) => {
     e.preventDefault();
+    seenKeyDown.add(e.code);
     if (e.key === "Escape") return input.blur();
     if ((e.key === "Delete" || e.key === "Backspace") && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      delete recordErrors[name];
       await save({ hotkeys: { [name]: "" } });
       return input.blur();
     }
@@ -164,8 +174,24 @@ for (const input of hotkeyInputs) {
       return;
     }
     input.value = accel;
+    delete recordErrors[name];
     await save({ hotkeys: { [name]: accel } });
     input.blur();
+  });
+
+  // Tổ hợp đã bị app khác đăng ký (RegisterHotKey) thì Windows nuốt keydown của phím chính,
+  // nhưng keyup vẫn tới, lúc modifier còn đang giữ. Thấy keyup mà chưa từng thấy keydown
+  // => tổ hợp đã có chủ. Không lưu, giữ phím tắt cũ và báo ngay.
+  // (Hotkey của chính Chup đã được tạm tắt khi bắt đầu ghi, nên không tự báo nhầm.)
+  input.addEventListener("keyup", (e) => {
+    if (recording !== input || seenKeyDown.has(e.code)) return;
+    const accel = accelerator(e);
+    if (!accel) return;
+    e.preventDefault();
+    recordErrors[name] =
+      `${accel} đang được app khác (hoặc Windows) dùng nên Chup không đăng ký được. Hãy chọn tổ hợp khác.`;
+    input.value = "Nhấn tổ hợp phím…";
+    if (current) render(current);
   });
 }
 

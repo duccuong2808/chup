@@ -8,10 +8,16 @@ license.workspace = true
 
 [dependencies]
 xcap = "=0.9.8"
-arboard = "=3.7.0"
 image = { version = "=0.25.10", default-features = false, features = ["png"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }
 ulid = "3"
 log = "0.4"
+
+# Windows: clipboard tự gọi Win32 (xem clipboard.rs). OS khác tạm dùng arboard (Phase 3).
+[target.'cfg(windows)'.dependencies]
+windows = { version = "=0.62.2", features = ["Win32_Foundation", "Win32_System_DataExchange", "Win32_System_Memory"] }
+
+[target.'cfg(not(windows))'.dependencies]
+arboard = "=3.7.0"

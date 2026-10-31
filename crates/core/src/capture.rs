@@ -2,7 +2,6 @@
 //! `grab_region` và `persist_shot` cố ý tách riêng: Phase 2 (Freeze, OCR) dùng lại.
 
 use std::{
-    borrow::Cow,
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
@@ -15,7 +14,7 @@ use image::{
     ExtendedColorType, ImageEncoder, RgbaImage,
 };
 
-use crate::coords::Rect;
+use crate::{clipboard, coords::Rect};
 
 /// Thumbnail rộng tối đa 320 px: đủ nét cho thẻ 160 CSS px ở scale 200%.
 pub const THUMB_MAX_WIDTH: u32 = 320;
@@ -69,20 +68,29 @@ pub fn persist_shot(img: &RgbaImage, opts: &PersistOptions) -> Result<PersistOut
     let id = ulid::Ulid::generate().to_string();
     let (w, h) = img.dimensions();
 
-    // 3 việc song song: PNG gốc, thumbnail, clipboard.
+    // Thumbnail chạy song song suốt. PNG chỉ mã hoá 1 lần, rồi ghi file và clipboard
+    // song song trên cùng mảng byte đó.
     let (saved, thumb, clip) = std::thread::scope(|s| {
         let thumb = s.spawn(|| make_thumbnail(img, &opts.thumbs_dir, &id));
-        let clip = s.spawn(|| opts.copy_to_clipboard.then(|| copy_image(img)));
-        let saved = save_png(img, opts, &now);
-        (saved, thumb.join(), clip.join())
+        let (saved, clip) = match encode_png(img) {
+            Err(e) => (Err(e), None),
+            Ok(png) => std::thread::scope(|s2| {
+                let clip = opts.copy_to_clipboard.then(|| s2.spawn(|| clipboard::copy_image(img, Some(&png))));
+                let saved = save_png(&png, opts, &now);
+                (saved, clip.map(|h| h.join()))
+            }),
+        };
+        (saved, thumb.join(), clip)
     });
 
     let (path, mut warnings) = saved?;
     let (thumb_path, thumb) = thumb
         .map_err(|_| "Tạo thumbnail bị lỗi".to_string())?
         .map_err(|e| format!("Tạo thumbnail bị lỗi: {e}"))?;
-    if let Ok(Some(Err(e))) = clip {
-        warnings.push(format!("Không copy được vào clipboard: {e}"));
+    match clip {
+        Some(Ok(Err(e))) => warnings.push(format!("Không copy được vào clipboard: {e}")),
+        Some(Err(_)) => warnings.push("Không copy được vào clipboard".into()),
+        _ => {}
     }
 
     Ok(PersistOutcome {
@@ -108,16 +116,15 @@ pub fn encode_png(img: &RgbaImage) -> Result<Vec<u8>, String> {
 }
 
 /// Ghi PNG vào `save_dir`; lỗi thì ghi vào `fallback_dir` và kèm cảnh báo.
-fn save_png(img: &RgbaImage, opts: &PersistOptions, now: &DateTime<Local>) -> Result<(PathBuf, Vec<String>), String> {
-    let bytes = encode_png(img)?;
+fn save_png(bytes: &[u8], opts: &PersistOptions, now: &DateTime<Local>) -> Result<(PathBuf, Vec<String>), String> {
     let base = render_file_name(&opts.pattern, now);
-    match write_unique(&opts.save_dir, &base, &bytes) {
+    match write_unique(&opts.save_dir, &base, bytes) {
         Ok(p) => Ok((p, vec![])),
         Err(primary_err) => {
             if opts.fallback_dir == opts.save_dir {
                 return Err(format!("Không lưu được ảnh vào {}: {primary_err}", opts.save_dir.display()));
             }
-            let p = write_unique(&opts.fallback_dir, &base, &bytes).map_err(|e| {
+            let p = write_unique(&opts.fallback_dir, &base, bytes).map_err(|e| {
                 format!(
                     "Không lưu được ảnh vào {} ({primary_err}) lẫn {} ({e})",
                     opts.save_dir.display(),
@@ -235,21 +242,6 @@ fn make_thumbnail(img: &RgbaImage, dir: &Path, id: &str) -> Result<(PathBuf, Rgb
     let path = dir.join(format!("{id}.png"));
     fs::write(&path, &bytes).map_err(|e| e.to_string())?;
     Ok((path, thumb))
-}
-
-pub fn copy_image(img: &RgbaImage) -> Result<(), String> {
-    let mut cb = arboard::Clipboard::new().map_err(|e| e.to_string())?;
-    cb.set_image(arboard::ImageData {
-        width: img.width() as usize,
-        height: img.height() as usize,
-        bytes: Cow::Borrowed(img.as_raw()),
-    })
-    .map_err(|e| e.to_string())
-}
-
-pub fn copy_file_image(path: &Path) -> Result<(), String> {
-    let img = image::open(path).map_err(|e| format!("Không đọc được ảnh: {e}"))?.to_rgba8();
-    copy_image(&img)
 }
 
 #[cfg(test)]

@@ -435,6 +435,7 @@ dependencies = [
  "serde",
  "serde_json",
  "ulid",
+ "windows 0.62.2",
  "xcap",
 ]
 

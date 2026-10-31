@@ -2,6 +2,7 @@
 //! Lớp giao diện native của từng OS nằm ở crate `chup` (crates/app).
 
 pub mod capture;
+pub mod clipboard;
 pub mod config;
 pub mod coords;
 pub mod hotkey_name;

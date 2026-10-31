@@ -128,7 +128,7 @@ impl App {
                 let (path, fx) = self.model.ensure_shot_file(&id);
                 if let Some(p) = path {
                     std::thread::spawn(move || {
-                        if let Err(e) = capture::copy_file_image(&p) {
+                        if let Err(e) = chup_core::clipboard::copy_file_image(&p) {
                             emit(Action::Toast(Toast::error(e)));
                         }
                     });

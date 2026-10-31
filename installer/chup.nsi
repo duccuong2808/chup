@@ -37,6 +37,8 @@ Section "Chup"
   ; Đóng bản đang chạy để ghi đè được file exe.
   nsExec::Exec 'taskkill /IM chup.exe /F'
   Sleep 300
+  ; Bản cũ (Tauri) để lại dữ liệu WebView2; bản native không cần nữa.
+  RMDir /r "$LOCALAPPDATA\app.chup.desktop\EBWebView"
   SetOutPath "$INSTDIR"
   File "/oname=chup.exe" "${EXE}"
   WriteUninstaller "$INSTDIR\uninstall.exe"

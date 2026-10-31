@@ -200,9 +200,9 @@ impl App {
         self.apply(fx);
     }
 
-    /// App đang rảnh: không chọn vùng, không có frame, Cài đặt đã đóng.
+    /// App đang rảnh: không chọn vùng, Cài đặt đã đóng (frame có thể đang hiện, nhất là ở chế độ Mờ).
     pub fn is_idle(&self) -> bool {
-        !self.model.selecting && self.model.mode == FrameMode::Hidden && self.settings.is_none()
+        !self.model.selecting && self.settings.is_none()
     }
 
     /// Rảnh đủ lâu: giải phóng DIB của overlay và trả working set lại cho Windows.

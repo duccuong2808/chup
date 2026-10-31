@@ -159,7 +159,10 @@ impl Overlay {
         if unsafe { windows::Win32::UI::WindowsAndMessaging::IsWindowVisible(self.hwnd) }.as_bool() {
             return;
         }
-        *self.st.borrow_mut() = State::default();
+        // Giữ lại sprite gợi ý (vài trăm KB): tạo lại cần Direct2D, chậm khi vừa trim xong.
+        let mut st = self.st.borrow_mut();
+        let hint = st.hint.take();
+        *st = State { hint, ..State::default() };
     }
 
     fn on_drag(&self, x: i32, y: i32) {

@@ -139,8 +139,24 @@ impl Frame {
         (dip * scale).round().max(1.0) as i32
     }
 
-    /// Vẽ lại và đẩy lên ở `st.outer`.
+    /// Vẽ lại và đẩy lên ở `st.outer`. Ngoài lúc kéo/resize thì không giữ DIB:
+    /// DWM đã có bản sao của layered window, giữ thêm bản của mình chỉ tốn RAM.
     fn render(&self) {
+        let surface = self.paint();
+        let (outer, dragging) = {
+            let st = self.st.borrow();
+            (st.outer, st.drag.is_some())
+        };
+        if let Some(s) = surface {
+            present_sized(&s, self.hwnd, outer);
+            if dragging {
+                self.st.borrow_mut().surface = Some(s);
+            }
+        }
+    }
+
+    /// Vẽ vào surface (lấy ra khỏi state để không giữ borrow lúc gọi Win32).
+    fn paint(&self) -> Option<Surface> {
         let mut st = self.st.borrow_mut();
         let (w, h) = (st.outer.w as i32, st.outer.h as i32);
         // Cấp dư để resize không phải cấp lại DIB mỗi lần chuột di.
@@ -148,13 +164,15 @@ impl Frame {
         if need.unwrap_or(true) {
             st.surface = Surface::new(w + 256, h + 256);
         }
-        let (m, scale, faded, outer) = (st.margin, st.scale, st.faded, st.outer);
+        let (m, scale, faded) = (st.margin, st.scale, st.faded);
         let theme = Theme::current();
         let bw = self.sz(scale, 2.0);
         let hs = self.sz(scale, 8.0);
         let hb = self.sz(scale, 1.5);
         let off = m - self.sz(scale, 3.0) - hs;
-        let Some(s) = st.surface.as_mut() else { return };
+        let mut surface = st.surface.take()?;
+        drop(st);
+        let s = &mut surface;
 
         let all = Rect::new(0, 0, s.w as u32, s.h as u32);
         s.fill(all, 0);
@@ -178,7 +196,7 @@ impl Frame {
                 s.fill(r.expand(-hb), Color::rgba(255, 255, 255, 1.0).px());
             }
         }
-        present_sized(s, self.hwnd, outer);
+        Some(surface)
     }
 
     fn hit(&self, lx: i32, ly: i32) -> Option<Part> {
@@ -241,11 +259,14 @@ impl Frame {
             st.outer = next;
             resized
         };
-        if resized {
-            self.render();
-        } else if let Some(s) = self.st.borrow().surface.as_ref() {
+        let kept = if resized { None } else { self.st.borrow_mut().surface.take() };
+        match kept {
             // Chỉ dời: đẩy lại bitmap cũ ở vị trí mới.
-            present_sized(s, self.hwnd, next);
+            Some(s) => {
+                present_sized(&s, self.hwnd, next);
+                self.st.borrow_mut().surface = Some(s);
+            }
+            None => self.render(),
         }
         emit(Action::FrameMoved(next));
     }
@@ -308,10 +329,14 @@ impl Handler for Frame {
                         let _ = ReleaseCapture();
                     }
                 }
+                // Kéo xong: không cần giữ DIB nữa.
+                self.st.borrow_mut().surface = None;
                 Some(LRESULT(0))
             }
             WM_CAPTURECHANGED => {
-                self.st.borrow_mut().drag = None;
+                let mut st = self.st.borrow_mut();
+                st.drag = None;
+                st.surface = None;
                 Some(LRESULT(0))
             }
             _ => None,

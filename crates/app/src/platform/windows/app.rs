@@ -212,6 +212,10 @@ impl App {
             o.release();
         }
         unsafe {
+            // Gom và trả phần heap trống (sau khi encode PNG ảnh lớn heap giữ lại vài chục MB).
+            if let Ok(heap) = windows::Win32::System::Memory::GetProcessHeap() {
+                let _ = windows::Win32::System::Memory::HeapCompact(heap, windows::Win32::System::Memory::HEAP_FLAGS(0));
+            }
             let _ = windows::Win32::System::ProcessStatus::EmptyWorkingSet(
                 windows::Win32::System::Threading::GetCurrentProcess(),
             );

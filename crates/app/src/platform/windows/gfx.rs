@@ -207,8 +207,15 @@ impl Surface {
 
     /// Chép `src` (premultiplied) lên vị trí (x, y) bằng phép "over".
     pub fn blend_from(&mut self, src: &mut Surface, x: i32, y: i32) {
+        let (w, h) = (src.w, src.h);
+        self.blend_part(src, (w, h), x, y)
+    }
+
+    /// Như `blend_from` nhưng chỉ lấy góc trên-trái cỡ `size` của `src`.
+    pub fn blend_part(&mut self, src: &mut Surface, size: (i32, i32), x: i32, y: i32) {
         let dst_bounds = Rect::new(0, 0, self.w as u32, self.h as u32);
-        let Some(area) = Rect::new(x, y, src.w as u32, src.h as u32).intersect(&dst_bounds) else { return };
+        let (pw, ph) = (size.0.min(src.w), size.1.min(src.h));
+        let Some(area) = Rect::new(x, y, pw as u32, ph as u32).intersect(&dst_bounds) else { return };
         let (sw, dw) = (src.w as usize, self.w as usize);
         let s = src.pixels().to_vec();
         let d = self.pixels();
@@ -619,4 +626,36 @@ pub fn pill(text: &str, font_px: f32, pad_x: f32, pad_y: f32, radius: f32, bg: C
     c.end();
     drop(c);
     Some(s)
+}
+
+/// Vẽ lại "viên thuốc" nhiều lần vào cùng 1 bộ đệm (nhãn W × H khi kéo chuột):
+/// không phải tạo font, DIB và render target mỗi lần chuột di.
+pub struct PillPainter {
+    font: Font,
+    pub surface: Surface,
+    canvas: Canvas,
+    pad: (f32, f32),
+    radius: f32,
+}
+
+impl PillPainter {
+    pub fn new(font_px: f32, pad_x: f32, pad_y: f32, radius: f32, max: (i32, i32)) -> Option<Self> {
+        let font = Font::new(font_px, false, Align::Center, false)?;
+        let surface = Surface::new(max.0, max.1)?;
+        let canvas = Canvas::new(&surface)?;
+        Some(Self { font, surface, canvas, pad: (pad_x, pad_y), radius })
+    }
+
+    /// Vẽ `text`, trả về kích thước dùng được (góc trên-trái của surface).
+    pub fn paint(&mut self, text: &str, bg: Color, fg: Color) -> (i32, i32) {
+        let (tw, th) = self.font.measure(text, 10_000.0);
+        let w = ((tw + self.pad.0 * 2.0).ceil() as i32).min(self.surface.w);
+        let h = ((th + self.pad.1 * 2.0).ceil() as i32).min(self.surface.h);
+        self.canvas.begin(Color::rgba(0, 0, 0, 0.0));
+        let r = rectf(0.0, 0.0, w as f32, h as f32);
+        self.canvas.fill_round(r, self.radius.min(h as f32 / 2.0), bg);
+        self.canvas.text(text, &self.font, r, fg);
+        self.canvas.end();
+        (w, h)
+    }
 }

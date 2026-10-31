@@ -22,7 +22,7 @@ use windows::Win32::{
 
 use super::{
     app::Action,
-    gfx::{pill, Color, Surface},
+    gfx::{pill, Color, PillPainter, Surface},
     util::{hiword, loword},
     win::{self, emit, Handler},
 };
@@ -43,7 +43,9 @@ struct State {
     start: Option<(i32, i32)>,
     sel: Option<Rect>,
     hint: Option<Sprite>,
-    label: Option<Sprite>,
+    /// Nhãn "W × H": vẽ lại vào cùng 1 bộ đệm, `label_at` là chỗ đặt trên overlay.
+    label: Option<PillPainter>,
+    label_at: Option<Rect>,
     label_text: String,
 }
 
@@ -138,24 +140,30 @@ impl Overlay {
         let Some(start) = st.start else { return };
         let sel = Rect::from_points(start, (x, y));
         let mut dirty = st.sel.map(|r| r.expand(2)).unwrap_or_default().union(&sel.expand(2));
-        if let Some(l) = &st.label {
-            dirty = dirty.union(&l.at);
+        if let Some(at) = st.label_at {
+            dirty = dirty.union(&at);
         }
 
         // Nhãn "W × H" (physical px), dưới vùng chọn hoặc lên trên nếu sát đáy.
+        let k = self.mon.scale as f32;
+        if st.label.is_none() {
+            st.label = PillPainter::new(12.0 * k, 6.0 * k, 2.0 * k, 4.0 * k, (self.s(160.0), self.s(30.0)));
+        }
         let text = format!("{} × {}", sel.w, sel.h);
+        let mut size = st.label_at.map(|a| (a.w as i32, a.h as i32));
         if text != st.label_text {
-            let k = self.mon.scale as f32;
-            st.label = pill(&text, 12.0 * k, 6.0 * k, 2.0 * k, 4.0 * k, Color::rgba(0, 0, 0, 0.75), Color::rgba(255, 255, 255, 1.0))
-                .map(|s| Sprite { at: Rect::new(0, 0, s.w as u32, s.h as u32), s });
+            if let Some(p) = st.label.as_mut() {
+                size = Some(p.paint(&text, Color::rgba(0, 0, 0, 0.75), Color::rgba(255, 255, 255, 1.0)));
+            }
             st.label_text = text;
         }
-        let (gap, max_x) = (self.s(6.0), w - self.s(110.0));
-        if let Some(l) = st.label.as_mut() {
+        if let Some((lw, lh)) = size {
+            let (gap, max_x) = (self.s(6.0), w - self.s(110.0));
             let below = sel.bottom() + gap;
-            let ly = if below + l.at.h as i32 > h { sel.y - gap - l.at.h as i32 } else { below };
-            l.at = Rect::new(sel.x.min(max_x).max(0), ly.max(2), l.at.w, l.at.h);
-            dirty = dirty.union(&l.at);
+            let ly = if below + lh > h { sel.y - gap - lh } else { below };
+            let at = Rect::new(sel.x.min(max_x).max(0), ly.max(2), lw as u32, lh as u32);
+            st.label_at = Some(at);
+            dirty = dirty.union(&at);
         }
         st.sel = Some(sel);
         paint(&mut st, dirty);
@@ -167,7 +175,7 @@ impl Overlay {
 
 /// Vẽ lại phần `dirty` của overlay: lớp tối, lỗ của vùng chọn, viền trắng, nhãn, gợi ý.
 fn paint(st: &mut State, dirty: Rect) {
-    let State { surface, sel, hint, label, start, .. } = st;
+    let State { surface, sel, hint, label, label_at, start, .. } = st;
     let Some(s) = surface.as_mut() else { return };
     s.fill(dirty, DIM.px());
     if let Some(sel) = sel {
@@ -183,8 +191,8 @@ fn paint(st: &mut State, dirty: Rect) {
             }
         }
     }
-    if let Some(l) = label.as_mut() {
-        s.blend_from(&mut l.s, l.at.x, l.at.y);
+    if let (Some(p), Some(at)) = (label.as_mut(), label_at) {
+        s.blend_part(&mut p.surface, (at.w as i32, at.h as i32), at.x, at.y);
     }
 }
 

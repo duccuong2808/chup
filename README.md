@@ -33,6 +33,17 @@ cd src-tauri
 cargo test
 ```
 
+### CI/CD (GitHub Actions)
+
+Workflow `.github/workflows/build.yml` chạy trên `windows-latest`:
+
+- Mỗi lần push / PR: job `check` (`cargo test`, `cargo clippy -D warnings`) và job `build`
+  (`npm run tauri build`) chạy song song. Installer được đính kèm vào run dưới dạng artifact
+  `chup-windows-<sha>` (tab Actions → chọn run → Artifacts).
+- Push tag `v*` (vd: `git tag v0.1.0 && git push origin v0.1.0`): tạo thêm GitHub Release
+  dạng draft kèm installer. Nhớ đổi version trong `tauri.conf.json` / `Cargo.toml` /
+  `package.json` cho khớp tag trước.
+
 ## Dùng nhanh
 
 | Thao tác | Cách làm |

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- Biểu tượng Chup: khung chọn vùng với 4 góc + chấm chụp -->
+  <rect x="64" y="64" width="896" height="896" rx="208" fill="#1F6FEB"/>
+  <g fill="none" stroke="#FFFFFF" stroke-width="72" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M248 400 V248 H400"/>
+    <path d="M624 248 H776 V400"/>
+    <path d="M776 624 V776 H624"/>
+    <path d="M400 776 H248 V624"/>
+  </g>
+  <circle cx="512" cy="512" r="96" fill="#FFFFFF"/>
+</svg>

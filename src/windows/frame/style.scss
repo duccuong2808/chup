@@ -1,0 +1,116 @@
+@use "../../shared/tokens" as *;
+
+@include transparent-window;
+
+// --m: lề quanh vùng chọn (CSS px), do Rust gửi. Mọi thứ nhìn thấy được
+// đều nằm trong phần lề, KHÔNG lấn vào vùng chọn -> không bao giờ dính vào ảnh.
+:root {
+  --m: 12px;
+  --bw: 2px; // viền màu nhấn
+  --hs: 8px; // cạnh handle
+}
+
+.border {
+  position: fixed;
+  inset: calc(var(--m) - var(--bw));
+  border: var(--bw) solid var(--accent);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.9);
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.strip {
+  position: fixed;
+  cursor: move;
+
+  &[data-strip="top"] {
+    top: 0;
+    left: 0;
+    right: 0;
+    height: var(--m);
+  }
+  &[data-strip="bottom"] {
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: var(--m);
+  }
+  &[data-strip="left"] {
+    top: var(--m);
+    bottom: var(--m);
+    left: 0;
+    width: var(--m);
+  }
+  &[data-strip="right"] {
+    top: var(--m);
+    bottom: var(--m);
+    right: 0;
+    width: var(--m);
+  }
+}
+
+// Handle nằm ngoài viền: từ (m - 3 - hs) đến (m - 3).
+$off: calc(var(--m) - 3px - var(--hs));
+
+.handle {
+  position: fixed;
+  width: var(--hs);
+  height: var(--hs);
+  box-sizing: border-box;
+  background: #fff;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  z-index: 2;
+
+  &[data-dir="NorthWest"] {
+    left: $off;
+    top: $off;
+    cursor: nwse-resize;
+  }
+  &[data-dir="North"] {
+    left: calc(50% - var(--hs) / 2);
+    top: $off;
+    cursor: ns-resize;
+  }
+  &[data-dir="NorthEast"] {
+    right: $off;
+    top: $off;
+    cursor: nesw-resize;
+  }
+  &[data-dir="East"] {
+    right: $off;
+    top: calc(50% - var(--hs) / 2);
+    cursor: ew-resize;
+  }
+  &[data-dir="SouthEast"] {
+    right: $off;
+    bottom: $off;
+    cursor: nwse-resize;
+  }
+  &[data-dir="South"] {
+    left: calc(50% - var(--hs) / 2);
+    bottom: $off;
+    cursor: ns-resize;
+  }
+  &[data-dir="SouthWest"] {
+    left: $off;
+    bottom: $off;
+    cursor: nesw-resize;
+  }
+  &[data-dir="West"] {
+    left: $off;
+    top: calc(50% - var(--hs) / 2);
+    cursor: ew-resize;
+  }
+}
+
+// Faded: viền nhạt, không có handle (cửa sổ đã click-through).
+body.faded {
+  .border {
+    opacity: 0.3;
+  }
+  .handle,
+  .strip {
+    display: none;
+  }
+}

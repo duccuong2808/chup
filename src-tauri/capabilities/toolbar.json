@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "toolbar",
+  "description": "Toolbar cạnh vùng chọn: Chụp / Mờ / Huỷ.",
+  "windows": ["toolbar"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-frame-state",
+    "allow-capture-now",
+    "allow-toggle-fade",
+    "allow-close-region"
+  ]
+}

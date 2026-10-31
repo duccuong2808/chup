@@ -1,43 +1,41 @@
 # Chup
 
 App chụp màn hình theo vùng cho Windows (macOS/Linux X11 ở Phase 3).
-Tauri v2 + Rust + TypeScript thuần + SCSS + Vite multi-page.
+Rust thuần, **không WebView**: giao diện Win32 + Direct2D/DirectWrite. Lõi tách riêng, không phụ thuộc OS.
 
 - **Đặc tả là nguồn sự thật: [SPEC.md](SPEC.md).** Mọi thay đổi hành vi phải khớp SPEC; nếu cần lệch thì cập nhật SPEC và ghi vào mục "Khác với SPEC" trong README.
-- Trạng thái: Phase 1 (bước 1.0–1.4) đã code xong, **chưa test trên Windows thật**. Danh sách rủi ro cần test nằm trong README, mục "Đã kiểm chứng và chưa kiểm chứng".
+- Trạng thái: Phase 1 xong và đã test trên Windows 11 thật; bước 1.5 (bỏ Tauri, UI native) xong. Kết quả test ở README, mục "Đã kiểm chứng và chưa kiểm chứng".
 - Phase tiếp theo: 2.1 Freeze (SPEC mục 14), rồi OCR (SPEC mục 15), rồi tự động chọn vùng (SPEC mục 16).
 
 ## Lệnh
 
 ```bash
-npm install
-npm run tauri dev        # chạy dev (Windows)
-npm run build            # tsc --noEmit + vite build
-npm run tauri build      # installer NSIS
-cd src-tauri && cargo test && cargo clippy --all-targets
+cargo test --workspace                                   # test lõi (chạy được trên macOS)
+cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy -p chup --target x86_64-pc-windows-msvc -- -D warnings   # check code Windows từ macOS (không link)
+cargo build --release -p chup                            # trên Windows
+makensis /DVERSION=0.2.0 /DEXE=target\release\chup.exe installer\chup.nsi   # installer
 ```
 
-Máy dev là macOS: `cargo test` và `cargo check` chạy được. Code riêng Windows (`platform/windows.rs`) chỉ compile khi build cho target Windows.
+Máy dev là macOS: check/clippy cho target Windows chạy được (cần `rustup target add x86_64-pc-windows-msvc`), nhưng không link được. Bản chạy thật lấy từ CI (artifact `chup-windows-<sha>` có cả `chup.exe` và installer).
 
 ## Kiến trúc (chi tiết: SPEC mục 6)
 
-- **Rust giữ toàn bộ state** (`state.rs`); webview chỉ hiển thị và gọi command. Không giữ `AppState::lock()` qua `.await` hoặc khi gọi API cửa sổ.
-- Luồng chính ở `actions.rs`; `commands.rs` chỉ là lớp IPC mỏng. Mọi command đều `async` (command sync tạo/điều khiển cửa sổ trên Windows dễ deadlock).
-- `coords.rs` là hình học thuần, có unit test. Mọi `Rect` là **physical px trên toàn desktop**. Overlay gửi CSS px, Rust quy đổi bằng `css_to_physical`.
+- `crates/core`: `Model` (state machine) nhận sự kiện, trả về `Vec<Effect>`. Không biết cửa sổ là gì, nên mọi logic đều unit test được. Thêm hành vi mới thì thêm vào đây trước, kèm test.
+- `crates/app/src/platform/windows/`: vỏ Win32. `app.rs` đổi `Action` -> gọi `Model` -> áp `Effect` lên cửa sổ.
+- **Một UI thread.** Cửa sổ, tray, hotkey, worker **không gọi thẳng vào App**: chúng `win::emit(Action)`; App xử lý khi nhận `WM_APP_ACTION`.
+- State của mỗi cửa sổ nằm trong `RefCell`; **không giữ borrow khi gọi API Win32** (API có thể gửi message ngược lại vào wndproc).
+- Mọi `Rect` là **physical px trên toàn desktop**. Kích thước giao diện khai báo bằng DIP rồi nhân scale của màn hình.
 - `capture.rs`: `grab_region` và `persist_shot` cố ý tách riêng để Phase 2 (Freeze, OCR) dùng lại.
-- Cửa sổ: `overlay-{n}` (mỗi màn hình 1 cái), `frame`, `toolbar`, `stack`, `settings`. Tạo trong `wm.rs`.
-- **Toolbar và stack là cửa sổ không lấy focus**: hiện/ẩn bằng `PlatformExt::show_inactive` / `hide_inactive`, **không** dùng `show()` / `hide()` của Tauri.
+- Cửa sổ phụ (overlay, frame, toolbar, stack) là **layered window** vẽ vào `gfx::Surface` (DIB premultiplied BGRA) rồi `UpdateLayeredWindowIndirect`.
+  - Overlay và frame vẽ bằng thao tác pixel trực tiếp (rẻ ở 4K); toolbar, stack, chữ dùng Direct2D **software** + DirectWrite.
+  - Surface chỉ tồn tại khi cửa sổ đang hiện; ẩn là giải phóng (overlay 4K ~33 MB).
+  - Pixel alpha 0 của layered window không nhận chuột: vùng cần nhận chuột mà "trong suốt" thì dùng alpha 1/255.
+- Toolbar, stack, frame có `WS_EX_NOACTIVATE` và trả `MA_NOACTIVATE`: không bao giờ lấy focus. Overlay thì lấy focus để nhận Esc.
 - Viền frame nằm hoàn toàn ngoài region (lề `frame_margin`), nên không bao giờ dính vào ảnh.
-
-## Thêm command mới
-
-1. Viết hàm trong `commands.rs` và đăng ký trong `generate_handler!` ở `lib.rs`.
-2. Thêm tên vào `COMMANDS` trong `build.rs`.
-3. Cấp `allow-<tên-gạch-ngang>` trong `capabilities/<window>.json` cho đúng cửa sổ cần.
-4. Thêm wrapper có kiểu vào `src/shared/ipc.ts`, DTO vào `src/shared/types.ts`.
 
 ## Quy ước
 
-- Thông báo cho người dùng viết bằng tiếng Việt; comment code tiếng Việt.
-- Version crate được pin bằng `=`; kiểm tra signature trên docs.rs trước khi nâng (đặc biệt `xcap`).
+- Thông báo cho người dùng viết bằng tiếng Việt; comment code tiếng Việt. Lỗi kỹ thuật của crate chỉ ghi log (`%LOCALAPPDATA%\app.chup.desktop\chup.log`), không hiện cho người dùng.
+- Version crate được pin bằng `=`; kiểm tra signature trên docs.rs trước khi nâng (đặc biệt `xcap`, `windows`).
 - Hotkey dùng định dạng của crate `global-hotkey` (`Ctrl+Alt+A`, `F1`...).

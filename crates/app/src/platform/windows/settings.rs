@@ -17,7 +17,8 @@ use windows::{
     Win32::{
         Foundation::{COLORREF, HWND, LPARAM, LRESULT, RECT, WPARAM},
         Graphics::Gdi::{
-            CreateFontIndirectW, DeleteObject, GetSysColor, GetSysColorBrush, SetBkColor, SetTextColor, COLOR_WINDOW,
+            CreateFontIndirectW, DeleteObject, FillRect, GetSysColor, GetSysColorBrush, SetBkColor, SetTextColor,
+            COLOR_WINDOW,
             FW_SEMIBOLD, HBRUSH, HDC, HFONT, HGDIOBJ,
         },
         System::Com::{CoCreateInstance, CoTaskMemFree, CLSCTX_INPROC_SERVER},
@@ -788,6 +789,16 @@ impl Handler for Settings {
                     );
                 }
                 Some(LRESULT(0))
+            }
+            windows::Win32::UI::WindowsAndMessaging::WM_ERASEBKGND => {
+                // Class không có brush nền: tự tô màu nền cửa sổ.
+                let dc = HDC(wp.0 as *mut _);
+                let mut r = RECT::default();
+                unsafe {
+                    let _ = windows::Win32::UI::WindowsAndMessaging::GetClientRect(hwnd, &mut r);
+                    FillRect(dc, &r, GetSysColorBrush(COLOR_WINDOW));
+                }
+                Some(LRESULT(1))
             }
             WM_CLOSE => {
                 unsafe {

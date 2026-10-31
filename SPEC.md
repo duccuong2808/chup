@@ -1,9 +1,9 @@
-# Chup — SPEC v0.2
+# Chup — SPEC v0.3
 
 > Tài liệu đầu vào để Claude Code implement.
 >
 > Lộ trình chia 3 phase:
-> - **Phase 1** = v1 cho Windows.
+> - **Phase 1** = v1 cho Windows. Bước 1.5 chuyển giao diện sang Win32 native, bỏ WebView (mục 12).
 > - **Phase 2** = v2, gồm Freeze, OCR và tự động chọn vùng.
 > - **Phase 3** = mở rộng sang macOS và Linux.
 >
@@ -38,19 +38,20 @@
 | Hạng mục | Lựa chọn |
 |---|---|
 | OS Phase 1 | Windows 10 (64-bit) và Windows 11 |
-| Framework | Tauri v2 |
-| Backend | Rust stable |
-| Frontend | TypeScript thuần + SCSS + Vite (multi-page), **không framework** |
+| Ngôn ngữ | Rust stable, **không WebView, không framework UI** |
+| Giao diện Windows | Win32 qua crate `windows`: layered window tự vẽ (overlay, frame, toolbar, stack) bằng thao tác pixel + Direct2D **software** + DirectWrite; Cài đặt dùng control gốc (Common Controls v6) |
+| Giao diện macOS, Linux (Phase 3) | AppKit (`objc2`), X11 (`x11rb`); dùng chung crate lõi |
 | Chụp màn hình | `xcap` |
-| Kéo file ra app khác | `tauri-plugin-drag` (CrabNebula) + npm `@crabnebula/tauri-plugin-drag` |
-| Phím tắt toàn cục | `tauri-plugin-global-shortcut` |
-| Chọn folder | `tauri-plugin-dialog` |
-| Chạy 1 instance | `tauri-plugin-single-instance` |
-| Khởi động cùng OS | `tauri-plugin-autostart` |
+| Kéo file ra app khác | `drag` (CrabNebula) |
+| Phím tắt toàn cục | `global-hotkey` |
+| Tray | `tray-icon` (menu bằng `muda`) |
+| Chọn folder | `IFileOpenDialog` (COM) |
+| Chạy 1 instance | Named mutex + tìm cửa sổ `ChupApp` |
+| Khởi động cùng OS | Khoá `HKCU\...\Run`, giá trị `Chup` |
 | Clipboard ảnh | `arboard` (ảnh đã có sẵn trong memory phía Rust) |
 | Xử lý ảnh, thumbnail | `image` (PNG encoder dùng compression `Fast`) |
-| API riêng Windows | crate `windows` (WS_EX_NOACTIVATE, SetWindowDisplayAffinity) |
-| Installer | NSIS (bundler của Tauri) |
+| Manifest | `embed-manifest` (DPI Per-Monitor v2, Common Controls v6, UTF-8) |
+| Installer | NSIS tự viết (`installer/chup.nsi`), cài cho user hiện tại |
 
 **Lưu ý khi implement:** pin version mọi crate trong `Cargo.toml` và kiểm tra lại signature API trên docs.rs. `xcap` đã đổi API giữa các version.
 
@@ -116,7 +117,7 @@
 - **Thứ tự**: shot mới nhất nằm sát góc màn hình (dưới cùng của stack).
 - **Hiển thị**: luôn hiện khi có shot, không tự ẩn. Có nút thu gọn thành 1 tab nhỏ ở cạnh màn hình.
 - **Kích thước thumbnail**:
-  - Rộng 160 CSS px, cao theo tỉ lệ ảnh, tối đa 120 CSS px.
+  - Rộng 160 DIP, cao theo tỉ lệ ảnh, tối đa 120 DIP.
   - Ảnh quá dài hoặc quá cao thì crop ở giữa (`object-fit: cover`).
 - **Tương tác với thumbnail**:
   - **Kéo** (giữ chuột và di ≥ 4px): kéo file PNG ra ngoài (native drag).
@@ -162,11 +163,11 @@ Các mục:
 
 ### 6.1 Nguyên tắc
 
-- **Rust là single source of truth.** Toàn bộ state (config, region, mode, stack) nằm ở Rust. Webview chỉ hiển thị và gửi command.
-- **Mỗi cửa sổ một entry HTML riêng** (Vite multi-page). Không dùng chung JS bundle lớn.
-- **Code riêng từng OS** chỉ nằm trong `platform/`, sau trait `PlatformExt`.
-- **I/O nặng chạy ngoài main thread**: chụp, encode PNG, ghi file đều dùng `tauri::async_runtime::spawn_blocking`.
-- **Permission tối thiểu**: mỗi window label chỉ được cấp đúng permission cần dùng (Tauri v2 capabilities).
+- **Lõi không phụ thuộc OS** (`crates/core`): hình học, config, chụp/lưu, stack, ghi phím, icon vector và state machine `Model`. `Model` nhận sự kiện, trả về danh sách `Effect`; không biết cửa sổ là gì, nên test được trên mọi máy.
+- **Vỏ theo từng OS** (`crates/app/src/platform/<os>/`): tạo cửa sổ, vẽ, nhận chuột/phím, áp `Effect`.
+- **Một UI thread** chạy message loop. Cửa sổ, tray, hotkey và worker không gọi thẳng vào App mà `emit(Action)`; App xử lý khi nhận `WM_APP_ACTION`. Nhờ vậy vòng lặp modal (kéo thả file, dialog) vẫn xử lý được Action, và không có khoá state.
+- **I/O nặng chạy ở worker thread**: chụp, encode PNG, ghi file, copy clipboard.
+- **Bộ nhớ đồ hoạ chỉ cấp khi cửa sổ đang hiện**: DIB của overlay (cỡ cả màn hình) giải phóng ngay khi ẩn.
 
 ### 6.2 Cửa sổ
 
@@ -185,17 +186,9 @@ Các mục:
 
 ### 6.3 Toạ độ và DPI (nguồn bug số 1)
 
-- App chạy ở chế độ **Per-Monitor DPI Aware v2**.
-- `Region` trong Rust luôn là **physical px trên toàn desktop**.
-- Overlay gửi lên `monitor_id` cùng rect tính bằng **CSS px tương đối với cửa sổ overlay**.
-- Rust quy đổi:
-  ```
-  phys_x = monitor.position.x + floor(css_x * scale)
-  phys_y = monitor.position.y + floor(css_y * scale)
-  phys_r = monitor.position.x + ceil((css_x + css_w) * scale)
-  phys_b = monitor.position.y + ceil((css_y + css_h) * scale)
-  ```
-- Định vị frame, toolbar, stack bằng `PhysicalPosition` / `PhysicalSize`. Không dùng Logical, để tránh quy đổi 2 lần.
+- App chạy ở chế độ **Per-Monitor DPI Aware v2** (khai báo trong manifest).
+- `Rect` luôn là **physical px trên toàn desktop**. Overlay của mỗi màn hình nhận toạ độ chuột physical, chỉ cần cộng gốc của màn hình; không còn bước quy đổi CSS px.
+- Kích thước giao diện khai báo bằng DIP rồi nhân với scale của màn hình chứa cửa sổ (toolbar, frame theo màn hình của region; stack theo màn hình của nó).
 - Frame window có rect = region **nới ra mỗi cạnh B px**, với `B = round(3 * scale)`. Viền được vẽ trong phần nới ra, nên **ảnh chụp không bao giờ dính viền**.
 
 ### 6.4 Không để UI của app lọt vào ảnh chụp
@@ -212,99 +205,50 @@ Toolbar hoặc stack có thể nằm đè lên region (ví dụ region sát cạ
 
 ```
 chup/
-├─ src-tauri/
-│  ├─ src/
-│  │  ├─ main.rs          # setup plugins, windows, tray
-│  │  ├─ state.rs         # AppState, Region, Mode, Shot
-│  │  ├─ commands.rs      # #[tauri::command] cho frontend
-│  │  ├─ capture.rs       # grab_region, persist_shot, thumbnail
-│  │  ├─ coords.rs        # quy đổi CSS px <-> physical px
-│  │  ├─ stack.rs         # VecDeque<Shot>, tối đa 5
-│  │  ├─ config.rs        # load/save/migrate config.json
-│  │  ├─ hotkeys.rs       # đăng ký, đăng ký lại, báo lỗi xung đột
-│  │  ├─ tray.rs
-│  │  └─ platform/
-│  │     ├─ mod.rs        # trait PlatformExt
-│  │     ├─ windows.rs    # NOACTIVATE, EXCLUDEFROMCAPTURE, work area
-│  │     ├─ macos.rs      # stub ở Phase 1
-│  │     └─ linux.rs      # stub ở Phase 1
-│  ├─ capabilities/       # mỗi window 1 file permission
-│  └─ tauri.conf.json
-└─ src/
-   ├─ shared/             # ipc.ts (typed wrapper), types.ts, _tokens.scss
-   └─ windows/
-      ├─ overlay/  (index.html, main.ts, style.scss)
-      ├─ frame/
-      ├─ toolbar/
-      ├─ stack/
-      └─ settings/
+├─ Cargo.toml              # workspace
+├─ crates/
+│  ├─ core/src/            # lõi, không phụ thuộc OS, có unit test
+│  │  ├─ model.rs          # state machine: Model + Effect
+│  │  ├─ coords.rs         # Rect, MonitorInfo, đặt toolbar/stack
+│  │  ├─ capture.rs        # grab_region, persist_shot, thumbnail, tên file
+│  │  ├─ config.rs         # load/save/migrate config.json, apply_patch
+│  │  ├─ stack.rs          # tối đa 5 shot
+│  │  ├─ hotkey_name.rs    # mã phím -> "Ctrl+Alt+A"
+│  │  └─ icons.rs          # icon vector 24×24 (parse SVG path)
+│  └─ app/
+│     ├─ build.rs          # manifest + icon exe
+│     └─ src/platform/windows/
+│        ├─ mod.rs         # run(): single instance, message loop
+│        ├─ app.rs         # Action -> Model -> Effect -> cửa sổ
+│        ├─ win.rs         # đăng ký class, wndproc chung, hàng đợi Action
+│        ├─ gfx.rs         # Surface (DIB), Direct2D, DirectWrite, theme
+│        ├─ overlay.rs frame.rs toolbar.rs stack.rs settings.rs
+│        └─ tray.rs hotkeys.rs util.rs logger.rs
+└─ installer/chup.nsi
 ```
 
-### 6.6 State (Rust)
+### 6.6 State
 
-```rust
-pub struct Region { pub x: i32, pub y: i32, pub w: u32, pub h: u32, pub monitor_id: String }
+`Model` (crates/core/src/model.rs) giữ: config, danh sách màn hình, `selecting`, `region`, `last_region`, `mode` (Hidden/Normal/Faded), `frame_margin`, stack (≤5 shot), lỗi hotkey, `capture_exclusion_ok`. Shot giữ đường dẫn file, đường dẫn thumbnail (dùng làm ảnh khi kéo thả) và thumbnail đã giải mã trong RAM (để vẽ).
 
-pub enum FrameMode { Hidden, Normal, Faded }
+### 6.7 Action và Effect
 
-pub struct Shot {
-    pub id: String,             // ulid
-    pub path: PathBuf,          // file PNG gốc
-    pub thumb_path: PathBuf,    // trong app cache dir, dùng làm drag icon
-    pub thumb_data_url: String, // hiển thị trong stack, khỏi cấu hình asset scope
-    pub width: u32, pub height: u32,
-    pub created_at: DateTime<Local>,
-}
-
-pub struct AppState {
-    pub config: Config,
-    pub region: Option<Region>,
-    pub last_region: Option<Region>,
-    pub mode: FrameMode,
-    pub stack: VecDeque<Shot>, // MAX_STACK = 5
-}
-```
-
-### 6.7 IPC contract
-
-**Commands (frontend gọi Rust):**
-
-| Command | Gọi từ | Mô tả |
-|---|---|---|
-| `region_selected { monitor_id, x, y, w, h }` | overlay | CSS px. Rust quy đổi, ẩn mọi overlay, hiện frame và toolbar |
-| `selection_cancelled` | overlay | Ẩn mọi overlay |
-| `region_adjusted { x, y, w, h }` | frame | Sau khi resize/move, đơn vị physical px |
-| `capture_now` | toolbar | Chụp region hiện tại |
-| `toggle_fade` | toolbar | Chuyển Normal ↔ Faded |
-| `close_region` | toolbar | Đóng frame và toolbar |
-| `stack_remove { id }` / `stack_clear` | stack | Chỉ bỏ khỏi stack, không xoá file |
-| `shot_open { id }` / `shot_reveal { id }` / `shot_copy { id }` | stack | Mở ảnh / mở folder / copy |
-| `get_config` / `set_config { patch }` / `pick_save_dir` | settings | |
-
-**Events (Rust gửi xuống frontend):**
-
-| Event | Gửi tới | Payload |
-|---|---|---|
-| `selection:start` | overlay-* | `{ monitor_id, mode: "live" }`. Phase 2 thêm `"freeze"` (mục 14) |
-| `frame:mode` | frame, toolbar | `"normal" \| "faded"` |
-| `stack:changed` | stack | Toàn bộ danh sách shot (≤5 phần tử, gửi full list cho đơn giản) |
-| `config:changed` | settings | Config mới |
-| `error` | toolbar/stack | `{ code, message }`, hiển thị toast nhỏ |
-
-- Kéo thả: stack gọi trực tiếp `startDrag({ item: [shot.path], icon: shot.thumb_path })` của plugin.
-- Chỉ cho kéo khi file **đã ghi xong**: shot chỉ được đưa vào stack sau khi lưu file thành công.
+- **Action** (vào App): `StartSelection`, `CancelSelection`, `RegionSelected(rect)`, `FrameMoved(outer)`, `ToggleFade`, `CloseRegion`, `Capture`, `Grabbed`, `Persisted`, `StackRemove/Clear`, `ShotOpen/Reveal/Copy/Missing`, `Menu(id)`, `Hotkey(id)`, `ConfigPatch(json)`, `Pause/ResumeHotkeys`, `DisplayChanged`...
+- **Effect** (từ Model ra): `ShowOverlays`, `HideOverlays`, `ShowFrame`, `UpdateFrameMode`, `HideFrame`, `LayoutToolbar`, `HideToolbar`, `StackChanged`, `Toast`, `StartCapture`, `ApplyHotkeys`, `SyncAutostart`, `ConfigChanged`.
+- Kéo thả: cửa sổ stack gọi thẳng `drag::start_drag` (file PNG + ảnh thumbnail). Chỉ kéo khi file còn; mất file thì báo App bỏ shot khỏi stack.
+- Shot chỉ được đưa vào stack sau khi lưu file thành công.
 
 ### 6.8 Pipeline chụp
 
 1. Nhận `capture_now` hoặc hotkey Chụp.
 2. Lấy region. Nếu không có thì dùng `last_region`. Nếu vẫn không có thì bỏ qua.
 3. Kiểm tra region còn nằm trong màn hình hiện có. Nếu không thì gửi `error` và huỷ region.
-4. `grab_region()`: chụp bằng `Monitor::capture_region`, toạ độ tương đối theo màn hình, chạy trong `spawn_blocking`. Trả về `RgbaImage`.
+4. `grab_region()`: chụp bằng `Monitor::capture_region`, toạ độ tương đối theo màn hình, chạy ở worker thread. Trả về `RgbaImage`.
 5. `persist_shot(img)`, chạy song song các việc sau:
    - Encode PNG (compression `Fast`), ghi vào `save_dir`.
    - Tạo thumbnail (rộng tối đa 320 px physical), ghi vào cache dir.
    - Copy clipboard nếu bật.
-6. Đẩy shot vào stack (vượt 5 thì pop cái cũ nhất), gửi `stack:changed`, resize lại cửa sổ stack.
+6. Đẩy shot vào stack (vượt 5 thì pop cái cũ nhất), vẽ lại và đặt lại cửa sổ stack.
 7. Áp dụng hành vi sau khi chụp theo mode (mục 5.1 bước 6).
 
 **Chuẩn bị cho Phase 2 (không tốn thêm công):**
@@ -315,7 +259,7 @@ pub struct AppState {
 
 ### 6.9 Tên file và folder
 
-- **Folder mặc định**: `<Pictures>\Chup`. Lấy đường dẫn Pictures qua path API của Tauri.
+- **Folder mặc định**: `<Pictures>\Chup`. Lấy đường dẫn Pictures qua `SHGetKnownFolderPath`.
 - **Pattern mặc định**: `chup-{yyyyMMdd-HHmmss-SSS}.png`.
 - **Trùng tên**: thêm hậu tố `-1`, `-2`, …
 - **Folder không tồn tại**: tự tạo.
@@ -326,7 +270,7 @@ pub struct AppState {
 
 ### 6.10 Config
 
-File: `%APPDATA%\<identifier>\config.json`. Identifier chốt khi scaffold, dạng `dev.<tên>.chup`. Có field `version` để migrate về sau.
+File: `%APPDATA%\app.chup.desktop\config.json` (giữ nguyên đường dẫn của bản Tauri để không mất cấu hình). Log ở `%LOCALAPPDATA%\app.chup.desktop\chup.log`. Có field `version` để migrate về sau.
 
 ```json
 {
@@ -359,10 +303,8 @@ Config hỏng hoặc parse lỗi: backup thành `config.bak.json`, rồi dùng m
 ## 8. Rủi ro và giới hạn đã biết
 
 - **Live mode không chụp được menu hoặc tooltip đang mở.** Khi overlay hiện và nhận chuột, menu của app khác sẽ tự đóng. Giải quyết ở Phase 2 bằng **Freeze mode** (mục 14).
-- **RAM**: WebView2 không nhẹ, mỗi cửa sổ là 1 webview. Con số thật phải đo (mục 9). Nếu vượt ngân sách quá nhiều:
-  - Gộp `frame` và `toolbar` vào cùng renderer.
-  - Hoặc bỏ overlay tạo sẵn, chấp nhận hotkey phản hồi chậm hơn.
-- **`WDA_EXCLUDEFROMCAPTURE` chưa được verify với `xcap`.** Đã có fallback (mục 6.4).
+- **RAM**: bản Tauri dùng WebView2 tốn khoảng 125–150 MB (đo trên Windows 11, mục 9). Bước 1.5 bỏ WebView2 vì lý do này.
+- **`WDA_EXCLUDEFROMCAPTURE` với `xcap`**: đã kiểm chứng trên Windows 11 là hoạt động. Vẫn giữ fallback (mục 6.4) cho Windows cũ.
 
 ## 9. Ngân sách hiệu năng (Phase 1)
 
@@ -371,10 +313,10 @@ Mục tiêu; đo thực tế ở bước 1.4 rồi chỉnh lại.
 | Chỉ số | Mục tiêu | Cách đo |
 |---|---|---|
 | CPU khi idle | ~0% | Task Manager, 5 phút |
-| RAM idle (tổng cả cây process, gồm WebView2) | ≤ 100 MB | Task Manager, xem dạng process tree |
+| RAM idle (private working set, cột Memory của Task Manager) | ≤ 100 MB | Task Manager |
 | Từ nhấn hotkey đến lúc overlay hiện | ≤ 150 ms | Log timestamp |
 | Từ bấm Chụp đến lúc thumbnail hiện (vùng 1920×1080) | ≤ 300 ms | Log timestamp |
-| Dung lượng installer (không gồm WebView2 runtime) | ≤ 10 MB | File NSIS |
+| Dung lượng installer | ≤ 10 MB | File NSIS |
 
 ## 10. Tiêu chí nghiệm thu Phase 1 (test thủ công)
 
@@ -396,7 +338,8 @@ Mục tiêu; đo thực tế ở bước 1.4 rồi chỉnh lại.
   - Tray thành icon trên menu bar. Hotkey mặc định dùng `Cmd` thay cho `Ctrl+Alt`.
   - Màn hình Retina có scale 2.
   - Kiểm chứng lại cách loại cửa sổ khỏi ảnh chụp (mục 6.4).
-- **Linux X11**: kiến trúc giữ nguyên. Cài thêm dependency hệ thống theo README của `xcap`.
+- **Giao diện native riêng từng OS** trên cùng crate lõi: macOS dùng AppKit (`NSPanel` không lấy focus, `ignoresMouseEvents` cho Faded), Linux X11 dùng `x11rb` (override-redirect window, ARGB visual), Cài đặt dùng control gốc (AppKit / GTK).
+- **Linux X11**: cài thêm dependency hệ thống theo README của `xcap`.
 - **Linux Wayland: không hỗ trợ.** Lý do:
   - App không tự đặt được vị trí tuyệt đối của cửa sổ, nên stack ở cạnh màn hình và frame quanh region không đặt đúng chỗ được (trừ layer-shell, chỉ có trên một số compositor).
   - Chụp màn hình phải đi qua portal.
@@ -412,6 +355,7 @@ Mục tiêu; đo thực tế ở bước 1.4 rồi chỉnh lại.
 | 1.2 | Stack: 5 thumbnail, kéo thả ra ngoài, các nút hover, không cướp focus | Pass các mục test về stack ở mục 10 |
 | 1.3 | Frame, toolbar, Normal/Faded mode, resize/move, chụp lại vùng cuối | Pass các mục test về Faded ở mục 10 |
 | 1.4 | Hoàn thiện: mixed DPI, loại UI khỏi ảnh chụp, đổi màn hình, xử lý lỗi, autostart, installer NSIS, đo hiệu năng | Pass toàn bộ mục 10 và mục 9 |
+| 1.5 | Bỏ Tauri/WebView2: giao diện Win32 + Direct2D, lõi tách thành crate riêng (mục 6) | Giữ nguyên hành vi Phase 1, RAM idle ≤ 100 MB |
 | **Phase 2 — v2** | | |
 | 2.1 | Freeze mode (mục 14) | Pass mục 14.7 |
 | 2.2 | Spike OCR (mục 15.6) | Chốt engine và các ngưỡng |
@@ -479,17 +423,15 @@ Chụp được những thứ biến mất khi chuột hoặc focus thay đổi:
 ### 14.4 Kỹ thuật
 
 - **Truyền ảnh đóng băng xuống overlay**: **không** dùng data URL base64, vì ảnh 4K lên tới vài chục MB và rất chậm.
-  - Rust đăng ký custom URI scheme, ví dụ `chup://frozen/{monitor_id}?t={timestamp}` (`t` để tránh cache).
-  - Ảnh được phục vụ thẳng từ memory, encode dạng BMP (gần như không tốn CPU).
-  - Webview dùng làm `<img>` hoặc `background-image`.
-- **Crop luôn từ `RgbaImage` gốc trong Rust**, không lấy từ webview, để đảm bảo đúng từng pixel.
-- **Hiển thị 1:1**: kích thước CSS của overlay = logical size của màn hình, ảnh đặt `width: 100vw; height: 100vh`. Khi đó mỗi physical px của ảnh trùng đúng 1 physical px màn hình. Không để trình duyệt scale ảnh.
+  - Overlay native giữ ảnh đóng băng trong DIB của chính nó, tô tối phần ngoài vùng chọn bằng thao tác pixel.
+- **Crop luôn từ `RgbaImage` gốc**, không lấy lại từ màn hình, để đảm bảo đúng từng pixel.
+- **Hiển thị 1:1**: overlay có đúng kích thước physical của màn hình, ảnh chép thẳng vào DIB, không scale.
 - **Hotkey Freeze không dùng `Alt`**: trên Windows, phím Alt thường làm đóng menu đang mở trước khi app kịp chụp. Mặc định `F1` (không modifier). Cần test thực tế (mục 14.7). Phương án luôn chắc chắn là **hẹn giờ 3 giây**.
 - **Trong lúc đếm ngược hẹn giờ**: không hiện gì lên màn hình (tránh lọt vào ảnh), chỉ đổi icon tray.
-- **Dùng lại overlay window của Phase 1**: cùng label `overlay-{n}`, `selection:start` mang `mode: "freeze"` kèm `frozen_url`.
+- **Dùng lại overlay window của Phase 1**: `Effect::ShowOverlays` mang thêm chế độ freeze và ảnh của từng màn hình.
 - **RAM**: ảnh 4K RGBA khoảng 33 MB mỗi màn hình. Giải phóng ngay khi overlay đóng.
-- **IPC bổ sung**:
-  - Command: `freeze_confirm { monitor_id, x, y, w, h, action: "save" | "copy" | "ocr" }` (CSS px, quy đổi như mục 6.3).
+- **Action bổ sung**:
+  - Action: `FreezeConfirm { rect, action: Save | Copy | Ocr }` (physical px, mục 6.3).
   - Config: thêm `hotkeys.freeze: "F1"`, tăng `version` lên 2 và migrate.
 
 ### 14.5 Tray bổ sung
@@ -689,10 +631,10 @@ Lấy theo thứ tự ưu tiên. Khung được tô là **khung nhỏ nhất ch�
 - **Toạ độ**: Chup là app Per-Monitor DPI Aware v2, nên DWM và UIA trả về **physical px**. Dùng thẳng làm `Rect` (mục 6.3), không quy đổi.
 - **Freeze mode**: lấy danh sách cửa sổ và UIA ngay lúc chụp đóng băng, nên menu, tooltip vẫn còn trong cây UI và chọn được đúng khung của chúng.
 - **Không để UIA làm chậm việc vẽ**: overlay tô ngay khung cửa sổ (đã có sẵn), rồi thay bằng khung UIA khi kết quả về.
-- **IPC bổ sung**:
-  - Event `autodetect:hover { rect, kind, depth }` từ Rust xuống overlay (rect đổi sang CSS px của màn hình đó).
-  - Overlay gửi `autodetect_point { monitor_id, x, y }` khi chuột di, và `autodetect_level { delta: 1 | -1 }` khi cuộn hoặc bấm phím.
-  - Click chọn khung dùng lại command xác nhận vùng của Phase 1, gửi kèm rect của khung.
+- **Action bổ sung**:
+  - Overlay gửi điểm dưới con trỏ cho thread UIA, nhận lại `{ rect, kind, depth }` (physical px).
+  - Cuộn chuột hoặc phím mũi tên đổi `depth` (lên khung cha / xuống khung con).
+  - Click chọn khung dùng lại `Action::RegionSelected(rect)` của Phase 1.
 - **Config**: thêm `autoDetect: { enabled: true, imageEdges: false }`, gộp vào lần tăng `version` lên 2 của Freeze (mục 14.4).
 - **Phase 3**:
   - macOS: `CGWindowListCopyWindowInfo` cho cửa sổ, Accessibility API (`AXUIElement`) cho phần tử. Cần quyền Accessibility.

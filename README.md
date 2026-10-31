@@ -108,7 +108,9 @@ Bản native:
 - Kéo chọn vùng 4K (44 lần di chuột, cả hiện frame/toolbar) tốn tổng ~0,17 s CPU.
 - Chụp 42–114 ms; lưu (PNG + thumbnail + clipboard) 120–460 ms. Số này đo trước khi bỏ arboard.
   Hiện PNG chỉ mã hoá 1 lần cho cả file và clipboard, nên lưu nhanh hơn.
-- Đỉnh RAM khi chụp vùng 2812×1350: ~54 MB, rảnh 15 s thì trả lại hệ điều hành.
+- Đỉnh RAM khi chụp vùng 2812×1350: ~54 MB. Rảnh 15 s thì working set về dưới 2 MB, nhưng
+  commit (bộ nhớ đã cấp, phần lớn nằm ngoài RAM) giữ ở ~34–37 MB vì heap của Windows không trả
+  hết vùng đã dùng cho ảnh lớn.
 
 Cách giữ RAM thấp:
 - Bộ nhớ đồ hoạ chỉ cấp khi cửa sổ đang hiện: DIB overlay (cỡ màn hình, ~29 MB ở 4K) và DIB

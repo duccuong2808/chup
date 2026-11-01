@@ -9,8 +9,9 @@ Rust thuần, **không WebView**: giao diện Win32 + Direct2D/DirectWrite. Lõi
 - 2.3 OCR (SPEC mục 15, thiết kế `docs/plans/2026-11-01-ocr-design.md`) xong, đã test trên VM (epic beads `chup-2fy`).
   Tiếng Anh = Windows OCR; tiếng Việt = `chup-ocr.exe` (Tesseract link tĩnh, nằm trong installer) + dữ liệu tessdata_fast
   tải từ GitHub cộng đồng (repo này private, không phát file OCR).
-- Việc tiếp theo: Preview chọn chữ trên ảnh kiểu Live Text (beads `chup-4fx`, user đã chốt: giữ các cách copy thẳng,
-  tuỳ chọn tự nhận diện khi mở Preview mặc định bật); tự động chọn vùng (SPEC mục 16).
+- Preview chọn chữ trên ảnh kiểu Live Text (SPEC 15.2, 17.2; thiết kế `docs/plans/2026-11-01-live-text-design.md`,
+  beads `chup-4fx`) xong, đã test trên VM. Chọn theo ký tự; tự nhận diện khi mở Preview (mặc định bật).
+- Việc tiếp theo: tự động chọn vùng (SPEC mục 16).
 
 ## Lệnh
 

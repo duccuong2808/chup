@@ -73,6 +73,7 @@ Workflow `.github/workflows/build.yml` chạy trên `windows-latest`:
 | Preview | Kéo để di chuyển, kéo mép/góc để đổi cỡ, lăn chuột để zoom, `Ctrl` + lăn chuột đổi opacity. Hover: ghim (luôn nằm trên), copy, folder, đóng. `Esc` đóng. Lần sau mở đúng chỗ và cỡ cũ (đổi trong Cài đặt) |
 | Lưu / Copy / huỷ (Freeze) | `Enter`, double-click trong vùng hoặc nút **Lưu** / nút **Copy** (chỉ clipboard, không lưu file) / `Esc` hoặc click phải |
 | Copy chữ trong ảnh (OCR) | Nút **[T]** trên Preview, trên toolbar vùng chọn, hoặc nút **Chữ** khi Freeze; hotkey "Chụp text" (gán trong Cài đặt): chọn vùng là copy chữ luôn. Không lưu file. Tiếng Việt cần tải gói (Cài đặt) |
+| Chọn chữ trên ảnh (kiểu Live Text) | Mở Preview là chữ được nhận diện ở nền. Kéo trên chữ để bôi đen (theo ký tự), bấm đúp chọn từ, bấm 3 lần chọn dòng, `Shift`+bấm nới vùng chọn, `Ctrl+A` / `Ctrl+C`, chuột phải có menu. `Alt`+kéo luôn di chuyển cửa sổ. Tắt "Tự nhận diện chữ khi mở Preview" thì bấm [T] mới nhận diện |
 
 ## Cấu trúc code
 
@@ -208,6 +209,19 @@ Cách giữ RAM thấp:
     sau khi mở mạng thì tải được. Xoá gói khi `chup-ocr.exe` đang chạy: xoá được (tắt exe phụ trước).
   - Lỗi tìm thấy và đã sửa: chữ tiếng Việt trong bộ cài hỏng (script thiếu BOM UTF-8); "Xoá gói" lỗi
     os error 32 vì `chup-ocr.exe` giữ thư mục gói, rồi tải lại cũng lỗi; instance thứ hai ghi đè `chup.log`.
+
+- Chọn chữ trên ảnh, Live Text (bản `dda136b`, Notepad 200%):
+  - Tiếng Việt: kéo giữa từ ra đúng ký tự ("m chụp màn hì"), kéo nhiều dòng (xuôi và ngược) ghép hàng bằng
+    xuống dòng, không thừa dấu cách đầu; zoom ×1,95 rồi chọn vẫn khớp chữ. Tiếng Anh (Windows OCR, ranh giới
+    ký tự ước lượng): "n fox jumps o" khớp chỗ kéo.
+  - Bấm đúp chọn từ, bấm 3 lần chọn cả dòng, `Shift`+bấm nới vùng chọn, `Ctrl+A` chọn hết, `Ctrl+C` và menu
+    chuột phải "Copy chữ" copy đúng; con trỏ I-beam trên chữ. `Esc` bỏ vùng chọn, lần nữa mới đóng.
+    `Alt`+kéo trên chữ và kéo chỗ trống đều di chuyển cửa sổ (vùng chọn bỏ đi).
+  - Job nền mở Preview: tiếng Anh 20–60 ms, tiếng Việt ảnh 2728×1631 ~2,7 s. Bấm [T] lúc job nền đang chạy:
+    nút quay "bận", chỉ một job, xong là copy. Bấm [T] khi job nền đã xong: copy ngay (cache).
+  - Tắt "Tự nhận diện chữ khi mở Preview": Preview không có chữ (con trỏ mũi tên); bấm [T] thì copy cả khối và
+    sau đó chọn được chữ.
+  - Không tìm thấy lỗi mới.
 
 - Clipboard (khi chụp và nút Copy, ảnh 2193×1350): có đủ `PNG` (đúng byte của file), CF_DIBV5,
   và `Bitmap`/`DIB` do Windows tự suy ra. Chuẩn bị ~16–20 ms, giữ clipboard ~9–10 ms.

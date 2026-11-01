@@ -111,6 +111,10 @@ Bản native:
 - Đỉnh RAM khi chụp vùng 2812×1350: ~54 MB. Rảnh 15 s thì working set về dưới 2 MB, nhưng
   commit (bộ nhớ đã cấp, phần lớn nằm ngoài RAM) giữ ở ~34–37 MB vì heap của Windows không trả
   hết vùng đã dùng cho ảnh lớn.
+- Bấm Chụp → thumbnail, vùng 1920×1080 (đo 2026-10-31, sau khi bỏ arboard): chụp 58–149 ms +
+  lưu 215–233 ms = **280–302 ms**, có 1 lần 382 ms. Mã hoá PNG chiếm ~200 ms. Ngân sách SPEC là
+  300 ms. VM này là Windows **ARM64**, `chup.exe` (x64) chạy qua giả lập Prism, nên trên máy x64
+  thật sẽ nhanh hơn; cần đo lại ở đó.
 
 Cách giữ RAM thấp:
 - Bộ nhớ đồ hoạ chỉ cấp khi cửa sổ đang hiện: DIB overlay (cỡ màn hình, ~29 MB ở 4K) và DIB
@@ -126,7 +130,12 @@ Cách giữ RAM thấp:
 - `WDA_EXCLUDEFROMCAPTURE` có tác dụng với cách chụp của `xcap`.
 - Stack: hover hiện nút và nhãn W × H; kéo thả thumbnail ra Desktop; click thẻ mở ảnh;
   thu gọn và mở lại; toast lỗi khi file bị xoá bên ngoài (thẻ tự bỏ khỏi stack).
-- Chế độ Mờ: click xuyên qua, `Ctrl+Alt+S` chụp nhiều lần liên tiếp.
+- Chế độ Mờ: click xuyên qua, gõ phím và cuộn ở app bên dưới bình thường; `Ctrl+Alt+S` chụp
+  đúng vùng (ảnh là nội dung sau khi cuộn, không dính viền) và app bên dưới vẫn giữ focus.
+- Chụp 7 lần liên tiếp: stack còn 5 ảnh mới nhất, ổ đĩa có đủ 7 file.
+- Kéo thả thumbnail (chỉ đưa `CF_HDROP`, hiệu ứng copy): Explorer (copy file, file gốc còn
+  nguyên, cùng hash), VS Code (mở Image Preview), Chrome (vùng thả và `<input type=file>`, nhận
+  đúng tên, kích thước, `image/png`).
 - Không cướp focus: sau khi chụp, app đang dùng vẫn giữ focus.
 - Single instance: chạy lần 2 thì mở Cài đặt.
 - Cài đặt: ghi phím tắt, báo lỗi tổ hợp đã bị app khác chiếm, `Esc` huỷ ghi phím.
@@ -142,9 +151,15 @@ trong clipboard, nó mất kết nối vài giây rồi ghi text cũ đè lên. 
 tự đặt ảnh, nên không do Chup. Muốn kiểm tra clipboard thì phải đọc ngay trong ~2 giây đầu.
 
 **Chưa test:**
-1. Nhiều màn hình, nhất là màn hình khác DPI (100% + 150%). Phần quy đổi toạ độ có unit test.
+1. Nhiều màn hình, nhất là màn hình khác DPI (100% + 150%), và rút màn hình phụ khi frame đang
+   ở trên đó. Phần quy đổi toạ độ có unit test. VM hiện chỉ có 1 màn hình.
 2. Tooltip/menu có hiệu ứng trong suốt có lọt vào ảnh không (`xcap` chụp bằng GDI `BitBlt`
    không có cờ `CAPTUREBLT`).
+3. Kéo thả vào Zalo PC, Slack, Word.
+
+**Vấn đề đang theo dõi:** kéo thumbnail đôi khi không bắt đầu kéo. Trên VM, nhấn chuột ngay khi
+vừa rê vào thumbnail thì không kéo được (0/4); dừng ≥ 0,15 s thì 9/9. Có 1 lần lỗi dù đã dừng
+0,5 s, chưa rõ nguyên nhân (Chup hay cách VMPal giả lập chuột).
 
 ## Khác với SPEC
 

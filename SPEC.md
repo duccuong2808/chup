@@ -4,7 +4,7 @@
 >
 > Lộ trình chia 3 phase:
 > - **Phase 1** = v1 cho Windows. Bước 1.5 chuyển giao diện sang Win32 native, bỏ WebView (mục 12).
-> - **Phase 2** = v2, gồm Freeze, OCR và tự động chọn vùng.
+> - **Phase 2** = v2, gồm Freeze, preview, OCR và tự động chọn vùng.
 > - **Phase 3** = mở rộng sang macOS và Linux.
 >
 > Các câu hỏi mở đã được chốt ở mục 13.
@@ -358,10 +358,11 @@ Mục tiêu; đo thực tế ở bước 1.4 rồi chỉnh lại.
 | 1.5 | Bỏ Tauri/WebView2: giao diện Win32 + Direct2D, lõi tách thành crate riêng (mục 6) | Giữ nguyên hành vi Phase 1, RAM idle ≤ 100 MB |
 | **Phase 2 — v2** | | |
 | 2.1 | Freeze mode (mục 14) | Pass mục 14.7 |
-| 2.2 | Spike OCR (mục 15.6) | Chốt engine và các ngưỡng |
-| 2.3 | OCR (mục 15) | Pass mục 15.8 |
-| 2.4 | Spike tự động chọn vùng (mục 16.6) | Chốt có làm khung từ ảnh hay không |
-| 2.5 | Tự động chọn vùng (mục 16) | Pass mục 16.7 |
+| 2.2 | Preview to khi bấm thumbnail: tuỳ chọn luôn nằm trên, chỉnh opacity. OCR sẽ đặt trên preview này (thiết kế sau, đổi Q5 và mục 15.2) | Chưa chốt |
+| 2.3 | Spike OCR (mục 15.6) | Chốt engine và các ngưỡng |
+| 2.4 | OCR (mục 15) | Pass mục 15.8 |
+| 2.5 | Spike tự động chọn vùng (mục 16.6) | Chốt có làm khung từ ảnh hay không |
+| 2.6 | Tự động chọn vùng (mục 16) | Pass mục 16.7 |
 | **Phase 3 — đa nền tảng** | | |
 | 3.1 | macOS | Pass mục 10 và 14.7 trên macOS |
 | 3.2 | Linux X11 | Pass mục 10 trên X11 |

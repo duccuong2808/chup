@@ -115,7 +115,7 @@ chọn/chỉnh vùng trong overlay ──> Action::FreezeConfirm { rect, Save | 
 ### Tray và hẹn giờ
 
 - Menu tray thêm "Chụp đóng băng" và "Chụp đóng băng sau 3 giây".
-- Hẹn giờ: `SetTimer` 3 s trên cửa sổ chính; trong lúc chờ tray đổi sang icon đồng hồ cát, màn hình không hiện gì (SPEC 14.4). Hết giờ emit `Action::FreezeNow`.
+- Hẹn giờ: `SetTimer` 3 s trên cửa sổ chính; trong lúc chờ icon tray mờ đi kèm tooltip "sắp chụp đóng băng…" (không cần thêm asset icon), màn hình không hiện gì (SPEC 14.4). Hết giờ emit `Action::FreezeTimerFired`.
 - Settings thêm dòng hotkey "Chụp đóng băng".
 
 ## 4. Test

@@ -8,7 +8,7 @@ use std::{
 };
 
 use chup_core::{
-    config::{AfterCapture, Config, Edge, StackMonitor},
+    config::{AfterCapture, Config, Edge, PreviewPosition, StackMonitor},
     hotkey_name::{self, Mods, Recorded},
 };
 use serde_json::json;
@@ -75,6 +75,10 @@ const ID_MONITOR: u16 = 109;
 const ID_AUTOSTART: u16 = 110;
 const ID_HIDEUI: u16 = 111;
 const ID_HK_FREEZE: u16 = 112;
+const ID_PV_TOP: u16 = 113;
+const ID_PV_OPACITY: u16 = 114;
+const ID_PV_POS: u16 = 115;
+const ID_PV_SIZE: u16 = 116;
 const TIMER_PATTERN: usize = 1;
 
 const RECORDING_TEXT: &str = "Nhấn tổ hợp phím…";
@@ -166,6 +170,14 @@ struct Handles {
     edge: HWND,
     lbl_mon: HWND,
     mon: HWND,
+    sec_pv: HWND,
+    pv_top: HWND,
+    lbl_pv_op: HWND,
+    pv_op: HWND,
+    lbl_pv_pos: HWND,
+    pv_pos: HWND,
+    lbl_pv_size: HWND,
+    pv_size: HWND,
     sec_sys: HWND,
     autostart: HWND,
     hideui: HWND,
@@ -327,6 +339,14 @@ impl Settings {
             edge: self.add(w!("COMBOBOX"), "", combo, none, ID_EDGE, Kind::Control),
             lbl_mon: self.add(st, "Màn hình", s, none, 0, Kind::Label),
             mon: self.add(w!("COMBOBOX"), "", combo, none, ID_MONITOR, Kind::Control),
+            sec_pv: self.add(st, "PREVIEW (BẤM VÀO THUMBNAIL)", s, none, 0, Kind::Section),
+            pv_top: self.add(w!("BUTTON"), "Luôn nằm trên cửa sổ khác", check, none, ID_PV_TOP, Kind::Control),
+            lbl_pv_op: self.add(st, "Opacity (Ctrl + lăn chuột để chỉnh tạm)", s, none, 0, Kind::Label),
+            pv_op: self.add(w!("COMBOBOX"), "", combo, none, ID_PV_OPACITY, Kind::Control),
+            lbl_pv_pos: self.add(st, "Chỗ mở", s, none, 0, Kind::Label),
+            pv_pos: self.add(w!("COMBOBOX"), "", combo, none, ID_PV_POS, Kind::Control),
+            lbl_pv_size: self.add(st, "Cỡ khi mở (kéo mép hoặc lăn chuột để đổi)", s, none, 0, Kind::Label),
+            pv_size: self.add(w!("COMBOBOX"), "", combo, none, ID_PV_SIZE, Kind::Control),
             sec_sys: self.add(st, "HỆ THỐNG", s, none, 0, Kind::Section),
             autostart: self.add(w!("BUTTON"), "Khởi động cùng Windows", check, none, ID_AUTOSTART, Kind::Control),
             hideui: self.add(w!("BUTTON"), "Ẩn toolbar và stack trong lúc chụp", check, none, ID_HIDEUI, Kind::Control),
@@ -337,6 +357,12 @@ impl Settings {
             (h.after, &["Đóng vùng chọn", "Giữ vùng chọn để chụp tiếp"][..]),
             (h.edge, &["Phải", "Trái"][..]),
             (h.mon, &["Màn hình chính", "Màn hình đang có con trỏ"][..]),
+            (h.pv_op, &["100%", "90%", "80%", "70%", "60%", "50%", "40%", "30%", "20%"][..]),
+            (h.pv_pos, &["Chỗ và cỡ lần trước", "Cạnh stack", "Giữa màn hình"][..]),
+            (
+                h.pv_size,
+                &["Tối đa 30% màn hình", "Tối đa 50% màn hình", "Tối đa 70% màn hình", "Tối đa 90% màn hình"][..],
+            ),
         ] {
             for it in items {
                 let t = wide(it);
@@ -354,19 +380,8 @@ impl Settings {
         self.apply_dpi();
     }
 
-    /// Icon của exe (resource id 1, nhúng lúc build trên Windows).
     fn set_icon(&self) {
-        use windows::Win32::UI::WindowsAndMessaging::{
-            GetSystemMetrics, LoadImageW, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_SHARED, SM_CXICON, SM_CXSMICON,
-            WM_SETICON,
-        };
-        for (which, metric) in [(ICON_BIG, SM_CXICON), (ICON_SMALL, SM_CXSMICON)] {
-            let sz = unsafe { GetSystemMetrics(metric) };
-            let icon = unsafe { LoadImageW(Some(hinstance()), PCWSTR(1 as *const u16), IMAGE_ICON, sz, sz, LR_SHARED) };
-            if let Ok(h) = icon {
-                unsafe { SendMessageW(self.hwnd, WM_SETICON, Some(WPARAM(which as usize)), Some(LPARAM(h.0 as isize))) };
-            }
-        }
+        super::util::set_app_icon(self.hwnd);
     }
 
     fn dpi(&self) -> u32 {
@@ -480,6 +495,21 @@ impl Settings {
         y += 20.0;
         mv(h.mon, x1, y, col, 200.0);
         y += 40.0;
+        section(h.sec_pv, x1, &mut y);
+        mv(h.pv_top, x1, y, col, 22.0);
+        y += 30.0;
+        mv(h.lbl_pv_op, x1, y, col, 18.0);
+        y += 20.0;
+        mv(h.pv_op, x1, y, col, 200.0);
+        y += 32.0;
+        mv(h.lbl_pv_pos, x1, y, col, 18.0);
+        y += 20.0;
+        mv(h.pv_pos, x1, y, col, 200.0);
+        y += 32.0;
+        mv(h.lbl_pv_size, x1, y, col, 18.0);
+        y += 20.0;
+        mv(h.pv_size, x1, y, col, 200.0);
+        y += 40.0;
         section(h.sec_sys, x1, &mut y);
         mv(h.autostart, x1, y, col, 22.0);
         y += 26.0;
@@ -533,6 +563,16 @@ impl Settings {
         set_combo(h.after, if c.after_capture_normal == AfterCapture::Keep { 1 } else { 0 });
         set_combo(h.edge, if c.stack.edge == Edge::Left { 1 } else { 0 });
         set_combo(h.mon, if c.stack.monitor == StackMonitor::Cursor { 1 } else { 0 });
+        set_checked(h.pv_top, c.preview.always_on_top);
+        set_combo(h.pv_op, (100 - c.preview.opacity.min(100) as i32) / 10);
+        let pos = match c.preview.position {
+            PreviewPosition::Remember => 0,
+            PreviewPosition::Stack => 1,
+            PreviewPosition::Center => 2,
+        };
+        set_combo(h.pv_pos, pos);
+        // 30/50/70/90: giá trị khác (sửa tay trong file) lấy mục gần nhất.
+        set_combo(h.pv_size, ((c.preview.size as i32 - 20) / 20).clamp(0, 3));
         set_checked(h.autostart, c.launch_at_startup);
         set_checked(h.hideui, c.hide_ui_during_capture || !v.exclusion_ok);
         unsafe {
@@ -757,6 +797,19 @@ impl Handler for Settings {
                     },
                     (ID_COPY, BN_CLICKED) => self.patch(json!({ "copyToClipboard": checked(h.copy) })),
                     (ID_AUTOSTART, BN_CLICKED) => self.patch(json!({ "launchAtStartup": checked(h.autostart) })),
+                    (ID_PV_TOP, BN_CLICKED) => self.patch(json!({ "preview": { "alwaysOnTop": checked(h.pv_top) } })),
+                    (ID_PV_POS, CBN_SELCHANGE) => {
+                        let v = ["remember", "stack", "center"][combo_sel(h.pv_pos).clamp(0, 2) as usize];
+                        self.patch(json!({ "preview": { "position": v } }))
+                    }
+                    (ID_PV_SIZE, CBN_SELCHANGE) => {
+                        let v = 30 + 20 * combo_sel(h.pv_size).clamp(0, 3);
+                        self.patch(json!({ "preview": { "size": v } }))
+                    }
+                    (ID_PV_OPACITY, CBN_SELCHANGE) => {
+                        let v = 100 - 10 * combo_sel(h.pv_op).clamp(0, 8);
+                        self.patch(json!({ "preview": { "opacity": v } }))
+                    }
                     (ID_HIDEUI, BN_CLICKED) => self.patch(json!({ "hideUiDuringCapture": checked(h.hideui) })),
                     (ID_AFTER, CBN_SELCHANGE) => {
                         let v = if combo_sel(h.after) == 1 { "keep" } else { "close" };

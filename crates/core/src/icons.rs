@@ -31,6 +31,7 @@ pub enum Icon {
     ChevronRight,
     ChevronLeft,
     Check,
+    Pin,
 }
 
 impl Icon {
@@ -51,6 +52,7 @@ impl Icon {
             Icon::ChevronRight => vec![Stroke(p("M9 6l6 6-6 6"))],
             Icon::ChevronLeft => vec![Stroke(p("M15 6l-6 6 6 6"))],
             Icon::Check => vec![Stroke(p("M5 12l5 5 9-10"))],
+            Icon::Pin => vec![Stroke(p("M9 3h6M10 3v6l-3 4h10l-3-4V3M12 13v8"))],
         }
     }
 }
@@ -228,6 +230,7 @@ mod tests {
             Icon::ChevronRight,
             Icon::ChevronLeft,
             Icon::Check,
+            Icon::Pin,
         ] {
             assert!(!i.shapes().is_empty());
         }

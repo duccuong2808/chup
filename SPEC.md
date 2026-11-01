@@ -121,7 +121,7 @@
   - Ảnh quá dài hoặc quá cao thì crop ở giữa (`object-fit: cover`).
 - **Tương tác với thumbnail**:
   - **Kéo** (giữ chuột và di ≥ 4px): kéo file PNG ra ngoài (native drag).
-  - **Click**: mở ảnh bằng app mặc định của OS.
+  - **Click**: mở ảnh trong cửa sổ Preview (mục 17).
   - **Hover**: hiện các nút nhỏ:
     - Copy: copy ảnh vào clipboard.
     - Folder: mở Explorer và chọn sẵn file.
@@ -286,6 +286,7 @@ File: `%APPDATA%\app.chup.desktop\config.json` (giữ nguyên đường dẫn c�
 }
 ```
 
+- Phase 2.2 thêm `preview` (mục 17.4); field mới có default nên vẫn là version 2.
 - Version 2 (Phase 2.1) thêm `hotkeys.freeze`. Migrate từ v1: điền `"F1"`; nếu F1 đã được dùng cho hotkey khác thì để trống (tắt).
 - Chuỗi rỗng = tắt hotkey đó. Hai hotkey không được trùng nhau.
 
@@ -362,7 +363,7 @@ Mục tiêu; đo thực tế ở bước 1.4 rồi chỉnh lại.
 | 1.5 | Bỏ Tauri/WebView2: giao diện Win32 + Direct2D, lõi tách thành crate riêng (mục 6) | Giữ nguyên hành vi Phase 1, RAM idle ≤ 100 MB |
 | **Phase 2 — v2** | | |
 | 2.1 | Freeze mode (mục 14) | Pass mục 14.7 |
-| 2.2 | Preview to khi bấm thumbnail: tuỳ chọn luôn nằm trên, chỉnh opacity. OCR sẽ đặt trên preview này (thiết kế sau, đổi Q5 và mục 15.2) | Chưa chốt |
+| 2.2 | Preview khi bấm thumbnail (mục 17) | Pass mục 17.6 |
 | 2.3 | Spike OCR (mục 15.6) | Chốt engine và các ngưỡng |
 | 2.4 | OCR (mục 15) | Pass mục 15.8 |
 | 2.5 | Spike tự động chọn vùng (mục 16.6) | Chốt có làm khung từ ảnh hay không |
@@ -379,7 +380,7 @@ Mục tiêu; đo thực tế ở bước 1.4 rồi chỉnh lại.
 | Q2 | Hotkey: `Ctrl+Alt+A` (chọn vùng), `Ctrl+Alt+S` (chụp), `F1` (Freeze, Phase 2). OCR "Chụp text" chưa gán | Tránh `PrtScn` vì Windows 11 mặc định gán cho Snipping Tool. Freeze không dùng `Alt`, xem mục 14.4 |
 | Q3 | Normal mode: chụp xong thì **đóng** frame | Muốn chụp lặp lại thì chuyển sang Faded |
 | Q4 | Stack **không tự ẩn**, có nút thu gọn | Tự ẩn dễ làm mất ảnh đúng lúc đang định kéo |
-| Q5 | Click thumbnail: mở bằng app mặc định của OS | Không phải tự làm trình xem ảnh |
+| Q5 | Click thumbnail: mở cửa sổ Preview của Chup (mục 17). Trước 2.2: mở bằng app mặc định của OS | Người dùng chốt (2026-11-01): cần nhìn ảnh vừa chụp cạnh chỗ đang làm, chỉnh được chỗ, cỡ, opacity, và có OCR trên đó |
 | Q6 | Shot mới nhất nằm sát góc dưới | Chuột di ra góc ngắn nhất cho ảnh vừa chụp |
 | Q7 | Copy clipboard sau khi chụp: **bật** mặc định | Giống thói quen của Snipping Tool |
 | Q8 | Freeze mode làm ở **Phase 2**, trước OCR | Người dùng chốt. Làm trước OCR vì OCR "Chụp text" dùng lại overlay của Freeze |
@@ -474,8 +475,8 @@ Thêm 2 mục vào menu tray:
 
 ### 15.2 UX
 
-- **Stack**: khi hover thumbnail có thêm nút **[T]**.
-  - Bấm vào: OCR shot đó và copy text.
+- **Preview** (mục 17): toolbar có thêm nút **[T]**.
+  - Bấm vào: OCR ảnh đang xem và copy text.
   - Hiện toast "Đã copy N dòng" kèm 1 dòng preview.
 - **Toolbar Live mode**: thêm nút **[T Chụp text]**. Chụp region, OCR, copy text, **không lưu file và không thêm vào stack**.
 - **Toolbar Freeze mode**: thêm nút **[T]** (`freeze_confirm` với `action: "ocr"`).
@@ -483,7 +484,7 @@ Thêm 2 mục vào menu tray:
   - Khi người dùng gán, hotkey mở overlay ở Freeze mode.
   - Chọn vùng xong là OCR luôn, không hiện toolbar.
 - **Không tìm thấy chữ**: hiện toast "Không tìm thấy chữ", clipboard giữ nguyên.
-- **Đang OCR**: hiện spinner trên thumbnail hoặc toolbar, có thể huỷ.
+- **Đang OCR**: hiện spinner trên Preview hoặc toolbar, có thể huỷ.
 - **Lần đầu dùng, chưa có model**:
   - Hỏi người dùng có tải gói OCR không, ghi rõ dung lượng.
   - Tải có thanh tiến trình, verify checksum.
@@ -672,3 +673,76 @@ Lấy theo thứ tự ưu tiên. Khung được tô là **khung nhỏ nhất ch�
 - [ ] Freeze mode: mở menu chuột phải, nhấn `F1`, click chọn được đúng khung của menu.
 - [ ] App đang treo hoặc chạy quyền admin: overlay không bị đứng, vẫn tô được khung cửa sổ.
 - [ ] Cửa sổ vắt qua 2 màn hình: khung bị cắt trong màn hình đang có con trỏ.
+
+## 17. Phase 2 — Preview khi bấm thumbnail
+
+Thiết kế chi tiết: `docs/plans/2026-11-01-preview-design.md`.
+
+### 17.1 Mục tiêu
+
+- Bấm thumbnail là thấy ảnh vừa chụp đủ to để đọc, đặt cạnh chỗ đang làm để dựa vào đó làm việc khác
+  (gõ lại số liệu, so giao diện, làm theo hướng dẫn).
+- Chỗ và cỡ mở có mặc định hợp lý và chỉnh được; opacity chỉnh được.
+- Là chỗ đặt OCR (mục 15.2): copy text từ ảnh đang xem.
+
+### 17.2 Hành vi
+
+- **Một cửa sổ Preview**: bấm thumbnail khác thì thay ảnh.
+- **Chỗ và cỡ mở** (Cài đặt "Chỗ mở"):
+  - **Chỗ và cỡ lần trước** (mặc định): người dùng kéo, đổi cỡ, zoom là Chup nhớ khung. Lần sau ảnh vừa
+    khung đó (tối đa 1:1) và bám cạnh khung gần cạnh màn hình hơn (khung ở góc dưới-phải thì ảnh mới cũng
+    nằm sát góc đó). Chưa có khung, hoặc màn hình chứa khung đã bị rút: mở như "Cạnh stack".
+  - **Cạnh stack**: sát mép trong của stack, căn đáy work area, cách 12 DIP.
+  - **Giữa màn hình**.
+  - Cỡ khi mở (khi không dùng khung lần trước): ảnh tối đa 30/50/70/90% work area mỗi chiều (mặc định 50%),
+    không phóng quá 1:1. Ảnh nhỏ hơn 160×48 DIP thì cửa sổ giữ cỡ đó, ảnh nằm giữa trên nền tối.
+  - Mở trên màn hình đang có stack.
+- **Chỉnh trực tiếp**:
+  - Kéo bất kỳ đâu (ngoài nút) để di chuyển.
+  - Kéo mép hoặc góc (dải 6 DIP, góc 12 DIP) để đổi cỡ, luôn giữ tỉ lệ ảnh, mép đối diện đứng yên.
+  - Lăn chuột: zoom quanh con trỏ (×1,25 mỗi nấc), từ 5% tới vừa khít work area (tối đa 800%).
+  - `+`/`-` zoom, `0` về cỡ lúc mở.
+  - Cửa sổ luôn nằm trong work area khi zoom và đổi cỡ.
+- **Opacity**: mặc định theo Cài đặt (100%, chọn 100–20%). `Ctrl` + lăn chuột chỉnh ±10% cho cửa sổ đang mở
+  (không lưu). Không thấp hơn 20%.
+- **Luôn nằm trên** cửa sổ khác: Cài đặt (mặc định bật). Nút ghim trên toolbar bật/tắt cho cửa sổ đang mở.
+- **Toolbar** góc trên-phải, chỉ hiện khi hover: [Ghim] [Copy] [Folder] [✕] (OCR thêm [T]).
+- Đổi zoom hoặc opacity: nhãn "75%" / "Opacity 60%" ở đáy trong 1,2 giây.
+- `Esc` hoặc ✕: đóng. `Ctrl+C`: copy ảnh.
+- Preview lấy focus khi mở; có trên taskbar và Alt+Tab (tiêu đề là tên file).
+- Preview **không** bị loại khỏi ảnh chụp (khác stack, toolbar): người dùng có thể muốn chụp lại hoặc
+  chia sẻ màn hình có nó.
+- File đã bị xoá bên ngoài: như kéo thả (mục 7).
+
+### 17.3 Kỹ thuật
+
+- Layered window như các cửa sổ phụ khác; opacity là alpha chung của `UpdateLayeredWindow`.
+- Giải mã PNG ở worker; bấm liên tiếp thì chỉ hiện ảnh của lần bấm cuối.
+- Ảnh, DIB và bitmap Direct2D chỉ tồn tại khi đang mở (ảnh 4K ~100 MB), đóng là giải phóng.
+- Hình học (chỗ mở, zoom, kéo mép) ở `core::preview`, unit test được.
+
+### 17.4 Config
+
+```json
+"preview": { "alwaysOnTop": true, "opacity": 100, "position": "remember", "size": 50, "last": null }
+```
+
+- `position`: `remember` | `stack` | `center`. `last`: khung lần trước `{x, y, w, h}` (physical px toàn desktop),
+  chỉ ghi khi `position = remember`.
+- `opacity` kẹp 20–100, `size` kẹp 20–100.
+
+### 17.5 Ngân sách
+
+- Từ click thumbnail tới lúc Preview hiện (ảnh 1920×1080): ≤ 200 ms.
+- Hover toolbar, kéo mép: không giật ở màn 4K.
+
+### 17.6 Nghiệm thu
+
+- [ ] Click thumbnail: Preview mở sát stack, ảnh nét (1:1 khi vừa), lấy focus.
+- [ ] Kéo di chuyển, kéo 4 mép và 4 góc đổi cỡ giữ tỉ lệ, lăn chuột zoom quanh con trỏ.
+- [ ] Đóng rồi mở ảnh khác: nằm đúng chỗ và vừa khung lần trước. Đổi "Chỗ mở" sang Cạnh stack / Giữa màn hình: đúng chỗ.
+- [ ] Ctrl + lăn chuột đổi opacity; Cài đặt đổi opacity và "luôn nằm trên" thì áp ngay cho Preview đang mở.
+- [ ] Ghim: tắt thì click app khác che được Preview; bật thì luôn nằm trên.
+- [ ] Copy, Folder, ✕, `Esc`, `Ctrl+C`, Alt+F4 (ẩn, mở lại được).
+- [ ] Bấm thumbnail khác khi đang mở: thay ảnh. File bị xoá: toast, bỏ khỏi stack.
+- [ ] RAM về mức trước khi mở sau khi đóng.

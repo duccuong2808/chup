@@ -6,6 +6,7 @@ mod gfx;
 mod hotkeys;
 mod logger;
 mod overlay;
+mod preview;
 mod settings;
 mod stack;
 mod toolbar;

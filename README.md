@@ -5,6 +5,7 @@ và kéo thả thẳng được sang app khác. Đặc tả đầy đủ ở [SP
 
 - **Trạng thái**: Phase 1 (v1, Windows) xong, cộng bước 1.5: bỏ Tauri/WebView2, giao diện
   vẽ native bằng Win32 + Direct2D/DirectWrite. Phase 2.1 (Freeze: chụp đóng băng menu, tooltip) xong.
+  Phase 2.2 (Preview khi bấm thumbnail) xong, đã test trên VM.
 - **Rust thuần, không WebView.** Installer ~480 KB, `chup.exe` ~1 MB, RAM khi rảnh dưới 1 MB
   (xem [Số đo](#số-đo)).
 
@@ -58,9 +59,10 @@ Workflow `.github/workflows/build.yml` chạy trên `windows-latest`:
 | Chụp lại vùng cuối | `Ctrl+Alt+S` khi không có vùng chọn, hoặc menu tray |
 | Chế độ mờ | Nút **Mờ**: viền nhạt, chuột đi xuyên qua, vẫn chụp được bằng phím tắt |
 | Di chuyển / đổi kích thước vùng | Kéo phần lề quanh viền / kéo 8 ô vuông nhỏ |
-| Dùng ảnh trong stack | Kéo thumbnail thả vào app khác; click để mở ảnh; hover để copy / mở folder / bỏ khỏi stack |
+| Dùng ảnh trong stack | Kéo thumbnail thả vào app khác; click để mở Preview; hover để copy / mở folder / bỏ khỏi stack |
 | Thu gọn stack | Hover stack → nút `›`; click tab nhỏ ở mép màn hình để mở lại |
 | Chụp đóng băng (menu, tooltip) | `F1`, hoặc menu tray "Chụp đóng băng" / "… sau 3 giây". Màn hình đóng băng ngay; kéo chọn vùng, chỉnh bằng 8 ô vuông, kéo trong vùng để di chuyển |
+| Preview | Kéo để di chuyển, kéo mép/góc để đổi cỡ, lăn chuột để zoom, `Ctrl` + lăn chuột đổi opacity. Hover: ghim (luôn nằm trên), copy, folder, đóng. `Esc` đóng. Lần sau mở đúng chỗ và cỡ cũ (đổi trong Cài đặt) |
 | Lưu / Copy / huỷ (Freeze) | `Enter`, double-click trong vùng hoặc nút **Lưu** / nút **Copy** (chỉ clipboard, không lưu file) / `Esc` hoặc click phải |
 
 ## Cấu trúc code
@@ -161,6 +163,17 @@ Cách giữ RAM thấp:
   - Config v1 tự lên v2 với `freeze = "F1"`; ô hotkey "Chụp đóng băng" trong Cài đặt, đặt trùng
     thì báo lỗi.
 
+- Preview (bản `26fd2fe`, sửa góc bo tròn ở bản sau):
+  - Click thumbnail: mở sát stack, căn đáy, ảnh 1687×1125 hiện ở 1446×964 (50% màn hình), có trên taskbar.
+    Từ click tới lúc hiện ~100 ms (giải mã PNG 75–90 ms, vẽ 7–15 ms).
+  - Hover hiện toolbar; lăn chuột zoom quanh con trỏ (nhãn %); Ctrl + lăn chuột đổi opacity (nhãn "Opacity 50%").
+  - Kéo di chuyển; kéo mép đổi cỡ giữ tỉ lệ, mép đối diện đứng yên, con trỏ mũi tên 2 chiều.
+  - Đóng (`Esc`, ✕, Alt+F4) rồi mở lại: đúng chỗ và cỡ lần trước (`preview.last` được ghi). "Giữa màn hình" đúng.
+  - Ghim: tắt thì Explorer che được; bật thì vẫn nằm trên khi click Explorer.
+  - Copy: toast "Đã copy ảnh". Folder: Explorer chọn sẵn file. Cài đặt đổi opacity: áp ngay cho Preview đang mở.
+  - RAM: đang mở 121 MB; đóng rồi trim còn 2 MB working set.
+  - Lỗi tìm thấy và đã sửa: góc bo tròn (pixel alpha 0) không nhận chuột nên không kéo góc được.
+
 - Clipboard (khi chụp và nút Copy, ảnh 2193×1350): có đủ `PNG` (đúng byte của file), CF_DIBV5,
   và `Bitmap`/`DIB` do Windows tự suy ra. Chuẩn bị ~16–20 ms, giữ clipboard ~9–10 ms.
 - Nút mở folder (Explorer chọn sẵn file), nút bỏ khỏi stack, Xoá hết, `Ctrl+Alt+S` chụp lại vùng cuối.
@@ -180,6 +193,7 @@ tự đặt ảnh, nên không do Chup. Muốn kiểm tra clipboard thì phải 
 3. Kéo thả vào Zalo PC, Slack, Word.
 4. Freeze với 2 màn hình, màn 4K, màn 150%; video YouTube đang chạy (VM không có Chrome).
    Thời gian Freeze trên máy x64 thật.
+5. Preview: nhiều màn hình (mở trên màn của stack, kéo sang màn khác DPI), ảnh 4K, cảm giác mượt khi kéo mép ở 4K.
 
 **Vấn đề đang theo dõi:** kéo thumbnail đôi khi không bắt đầu kéo. Trên VM, nhấn chuột ngay khi
 vừa rê vào thumbnail thì không kéo được (0/4); dừng ≥ 0,15 s thì 9/9. Có 1 lần lỗi dù đã dừng

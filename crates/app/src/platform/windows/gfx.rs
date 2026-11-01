@@ -438,11 +438,24 @@ impl Canvas {
         .flatten()
     }
 
+    /// Vẽ sang surface khác. Tài nguyên đã tạo (bitmap ảnh) vẫn dùng được: tạo 1 lần, vẽ lên nhiều surface.
+    pub fn bind(&self, s: &Surface) -> bool {
+        unsafe { self.rt.BindDC(s.dc(), &RECT { left: 0, top: 0, right: s.w, bottom: s.h }).is_ok() }
+    }
+
     pub fn begin(&self, clear: Color) {
         unsafe {
             self.rt.BeginDraw();
             self.rt.SetTransform(&Matrix3x2::identity());
             self.rt.Clear(Some(&clear.d2d()));
+        }
+    }
+
+    /// Như `begin` nhưng giữ nguyên pixel đang có (vẽ chồng lên).
+    pub fn begin_over(&self) {
+        unsafe {
+            self.rt.BeginDraw();
+            self.rt.SetTransform(&Matrix3x2::identity());
         }
     }
 

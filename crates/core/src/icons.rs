@@ -30,6 +30,7 @@ pub enum Icon {
     Folder,
     ChevronRight,
     ChevronLeft,
+    Check,
 }
 
 impl Icon {
@@ -49,6 +50,7 @@ impl Icon {
             ))],
             Icon::ChevronRight => vec![Stroke(p("M9 6l6 6-6 6"))],
             Icon::ChevronLeft => vec![Stroke(p("M15 6l-6 6 6 6"))],
+            Icon::Check => vec![Stroke(p("M5 12l5 5 9-10"))],
         }
     }
 }
@@ -225,6 +227,7 @@ mod tests {
             Icon::Folder,
             Icon::ChevronRight,
             Icon::ChevronLeft,
+            Icon::Check,
         ] {
             assert!(!i.shapes().is_empty());
         }

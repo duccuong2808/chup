@@ -81,6 +81,8 @@ impl Handler for AppWindow {
                 }
                 match wp.0 {
                     TIMER_DISPLAY => emit(Action::DisplayChanged),
+                    app::TIMER_FREEZE => emit(Action::FreezeTimerFired),
+                    app::TIMER_FREEZE_MENU => emit(Action::FreezeNow),
                     TIMER_WARM => {
                         gfx::warm_up();
                         arm_trim(hwnd);

@@ -74,6 +74,7 @@ const ID_EDGE: u16 = 108;
 const ID_MONITOR: u16 = 109;
 const ID_AUTOSTART: u16 = 110;
 const ID_HIDEUI: u16 = 111;
+const ID_HK_FREEZE: u16 = 112;
 const TIMER_PATTERN: usize = 1;
 
 const RECORDING_TEXT: &str = "Nhấn tổ hợp phím…";
@@ -151,6 +152,9 @@ struct Handles {
     lbl_hk2: HWND,
     hk2: HWND,
     err2: HWND,
+    lbl_hk3: HWND,
+    hk3: HWND,
+    err3: HWND,
     hint_hk: HWND,
     sec_after: HWND,
     copy: HWND,
@@ -176,10 +180,10 @@ thread_local! {
 }
 
 fn hk_name(id: u16) -> &'static str {
-    if id == ID_HK_SELECT {
-        "selectRegion"
-    } else {
-        "capture"
+    match id {
+        ID_HK_SELECT => "selectRegion",
+        ID_HK_FREEZE => "freeze",
+        _ => "capture",
     }
 }
 
@@ -302,6 +306,9 @@ impl Settings {
             lbl_hk2: self.add(st, "Chụp vùng hiện tại / vùng cuối", s, none, 0, Kind::Label),
             hk2: self.add(w!("EDIT"), "", edit, WS_EX_CLIENTEDGE, ID_HK_CAPTURE, Kind::Control),
             err2: self.add(st, "", s, none, 0, Kind::Error),
+            lbl_hk3: self.add(st, "Chụp đóng băng (menu, tooltip)", s, none, 0, Kind::Label),
+            hk3: self.add(w!("EDIT"), "", edit, WS_EX_CLIENTEDGE, ID_HK_FREEZE, Kind::Control),
+            err3: self.add(st, "", s, none, 0, Kind::Error),
             hint_hk: self.add(
                 st,
                 "Bấm vào ô rồi nhấn tổ hợp phím. Delete để tắt phím tắt, Esc để huỷ.",
@@ -336,7 +343,7 @@ impl Settings {
                 unsafe { SendMessageW(c, CB_ADDSTRING, None, Some(LPARAM(t.as_ptr() as isize))) };
             }
         }
-        for hk in [h.hk1, h.hk2] {
+        for hk in [h.hk1, h.hk2, h.hk3] {
             unsafe {
                 let _ = SetWindowSubclass(hk, Some(hotkey_proc), 1, self.hwnd.0 as usize);
             }
@@ -434,11 +441,9 @@ impl Settings {
         mv(h.hint_pattern, x0, y, col, 34.0);
         y += 46.0;
         section(h.sec_hk, x0, &mut y);
-        let errs: [(HWND, bool); 2] = {
-            let has = |c: HWND| !get_text(c).is_empty();
-            [(h.err1, has(h.err1)), (h.err2, has(h.err2))]
-        };
-        for (lbl, edit, (err, show)) in [(h.lbl_hk1, h.hk1, errs[0]), (h.lbl_hk2, h.hk2, errs[1])] {
+        let has = |c: HWND| !get_text(c).is_empty();
+        for (lbl, edit, err) in [(h.lbl_hk1, h.hk1, h.err1), (h.lbl_hk2, h.hk2, h.err2), (h.lbl_hk3, h.hk3, h.err3)] {
+            let show = has(err);
             mv(lbl, x0, y, col, 18.0);
             y += 20.0;
             mv(edit, x0, y, col, 26.0);
@@ -556,6 +561,7 @@ impl Settings {
         for (name, edit, err, val) in [
             ("selectRegion", h.hk1, h.err1, &v.config.hotkeys.select_region),
             ("capture", h.hk2, h.err2, &v.config.hotkeys.capture),
+            ("freeze", h.hk3, h.err3, &v.config.hotkeys.freeze),
         ] {
             if recording != Some(name) {
                 set_text(edit, if val.is_empty() { "Không dùng" } else { val });

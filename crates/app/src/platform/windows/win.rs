@@ -41,6 +41,11 @@ pub fn set_app_hwnd(h: HWND) {
     APP_HWND.store(h.0 as isize, Ordering::SeqCst);
 }
 
+/// Cửa sổ ẩn của app (đặt timer hẹn giờ Freeze trên đó).
+pub fn app_hwnd() -> HWND {
+    HWND(APP_HWND.load(Ordering::SeqCst) as *mut _)
+}
+
 /// Gửi Action cho App. Gọi được từ mọi thread.
 pub fn emit(a: Action) {
     QUEUE.lock().unwrap_or_else(|e| e.into_inner()).push(a);

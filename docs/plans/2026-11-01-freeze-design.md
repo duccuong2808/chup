@@ -86,7 +86,7 @@ freeze_timer: bool              // đang đếm ngược 3 giây
 
 ### Chuột và phím
 
-- Con trỏ: chữ thập ngoài vùng, 4 chiều trong vùng, resize trên handle, mũi tên thường trên toolbar.
+- Con trỏ: chữ thập ngoài vùng, 4 chiều trong vùng, resize trên handle, bàn tay trên toolbar.
 - Chuột trái xuống: trên nút → bấm nút; trên handle/trong vùng → chỉnh vùng (`core::selection`); ngoài → chọn vùng mới. Chọn trên màn hình khác thì vùng chuyển sang màn đó.
 - Double-click trong vùng hoặc `Enter` → Lưu. `Esc` hoặc chuột phải → huỷ.
 - Overlay emit `Action::FreezeConfirm { rect, action }` (physical px toàn desktop) hoặc `Action::FreezeCancel`.
@@ -115,7 +115,7 @@ chọn/chỉnh vùng trong overlay ──> Action::FreezeConfirm { rect, Save | 
 ### Tray và hẹn giờ
 
 - Menu tray thêm "Chụp đóng băng" và "Chụp đóng băng sau 3 giây".
-- Hẹn giờ: `SetTimer` 3 s trên cửa sổ chính; trong lúc chờ tray đổi sang icon đồng hồ cát, màn hình không hiện gì (SPEC 14.4). Hết giờ emit `Action::FreezeNow`.
+- Hẹn giờ: `SetTimer` 3 s trên cửa sổ chính; trong lúc chờ icon tray mờ đi kèm tooltip "sắp chụp đóng băng…" (không cần thêm asset icon), màn hình không hiện gì (SPEC 14.4). Hết giờ emit `Action::FreezeTimerFired`.
 - Settings thêm dòng hotkey "Chụp đóng băng".
 
 ## 4. Test

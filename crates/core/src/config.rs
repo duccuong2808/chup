@@ -7,7 +7,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-pub const CONFIG_VERSION: u32 = 1;
+pub const CONFIG_VERSION: u32 = 2;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -36,6 +36,8 @@ pub struct Hotkeys {
     /// Rỗng = tắt.
     pub select_region: String,
     pub capture: String,
+    /// Chụp đóng băng (SPEC 14). Không dùng Alt: Alt làm đóng menu đang mở trước khi kịp chụp.
+    pub freeze: String,
 }
 
 impl Default for Hotkeys {
@@ -43,6 +45,7 @@ impl Default for Hotkeys {
         Self {
             select_region: "Ctrl+Alt+A".into(),
             capture: "Ctrl+Alt+S".into(),
+            freeze: "F1".into(),
         }
     }
 }
@@ -111,7 +114,13 @@ impl Config {
         if self.file_name_pattern.trim().is_empty() {
             self.file_name_pattern = Config::default().file_name_pattern;
         }
-        // Chỗ dành cho migrate: if self.version < 2 { ... }
+        if self.version < 2 {
+            // v1 chưa có hotkey Freeze (serde điền "F1"). Nếu người dùng đã dùng phím đó cho việc khác thì để trống.
+            let h = &self.hotkeys;
+            if [&h.select_region, &h.capture].iter().any(|k| k.eq_ignore_ascii_case(&h.freeze)) {
+                self.hotkeys.freeze.clear();
+            }
+        }
         self.version = CONFIG_VERSION;
         self
     }
@@ -185,9 +194,12 @@ pub fn apply_patch(cfg: &Config, patch: &serde_json::Value) -> Result<Config, St
     if next.file_name_pattern.trim().is_empty() {
         return Err("Pattern tên file không được để trống".into());
     }
-    let (a, b) = (&next.hotkeys.select_region, &next.hotkeys.capture);
-    if !a.is_empty() && a.eq_ignore_ascii_case(b) {
-        return Err("Hai phím tắt đang trùng nhau".into());
+    let h = &next.hotkeys;
+    let used: Vec<&String> = [&h.select_region, &h.capture, &h.freeze].into_iter().filter(|s| !s.is_empty()).collect();
+    for (i, a) in used.iter().enumerate() {
+        if used[i + 1..].iter().any(|b| a.eq_ignore_ascii_case(b)) {
+            return Err("Hai phím tắt đang trùng nhau".into());
+        }
     }
     Ok(next)
 }
@@ -213,6 +225,31 @@ mod tests {
         assert!(apply_patch(&cfg, &json!({ "hotkeys": { "capture": "ctrl+alt+a" } })).is_err());
         assert!(apply_patch(&cfg, &json!({ "fileNamePattern": "  " })).is_err());
         assert!(apply_patch(&cfg, &json!({ "stack": { "edge": "top" } })).is_err());
+    }
+
+    #[test]
+    fn v1_file_migrates_to_v2_with_freeze_hotkey() {
+        let dir = std::env::temp_dir().join(format!("chup-cfg-{}", ulid::Ulid::generate()));
+        fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("config.json");
+        fs::write(&p, r#"{ "version": 1, "hotkeys": { "selectRegion": "Ctrl+Alt+A", "capture": "Ctrl+Alt+S" } }"#).unwrap();
+        let cfg = load(&p, Path::new("/pics")).config;
+        assert_eq!(cfg.version, 2);
+        assert_eq!(cfg.hotkeys.freeze, "F1");
+        // v1 đã dùng F1 cho hotkey khác: không cướp, để Freeze trống.
+        fs::write(&p, r#"{ "version": 1, "hotkeys": { "capture": "f1" } }"#).unwrap();
+        assert_eq!(load(&p, Path::new("/pics")).config.hotkeys.freeze, "");
+        // v2 giữ nguyên giá trị người dùng, kể cả khi đã tắt.
+        fs::write(&p, r#"{ "version": 2, "hotkeys": { "freeze": "" } }"#).unwrap();
+        assert_eq!(load(&p, Path::new("/pics")).config.hotkeys.freeze, "");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn patch_rejects_freeze_duplicating_other_hotkey() {
+        let cfg = Config::with_save_dir(Path::new("/x"));
+        assert!(apply_patch(&cfg, &json!({ "hotkeys": { "freeze": "Ctrl+Alt+S" } })).is_err());
+        assert!(apply_patch(&cfg, &json!({ "hotkeys": { "freeze": "", "capture": "" } })).is_ok());
     }
 
     #[test]

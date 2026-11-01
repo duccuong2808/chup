@@ -17,7 +17,7 @@ use windows::{
         UI::{
             Input::KeyboardAndMouse::{ReleaseCapture, SetCapture},
             WindowsAndMessaging::{
-                LoadCursorW, SetCursor, IDC_CROSS, IDC_HAND, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE,
+                LoadCursorW, SetCursor, WM_CAPTURECHANGED, IDC_CROSS, IDC_HAND, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE,
                 IDC_SIZEWE,
             },
         },
@@ -126,6 +126,21 @@ impl Frozen {
     fn bar_hit(&self, p: (i32, i32)) -> Option<usize> {
         self.bar.as_ref().filter(|_| self.bar_visible()).and_then(|b| b.hit(p))
     }
+
+    /// Gợi ý chỉ hiện khi chưa có vùng và không kéo gì.
+    fn hint_visible(&self) -> bool {
+        self.sel.is_none() && matches!(self.drag, Drag::Idle)
+    }
+
+    /// Toolbar sắp ẩn (bắt đầu kéo, mất vùng chọn): bỏ trạng thái hover/nhấn cũ,
+    /// để lần hiện sau không sáng nhầm nút.
+    fn reset_bar_state(&mut self) {
+        if let Some(b) = self.bar.as_mut().filter(|b| b.hover.is_some() || b.pressed.is_some()) {
+            b.hover = None;
+            b.pressed = None;
+            b.render();
+        }
+    }
 }
 
 /// Phần cần vẽ lại sau một sự kiện.
@@ -142,7 +157,10 @@ fn extent(st: &State) -> Rect {
     let Some(f) = st.frozen.as_ref() else { return Rect::default() };
     let mut r = f.sel.map(|s| s.expand(f.handle + 2)).unwrap_or_default();
     let bar = f.bar.as_ref().filter(|_| f.bar_visible()).map(|b| b.at);
-    for o in [st.label_at, bar, f.hint.as_ref().map(|h| h.at)].into_iter().flatten() {
+    // Chỉ tính gợi ý khi nó đang hiện: nó nằm ở giữa mép trên, gộp vào lúc kéo vùng ở góc dưới
+    // sẽ làm dirty phình ra gần nửa màn hình mỗi lần chuột di.
+    let hint = f.hint.as_ref().filter(|_| f.hint_visible()).map(|h| h.at);
+    for o in [st.label_at, bar, hint].into_iter().flatten() {
         r = r.union(&o);
     }
     r
@@ -150,7 +168,8 @@ fn extent(st: &State) -> Rect {
 
 impl Overlay {
     /// Hiện overlay ở chế độ Freeze. `img = None`: màn hình này chụp hỏng.
-    pub fn show_frozen(&self, focus: bool, img: Option<RgbaImage>) {
+    /// Trả về `false` nếu không hiện được (không cấp được DIB).
+    pub fn show_frozen(&self, focus: bool, img: Option<RgbaImage>) -> bool {
         let (w, h) = (self.mon.rect.w as i32, self.mon.rect.h as i32);
         let t0 = std::time::Instant::now();
         let k = self.mon.scale as f32;
@@ -169,13 +188,14 @@ impl Overlay {
             }
             if st.surface.is_none() {
                 log::error!("Không cấp được bộ nhớ cho overlay Freeze {w}×{h}");
-                return;
+                return false;
             }
             st.start = None;
             st.sel = None;
             st.label_at = None;
             st.label_text.clear();
             st.frozen = Some(Frozen { img, sel: None, drag: Drag::Idle, hint, bar, handle: self.s(HANDLE_DIP) });
+            self.frozen_mode.set(true);
             super::paint(&mut st, Rect::new(0, 0, w as u32, h as u32));
         }
         let t_paint = t0.elapsed();
@@ -189,6 +209,7 @@ impl Overlay {
             t_paint - t_prep,
             t0.elapsed()
         );
+        true
     }
 
     /// Lấy ảnh đóng băng ra để crop (Lưu/Copy). Overlay vẫn hiện tới khi `hide`.
@@ -203,6 +224,7 @@ impl Overlay {
                 return Change::None;
             }
             f.drag = Drag::Idle;
+            f.reset_bar_state();
             Change::Sel
         });
     }
@@ -271,11 +293,13 @@ impl Overlay {
                 }
                 Some(grip) => {
                     f.drag = Drag::Adjust { grip, from: p, rect0: f.sel.unwrap_or_default() };
+                    f.reset_bar_state();
                     Change::Sel
                 }
                 None => {
                     f.drag = Drag::New(p);
                     f.sel = None;
+                    f.reset_bar_state();
                     started_new = true;
                     Change::Sel
                 }
@@ -302,6 +326,7 @@ impl Overlay {
                 f.sel = Some(selection::apply(rect0, grip, from, p, b));
                 Change::Sel
             }
+            Drag::Idle if !f.bar_visible() => Change::None,
             Drag::Idle => {
                 let h = f.bar_hit(p);
                 match f.bar.as_mut() {
@@ -317,11 +342,12 @@ impl Overlay {
         });
     }
 
-    fn frozen_up(&self, p: (i32, i32)) {
+    /// Kết thúc lần kéo. `click = false` khi mất capture (Alt+Tab, Win, UAC…): không bấm nút nào.
+    fn frozen_end(&self, p: (i32, i32), click: bool) {
         let mut clicked = None;
         self.frozen_update(|f| match std::mem::replace(&mut f.drag, Drag::Idle) {
             Drag::Button(i) => {
-                if f.bar_hit(p) == Some(i) {
+                if click && f.bar_hit(p) == Some(i) {
                     clicked = Some(i);
                 }
                 if let Some(b) = f.bar.as_mut() {
@@ -393,10 +419,18 @@ impl Overlay {
                 Some(LRESULT(0))
             }
             WM_LBUTTONUP => {
+                // Kết thúc kéo trước khi nhả capture: ReleaseCapture gửi WM_CAPTURECHANGED ngay.
+                self.frozen_end(p, true);
                 unsafe {
                     let _ = ReleaseCapture();
                 }
-                self.frozen_up(p);
+                Some(LRESULT(0))
+            }
+            // Mất capture giữa lúc kéo (không có WM_LBUTTONUP): chốt vùng ở vị trí hiện tại,
+            // không để vùng chọn tiếp tục chạy theo chuột khi đã nhả nút.
+            WM_CAPTURECHANGED if lp.0 != hwnd.0 as isize => {
+                let (cx, cy) = cursor_pos();
+                self.frozen_end((cx - self.mon.rect.x, cy - self.mon.rect.y), false);
                 Some(LRESULT(0))
             }
             WM_RBUTTONUP => {
@@ -436,7 +470,7 @@ pub(super) fn paint_frozen(st: &mut State, dirty: Rect) {
             }
         }
     }
-    if f.sel.is_none() && matches!(f.drag, Drag::Idle) {
+    if f.hint_visible() {
         if let Some(h) = f.hint.as_mut() {
             if h.at.intersect(&dirty).is_some() {
                 s.blend_from(&mut h.s, h.at.x, h.at.y);

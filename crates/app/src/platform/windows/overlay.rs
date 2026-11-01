@@ -6,15 +6,16 @@
 
 mod freeze;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 
 use chup_core::coords::{MonitorInfo, Rect};
 use windows::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, WPARAM},
+    System::Threading::{AttachThreadInput, GetCurrentThreadId},
     UI::{
         Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, SetFocus, VK_ESCAPE, VK_RETURN},
         WindowsAndMessaging::{
-            LoadCursorW, SetCursor, SetForegroundWindow, SetWindowPos, ShowWindow, HWND_TOPMOST, IDC_CROSS,
+            GetForegroundWindow, GetWindowThreadProcessId, LoadCursorW, SetCursor, SetForegroundWindow, SetWindowPos, ShowWindow, HWND_TOPMOST, IDC_CROSS,
             SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_HIDE, SW_SHOW, SW_SHOWNA, WM_KEYDOWN, WM_LBUTTONDBLCLK,
             WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_RBUTTONUP, WM_SETCURSOR, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
             WS_EX_TOPMOST, WS_POPUP,
@@ -57,6 +58,9 @@ pub struct Overlay {
     pub hwnd: HWND,
     pub mon: MonitorInfo,
     st: RefCell<State>,
+    /// Đang ở chế độ Freeze. Để ngoài `st`: wndproc đọc cờ này ở mọi message, kể cả message
+    /// gửi đồng bộ khi đang giữ `borrow_mut` (ví dụ WM_WINDOWPOS* lúc `present` đổi vị trí cửa sổ).
+    frozen_mode: Cell<bool>,
 }
 
 thread_local! {
@@ -79,7 +83,7 @@ impl Overlay {
                     h: r.h as i32,
                     parent: None,
                 },
-                |hwnd| Overlay { hwnd, mon, st: RefCell::new(State::default()) },
+                |hwnd| Overlay { hwnd, mon, st: RefCell::new(State::default()), frozen_mode: Cell::new(false) },
             )
         })
     }
@@ -115,6 +119,7 @@ impl Overlay {
         }
         let t_hint = t0.elapsed();
         {
+            self.frozen_mode.set(false);
             let mut st = self.st.borrow_mut();
             st.frozen = None;
             st.start = None;
@@ -148,6 +153,20 @@ impl Overlay {
             if focus {
                 let _ = SetForegroundWindow(self.hwnd);
                 let _ = SetFocus(Some(self.hwnd));
+                if GetForegroundWindow() != self.hwnd {
+                    // Hẹn giờ Freeze: Chup không có input gần nhất nên Windows chặn SetForegroundWindow.
+                    // Gắn tạm hàng đợi input với thread đang foreground rồi thử lại.
+                    let fg_thread = GetWindowThreadProcessId(GetForegroundWindow(), None);
+                    let me = GetCurrentThreadId();
+                    if fg_thread != 0 && fg_thread != me && AttachThreadInput(me, fg_thread, true).as_bool() {
+                        let _ = SetForegroundWindow(self.hwnd);
+                        let _ = SetFocus(Some(self.hwnd));
+                        let _ = AttachThreadInput(me, fg_thread, false);
+                    }
+                    if GetForegroundWindow() != self.hwnd {
+                        log::warn!("overlay {}: không lấy được focus, Esc/Enter có thể không tới", self.mon.key);
+                    }
+                }
             }
         }
     }
@@ -159,6 +178,7 @@ impl Overlay {
                 let _ = ReleaseCapture();
             }
         }
+        self.frozen_mode.set(false);
         let mut st = self.st.borrow_mut();
         st.start = None;
         st.sel = None;
@@ -254,7 +274,7 @@ fn paint(st: &mut State, dirty: Rect) {
 
 impl Handler for Overlay {
     fn handle(&self, hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
-        if self.st.borrow().frozen.is_some() {
+        if self.frozen_mode.get() {
             return self.handle_frozen(hwnd, msg, wp, lp);
         }
         match msg {

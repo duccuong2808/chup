@@ -14,6 +14,8 @@ pub struct Tray {
     normal: Option<Icon>,
     waiting: Option<Icon>,
     hotkey_errors: Cell<usize>,
+    /// Đang đếm ngược hẹn giờ Freeze: giữ tooltip "sắp chụp…" kể cả khi hotkey được đăng ký lại.
+    waiting_on: Cell<bool>,
 }
 
 /// Icon thường và icon mờ (đang đếm ngược hẹn giờ Freeze).
@@ -58,11 +60,12 @@ impl Tray {
             b = b.with_icon(i);
         }
         let icon = b.build().map_err(|e| format!("Không tạo được icon khay: {e}"))?;
-        Ok(Tray { icon, normal, waiting, hotkey_errors: Cell::new(0) })
+        Ok(Tray { icon, normal, waiting, hotkey_errors: Cell::new(0), waiting_on: Cell::new(false) })
     }
 
     /// Đang đếm ngược "Chụp đóng băng sau 3 giây": đổi icon và tooltip, không hiện gì lên màn hình (SPEC 14.4).
     pub fn set_waiting(&self, on: bool) {
+        self.waiting_on.set(on);
         let _ = self.icon.set_icon(if on { self.waiting.clone() } else { self.normal.clone() });
         if on {
             let _ = self.icon.set_tooltip(Some("Chup — sắp chụp đóng băng…"));
@@ -74,6 +77,9 @@ impl Tray {
     /// "Chup", kèm cảnh báo khi có phím tắt đăng ký lỗi.
     pub fn set_hotkey_errors(&self, n: usize) {
         self.hotkey_errors.set(n);
+        if self.waiting_on.get() {
+            return;
+        }
         let text = if n == 0 { "Chup".to_string() } else { format!("Chup — ⚠ {n} phím tắt lỗi, xem Cài đặt") };
         let _ = self.icon.set_tooltip(Some(text));
     }

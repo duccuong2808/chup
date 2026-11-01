@@ -86,7 +86,7 @@ freeze_timer: bool              // đang đếm ngược 3 giây
 
 ### Chuột và phím
 
-- Con trỏ: chữ thập ngoài vùng, 4 chiều trong vùng, resize trên handle, mũi tên thường trên toolbar.
+- Con trỏ: chữ thập ngoài vùng, 4 chiều trong vùng, resize trên handle, bàn tay trên toolbar.
 - Chuột trái xuống: trên nút → bấm nút; trên handle/trong vùng → chỉnh vùng (`core::selection`); ngoài → chọn vùng mới. Chọn trên màn hình khác thì vùng chuyển sang màn đó.
 - Double-click trong vùng hoặc `Enter` → Lưu. `Esc` hoặc chuột phải → huỷ.
 - Overlay emit `Action::FreezeConfirm { rect, action }` (physical px toàn desktop) hoặc `Action::FreezeCancel`.

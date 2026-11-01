@@ -53,6 +53,8 @@ pub enum Action {
     OpenSaveDir,
     DisplayChanged,
     FreezeTimerFired,
+    /// Mục tray "Chụp đóng băng", sau khi chờ menu tray tắt hẳn.
+    FreezeNow,
     FreezeGrabbed(Result<Vec<MonitorShot>, String>),
     /// Overlay (HWND) vừa bắt đầu chọn vùng mới: các overlay khác bỏ vùng của mình.
     FreezeSelecting(isize),
@@ -63,6 +65,10 @@ pub enum Action {
 
 /// Id timer hẹn giờ "Chụp đóng băng sau 3 giây" trên cửa sổ chính (mod.rs bắn `FreezeTimerFired`).
 pub const TIMER_FREEZE: usize = 5;
+/// Mục tray "Chụp đóng băng": chờ menu tray tắt hẳn (hiệu ứng mờ dần của mục vừa chọn ~200–350 ms)
+/// rồi mới chụp, để menu không lọt vào ảnh đóng băng.
+pub const TIMER_FREEZE_MENU: usize = 6;
+const FREEZE_MENU_DELAY_MS: u32 = 350;
 
 pub struct App {
     pub model: Model,
@@ -161,7 +167,10 @@ impl App {
             Action::Menu(id) => match id.as_str() {
                 "select" => self.model.start_selection(),
                 "recapture" => self.model.request_capture(),
-                "freeze" => self.model.start_freeze(),
+                "freeze" => {
+                    unsafe { SetTimer(Some(win::app_hwnd()), TIMER_FREEZE_MENU, FREEZE_MENU_DELAY_MS, None) };
+                    vec![]
+                }
                 "freeze_delayed" => self.model.start_freeze_delayed(),
                 "open_folder" => self.open_save_dir(),
                 "settings" => {
@@ -216,6 +225,7 @@ impl App {
             }
             Action::OpenSaveDir => self.open_save_dir(),
             Action::FreezeTimerFired => self.model.freeze_timer_fired(),
+            Action::FreezeNow => self.model.start_freeze(),
             Action::FreezeGrabbed(res) => {
                 let shots = res.unwrap_or_else(|e| {
                     log::error!("freeze: {e}");
@@ -486,6 +496,7 @@ impl App {
         let focus = self.overlays.iter().position(|o| o.mon.rect.contains_point(cx, cy)).unwrap_or(0);
         // Overlay không lấy focus hiện trước, overlay dưới con trỏ sau cùng (nhận Enter, Esc).
         let order = (0..self.overlays.len()).filter(|i| *i != focus).chain(std::iter::once(focus));
+        let mut shown = false;
         for i in order {
             let Some(o) = self.overlays.get(i) else { continue };
             // Ghép theo góc trên-trái: kích thước xcap báo có thể lệch vài px so với EnumDisplayMonitors.
@@ -496,10 +507,16 @@ impl App {
             if img.is_none() {
                 log::warn!("freeze: không có ảnh cho màn hình {}", o.mon.key);
             }
-            o.show_frozen(i == focus, img);
+            shown |= o.show_frozen(i == focus, img);
         }
         if let Some(t0) = self.freeze_t0.take() {
             log::info!("freeze: từ nhấn hotkey tới lúc ảnh hiện {:?}", t0.elapsed());
+        }
+        if !shown {
+            // Không overlay nào hiện được: không còn chỗ nhận Esc, phải tự kết thúc phiên.
+            let mut fx = self.model.freeze_cancel();
+            fx.push(Effect::Toast(Toast::error("Không đủ bộ nhớ để hiện ảnh đóng băng")));
+            self.apply(fx);
         }
     }
 

@@ -433,7 +433,8 @@ Chụp được những thứ biến mất khi chuột hoặc focus thay đổi:
 - **Hiển thị 1:1**: overlay có đúng kích thước physical của màn hình, ảnh chép thẳng vào DIB, không scale.
 - **Hotkey Freeze không dùng `Alt`**: trên Windows, phím Alt thường làm đóng menu đang mở trước khi app kịp chụp. Mặc định `F1` (không modifier). Cần test thực tế (mục 14.7). Phương án luôn chắc chắn là **hẹn giờ 3 giây**.
 - **Trong lúc đếm ngược hẹn giờ**: không hiện gì lên màn hình (tránh lọt vào ảnh), chỉ đổi icon tray (icon mờ đi, tooltip "sắp chụp đóng băng…").
-- **Dùng lại overlay window của Phase 1**: `Effect::ShowOverlays` mang thêm chế độ freeze và ảnh của từng màn hình.
+- **Dùng lại overlay window của Phase 1** ở chế độ Freeze. Ảnh không đi qua `Model`: `Effect::FreezeGrab` chụp trên worker, `Effect::ShowFreezeOverlays` chia ảnh cho overlay từng màn hình; Lưu/Copy là `Effect::FreezePersist(rect)` / `FreezeCopy(rect)`, hẹn giờ là `StartFreezeTimer` / `CancelFreezeTimer`.
+- **Mục tray "Chụp đóng băng"** chờ ~350 ms cho menu tray tắt hẳn rồi mới chụp (hotkey F1 thì chụp ngay).
 - **RAM**: ảnh 4K RGBA khoảng 33 MB mỗi màn hình. Giải phóng ngay khi overlay đóng.
 - **Action bổ sung**:
   - Action: `FreezeConfirm { rect, action: Save | Copy | Ocr }` (physical px, mục 6.3). Bản 2.1 có `Save | Copy`; `Ocr` thêm khi làm OCR.

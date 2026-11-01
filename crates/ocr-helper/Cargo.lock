@@ -380,6 +380,7 @@ dependencies = [
  "embed-manifest",
  "image",
  "pkg-config",
+ "unicode-normalization",
  "vcpkg",
 ]
 

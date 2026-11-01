@@ -1,12 +1,13 @@
 //! OCR (SPEC 15): tiền xử lý ảnh và hậu xử lý kết quả, không phụ thuộc engine hay OS.
 //! Engine thật nằm ở lớp platform (Windows OCR, `chup-ocr.exe`); gói dữ liệu tiếng Việt ở [`pack`].
 
+mod layout;
 pub mod pack;
 
 use image::{imageops, GrayImage, RgbaImage};
-use unicode_normalization::UnicodeNormalization;
 
-pub use chup_ocr_proto::Line;
+pub use chup_ocr_proto::{Line, Word as LineWord};
+pub use layout::{Pos, TextLayout, Word};
 
 use crate::config::OcrLanguage;
 
@@ -17,13 +18,12 @@ pub const UPSCALE_BELOW_SCALE: f64 = 1.5;
 /// (giữ thời gian OCR và RAM trong ngân sách; ảnh lớn như vậy thường đã đủ nét).
 const MAX_UPSCALED_SIDE: u32 = 8192;
 const MAX_UPSCALED_PIXELS: u64 = 12_000_000;
-/// Dòng ngắn (≤ 2 ký tự) có confidence dưới ngưỡng này là rác (ô checkbox, viền...).
-const JUNK_CONF: f32 = 50.0;
 /// Độ dài tối đa của dòng trích trong toast.
 const TOAST_SNIPPET_CHARS: usize = 40;
 
-/// Ảnh xám đưa cho engine. Chỉ phóng ×2 khi dùng Tesseract và chữ có khả năng nhỏ.
-pub fn prepare(img: &RgbaImage, scale: f64, lang: OcrLanguage) -> GrayImage {
+/// Ảnh xám đưa cho engine và hệ số phóng so với ảnh gốc (2 hoặc 1), để đổi bbox về ảnh gốc.
+/// Chỉ phóng ×2 khi dùng Tesseract và chữ có khả năng nhỏ.
+pub fn prepare(img: &RgbaImage, scale: f64, lang: OcrLanguage) -> (GrayImage, f64) {
     let gray = imageops::grayscale(img);
     let (w, h) = gray.dimensions();
     let upscale = lang == OcrLanguage::Vi
@@ -31,48 +31,16 @@ pub fn prepare(img: &RgbaImage, scale: f64, lang: OcrLanguage) -> GrayImage {
         && w.max(h) * 2 <= MAX_UPSCALED_SIDE
         && w as u64 * h as u64 * 4 <= MAX_UPSCALED_PIXELS;
     if upscale {
-        imageops::resize(&gray, w * 2, h * 2, imageops::FilterType::CatmullRom)
+        (imageops::resize(&gray, w * 2, h * 2, imageops::FilterType::CatmullRom), 2.0)
     } else {
-        gray
+        (gray, 1.0)
     }
-}
-
-fn is_junk(l: &Line) -> bool {
-    let t = l.text.trim();
-    !t.chars().any(char::is_alphanumeric) || (t.chars().count() <= 2 && l.conf < JUNK_CONF)
-}
-
-/// Hai dòng cùng hàng khi phần chồng nhau theo chiều dọc > 50% dòng thấp hơn.
-fn same_row(row: (i32, i32), l: &Line) -> bool {
-    let (top, bottom) = (l.bbox[1], l.bbox[1] + l.bbox[3]);
-    let overlap = row.1.min(bottom) - row.0.max(top);
-    let min_h = (row.1 - row.0).min(l.bbox[3]).max(1);
-    overlap * 2 > min_h
 }
 
 /// Ghép các dòng engine trả về thành text để copy: bỏ rác, sắp trên xuống dưới / trái sang phải,
 /// nối các dòng cùng hàng bằng dấu cách, chuẩn hoá NFC. Không có chữ thì trả chuỗi rỗng.
 pub fn postprocess(lines: Vec<Line>) -> String {
-    let mut lines: Vec<Line> = lines.into_iter().filter(|l| !is_junk(l)).collect();
-    lines.sort_by_key(|l| (l.bbox[1], l.bbox[0]));
-    let mut rows: Vec<((i32, i32), Vec<Line>)> = vec![];
-    for l in lines {
-        match rows.last_mut() {
-            Some((span, row)) if same_row(*span, &l) => {
-                *span = (span.0.min(l.bbox[1]), span.1.max(l.bbox[1] + l.bbox[3]));
-                row.push(l);
-            }
-            _ => rows.push(((l.bbox[1], l.bbox[1] + l.bbox[3]), vec![l])),
-        }
-    }
-    let text: Vec<String> = rows
-        .into_iter()
-        .map(|(_, mut row)| {
-            row.sort_by_key(|l| l.bbox[0]);
-            row.iter().map(|l| l.text.trim()).collect::<Vec<_>>().join(" ")
-        })
-        .collect();
-    text.join("\n").nfc().collect()
+    TextLayout::build(lines, 1.0).all_text()
 }
 
 /// Câu toast sau khi copy: "Đã copy 3 dòng: “dòng đầu…”".
@@ -91,23 +59,25 @@ mod tests {
     use super::*;
 
     fn line(text: &str, x: i32, y: i32, w: i32, h: i32, conf: f32) -> Line {
-        Line { text: text.into(), bbox: [x, y, w, h], conf }
+        Line { text: text.into(), bbox: [x, y, w, h], conf, words: vec![] }
     }
 
     #[test]
     fn prepare_upscales_only_small_text_for_tesseract() {
         let img = RgbaImage::from_pixel(100, 40, image::Rgba([255, 0, 0, 255]));
-        assert_eq!(prepare(&img, 1.0, OcrLanguage::Vi).dimensions(), (200, 80));
-        assert_eq!(prepare(&img, 1.25, OcrLanguage::Vi).dimensions(), (200, 80));
-        assert_eq!(prepare(&img, 1.5, OcrLanguage::Vi).dimensions(), (100, 40));
-        assert_eq!(prepare(&img, 1.0, OcrLanguage::En).dimensions(), (100, 40), "Windows OCR không phóng");
+        assert_eq!(prepare(&img, 1.0, OcrLanguage::Vi).0.dimensions(), (200, 80));
+        assert_eq!(prepare(&img, 1.25, OcrLanguage::Vi).0.dimensions(), (200, 80));
+        assert_eq!(prepare(&img, 1.5, OcrLanguage::Vi).0.dimensions(), (100, 40));
+        assert_eq!(prepare(&img, 1.0, OcrLanguage::En).0.dimensions(), (100, 40), "Windows OCR không phóng");
         let wide = RgbaImage::new(5000, 10);
-        assert_eq!(prepare(&wide, 1.0, OcrLanguage::Vi).dimensions(), (5000, 10), "quá dài thì không phóng");
+        assert_eq!(prepare(&wide, 1.0, OcrLanguage::Vi).0.dimensions(), (5000, 10), "quá dài thì không phóng");
         let big = RgbaImage::new(1920, 1080);
-        assert_eq!(prepare(&big, 1.0, OcrLanguage::Vi).dimensions(), (3840, 2160), "8,3 MP sau khi phóng: vẫn phóng");
+        assert_eq!(prepare(&big, 1.0, OcrLanguage::Vi).0.dimensions(), (3840, 2160), "8,3 MP sau khi phóng: vẫn phóng");
         let huge = RgbaImage::new(2560, 1440);
-        assert_eq!(prepare(&huge, 1.0, OcrLanguage::Vi).dimensions(), (2560, 1440), "14,7 MP: không phóng");
-        let px = prepare(&img, 2.0, OcrLanguage::Vi).get_pixel(0, 0).0[0];
+        assert_eq!(prepare(&huge, 1.0, OcrLanguage::Vi).0.dimensions(), (2560, 1440), "14,7 MP: không phóng");
+        let px = prepare(&img, 2.0, OcrLanguage::Vi).0.get_pixel(0, 0).0[0];
+        assert_eq!(prepare(&img, 1.0, OcrLanguage::Vi).1, 2.0);
+        assert_eq!(prepare(&img, 1.0, OcrLanguage::En).1, 1.0);
         assert!(px > 40 && px < 100, "đỏ thuần ra xám tối vừa: {px}");
     }
 

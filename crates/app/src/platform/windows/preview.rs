@@ -3,16 +3,20 @@
 //!
 //! Layered window: opacity là `SourceConstantAlpha`. Vẽ 2 lớp:
 //! - `base`: ảnh đã scale + nền + viền, chỉ vẽ lại khi kích thước đổi.
-//! - `out`: chép `base` rồi vẽ toolbar (khi hover) và nhãn zoom/opacity, đẩy lên cửa sổ.
+//! - `out`: chép `base` rồi vẽ vùng chọn chữ, toolbar (khi hover) và nhãn zoom/opacity, đẩy lên cửa sổ.
+//!
+//! Chọn chữ (SPEC 17.2): App gửi các từ OCR nhận diện được (`set_text`), kéo trên chữ để chọn theo ký tự như Live Text.
 
 use std::{
     cell::{Cell, RefCell},
     path::PathBuf,
+    sync::Arc,
 };
 
 use chup_core::{
     coords::{monitor_at, Rect},
     icons::Icon,
+    ocr::{Pos, TextLayout},
     preview::{self, View},
     selection::Grip,
 };
@@ -24,16 +28,17 @@ use windows::Win32::{
         Controls::WM_MOUSELEAVE,
         HiDpi::GetDpiForWindow,
         Input::KeyboardAndMouse::{
-            GetKeyState, ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT, VK_ADD, VK_CONTROL,
-            VK_ESCAPE, VK_NUMPAD0, VK_OEM_MINUS, VK_OEM_PLUS, VK_SUBTRACT,
+            GetDoubleClickTime, GetKeyState, ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
+            VK_ADD, VK_CONTROL, VK_ESCAPE, VK_MENU, VK_NUMPAD0, VK_OEM_MINUS, VK_OEM_PLUS, VK_SHIFT, VK_SUBTRACT,
         },
         WindowsAndMessaging::{
-            GetWindowRect, KillTimer, LoadCursorW, SendMessageW, SetCursor, SetForegroundWindow, SetTimer,
-            SetWindowPos, SetWindowTextW, ShowWindow, HTCAPTION, HWND_NOTOPMOST, HWND_TOPMOST, IDC_HAND, IDC_SIZENESW,
-            IDC_SIZENS, IDC_SIZENWSE, IDC_SIZEWE, SWP_NOACTIVATE,
-            SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOW, WM_CAPTURECHANGED, WM_CLOSE, WM_DPICHANGED, WM_KEYDOWN,
-            WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCLBUTTONDOWN, WM_SETCURSOR, WM_TIMER,
-            WS_EX_LAYERED, WS_POPUP,
+            AppendMenuW, CreatePopupMenu, DestroyMenu, GetMessageTime, GetSystemMetrics, GetWindowRect, KillTimer, LoadCursorW,
+            SendMessageW, SetCursor, SetForegroundWindow, SetTimer, SetWindowPos, SetWindowTextW, ShowWindow,
+            TrackPopupMenu, HTCAPTION, HWND_NOTOPMOST, HWND_TOPMOST, IDC_HAND, IDC_IBEAM, IDC_SIZENESW, IDC_SIZENS,
+            IDC_SIZENWSE, IDC_SIZEWE, MF_GRAYED, MF_SEPARATOR, MF_STRING, SM_CXDOUBLECLK, SM_CXDRAG, SM_CYDOUBLECLK, SM_CYDRAG, SWP_NOACTIVATE,
+            SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOW, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_CAPTURECHANGED,
+            WM_CLOSE, WM_CONTEXTMENU, WM_DPICHANGED, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
+            WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCLBUTTONDOWN, WM_SETCURSOR, WM_TIMER, WS_EX_LAYERED, WS_POPUP,
         },
     },
 };
@@ -54,6 +59,15 @@ const BTN_GAP: f32 = 4.0;
 const BAR_PAD: f32 = 8.0;
 /// Bề rộng dải mép cửa sổ để kéo đổi cỡ.
 const EDGE: f32 = 6.0;
+/// Nới vùng nhận chuột quanh dòng chữ (DIP).
+const TEXT_PAD: f32 = 4.0;
+/// Độ đục của màu tô vùng chọn chữ.
+const SEL_ALPHA: f32 = 0.35;
+
+// Lệnh của menu chuột phải.
+const CMD_COPY_TEXT: usize = 1;
+const CMD_SELECT_ALL: usize = 2;
+const CMD_COPY_IMAGE: usize = 3;
 
 const TIMER_PILL: usize = 1;
 const PILL_MS: u32 = 1200;
@@ -115,6 +129,35 @@ struct State {
     save_pending: bool,
     /// File đang được OCR (nút [T] vẽ "bận" khi trùng file đang xem).
     ocr_busy: Option<PathBuf>,
+    /// Chữ nhận diện được của ảnh đang xem.
+    text: Option<Arc<TextLayout>>,
+    /// Vùng chọn chữ: (vị trí neo, vị trí đang kéo tới).
+    sel: Option<(Pos, Pos)>,
+    /// Đang bấm trên chữ: vị trí neo và điểm bấm (toạ độ cửa sổ). Kéo quá ngưỡng mới bắt đầu chọn.
+    text_press: Option<(Pos, (i32, i32))>,
+    /// Đã kéo quá ngưỡng (hoặc Shift + bấm): đang chọn chữ.
+    selecting: bool,
+    /// Lần bấm đúp trên chữ gần nhất: thời điểm (`GetMessageTime`) và điểm, để nhận ra bấm 3 lần.
+    last_dbl: Option<(i32, (i32, i32))>,
+}
+
+impl State {
+    /// Bỏ chữ và vùng chọn (đổi ảnh, đóng).
+    fn clear_text(&mut self) {
+        self.text = None;
+        self.sel = None;
+        self.text_press = None;
+        self.selecting = false;
+        self.last_dbl = None;
+    }
+}
+
+fn alt_down() -> bool {
+    (unsafe { GetKeyState(VK_MENU.0 as i32) }) < 0
+}
+
+fn shift_down() -> bool {
+    (unsafe { GetKeyState(VK_SHIFT.0 as i32) }) < 0
 }
 
 /// Cỡ cửa sổ nhỏ nhất (physical px) ở scale `k`.
@@ -197,6 +240,7 @@ impl Preview {
             st.opacity = preview::clamp_opacity(opacity);
             st.cfg = Some((topmost, opacity));
             st.pill = None;
+            st.clear_text();
         }
         let t = wide(&format!("{title} — Chup"));
         unsafe {
@@ -277,6 +321,7 @@ impl Preview {
             st.resize = None;
             st.pill = None;
             st.hits.clear();
+            st.clear_text();
         }
         if was_open {
             emit(Action::PreviewClosed);
@@ -401,8 +446,29 @@ impl Preview {
         st.hits.clear();
         let draw_bar = st.hovering;
         let draw_pill = st.pill.is_some();
-        if (draw_bar || draw_pill) && c.bind(out) {
+        // Vùng chọn chữ: rect theo toạ độ ảnh gốc -> toạ độ cửa sổ.
+        let sel_rects: Vec<_> = match (st.text.as_ref(), st.sel, st.img.as_ref()) {
+            (Some(t), Some((a, b)), Some(img)) => {
+                let ir = v.image_rect(img.dimensions());
+                let z = v.zoom as f32;
+                let pad = k;
+                t.highlight(a, b)
+                    .iter()
+                    .map(|r| {
+                        let x = ir.x as f32 + r.x as f32 * z - pad;
+                        let y = ir.y as f32 + r.y as f32 * z - pad;
+                        rectf(x, y, r.w as f32 * z + 2.0 * pad, r.h as f32 * z + 2.0 * pad)
+                    })
+                    .collect()
+            }
+            _ => vec![],
+        };
+        if (draw_bar || draw_pill || !sel_rects.is_empty()) && c.bind(out) {
             c.begin_over();
+            let sel_color = Theme::current().accent.with_alpha(SEL_ALPHA);
+            for r in &sel_rects {
+                c.fill_round(*r, 2.0 * k, sel_color);
+            }
             for (i, (btn, icon)) in BUTTONS.iter().enumerate() {
                 let r = rectf(x0 + i as f32 * (b + BTN_GAP * k), BAR_PAD * k, b, b);
                 st.hits.push((*btn, Rect::new(r.left as i32, r.top as i32, b as u32, b as u32)));
@@ -581,6 +647,157 @@ impl Preview {
         }
     }
 
+    /// Chữ OCR nhận diện được của `path`: chỉ nhận nếu đúng ảnh đang xem. Vùng chọn cũ bỏ đi.
+    pub fn set_text(&self, path: &std::path::Path, text: Arc<TextLayout>) {
+        let had_sel = {
+            let mut st = self.st.borrow_mut();
+            if !self.open.get() || st.path != path {
+                return;
+            }
+            let had = st.sel.is_some();
+            st.clear_text();
+            st.text = Some(text);
+            had
+        };
+        if had_sel {
+            self.repaint();
+        }
+    }
+
+    /// Điểm (toạ độ cửa sổ) -> toạ độ ảnh gốc, cùng chữ của ảnh và độ nới (px ảnh) cho `hit`.
+    fn to_image(&self, x: i32, y: i32) -> Option<(Arc<TextLayout>, (i32, i32), i32)> {
+        let k = self.scale();
+        let st = self.st.borrow();
+        let (t, v, img) = (st.text.as_ref()?, st.view?, st.img.as_ref()?);
+        if t.is_empty() {
+            return None;
+        }
+        let ir = v.image_rect(img.dimensions());
+        let z = v.zoom.max(1e-6);
+        let p = (((x - ir.x) as f64 / z).floor() as i32, ((y - ir.y) as f64 / z).floor() as i32);
+        let pad = (TEXT_PAD as f64 * k as f64 / z).ceil() as i32;
+        Some((t.clone(), p, pad))
+    }
+
+    /// Vị trí chữ dưới con trỏ (toạ độ cửa sổ). Giữ `Alt` thì không tính là chữ (kéo để di chuyển).
+    fn text_at(&self, x: i32, y: i32) -> Option<Pos> {
+        if alt_down() {
+            return None;
+        }
+        let (t, p, pad) = self.to_image(x, y)?;
+        t.hit(p, pad)
+    }
+
+    /// Đang kéo chọn: đổi vị trí cuối của vùng chọn theo con trỏ.
+    fn drag_select(&self, x: i32, y: i32) {
+        let changed = {
+            let Some((t, p, _)) = self.to_image(x, y) else { return };
+            let Some(focus) = t.nearest(p) else { return };
+            let mut st = self.st.borrow_mut();
+            let Some((anchor, start)) = st.text_press else { return };
+            if !st.selecting {
+                let (dx, dy) = unsafe { (GetSystemMetrics(SM_CXDRAG), GetSystemMetrics(SM_CYDRAG)) };
+                if (x - start.0).abs() <= dx && (y - start.1).abs() <= dy {
+                    return;
+                }
+                st.selecting = true;
+            }
+            st.sel.replace((anchor, focus)) != Some((anchor, focus))
+        };
+        if changed {
+            self.repaint();
+        }
+    }
+
+    fn set_sel(&self, sel: Option<(Pos, Pos)>) {
+        let changed = std::mem::replace(&mut self.st.borrow_mut().sel, sel) != sel;
+        if changed {
+            self.repaint();
+        }
+    }
+
+    fn select_all(&self) {
+        let all = self.st.borrow().text.as_ref().and_then(|t| t.all());
+        if all.is_some() {
+            self.set_sel(all);
+        }
+    }
+
+    /// Bấm trên chữ ở vị trí `p`: bấm thứ 3 liền sau bấm đúp thì chọn cả dòng; Shift thì nới vùng chọn đang có;
+    /// còn lại thì chờ kéo để chọn.
+    fn text_down(&self, p: Pos, x: i32, y: i32) {
+        let now = unsafe { GetMessageTime() };
+        let row = {
+            let mut st = self.st.borrow_mut();
+            let triple = st.last_dbl.take().is_some_and(|(t, (dx, dy))| {
+                let (cx, cy) = unsafe { (GetSystemMetrics(SM_CXDOUBLECLK), GetSystemMetrics(SM_CYDOUBLECLK)) };
+                now.wrapping_sub(t) as u32 <= unsafe { GetDoubleClickTime() } && (x - dx).abs() <= cx && (y - dy).abs() <= cy
+            });
+            match (triple, st.text.clone(), st.sel) {
+                (true, Some(t), _) => Some(t.row_range(p)),
+                (_, _, Some((anchor, _))) if shift_down() => {
+                    st.text_press = Some((anchor, (x, y)));
+                    st.selecting = true;
+                    st.sel = Some((anchor, p));
+                    None
+                }
+                _ => {
+                    st.text_press = Some((p, (x, y)));
+                    st.selecting = false;
+                    None
+                }
+            }
+        };
+        match row {
+            Some(r) => self.set_sel(Some(r)),
+            None => {
+                unsafe { SetCapture(self.hwnd) };
+                self.repaint();
+            }
+        }
+    }
+
+    /// Chữ đang chọn (rỗng = không chọn gì).
+    fn selected_text(&self) -> Option<String> {
+        let st = self.st.borrow();
+        let (t, (a, b)) = (st.text.as_ref()?, st.sel?);
+        Some(t.text(a, b)).filter(|s| !s.is_empty())
+    }
+
+    /// `Ctrl+C`, menu: copy chữ đang chọn, không chọn gì thì copy ảnh.
+    fn copy(&self) {
+        match self.selected_text() {
+            Some(text) => emit(Action::CopyText(text)),
+            None => emit(Action::PreviewCopy(self.st.borrow().path.clone())),
+        }
+    }
+
+    /// Menu chuột phải tại điểm màn hình `(x, y)`.
+    fn context_menu(&self, x: i32, y: i32) {
+        let has_sel = self.selected_text().is_some();
+        let has_text = self.st.borrow().text.as_ref().is_some_and(|t| !t.is_empty());
+        let item = |enabled: bool| if enabled { MF_STRING } else { MF_STRING | MF_GRAYED };
+        let (copy_text, select_all, copy_image) = (wide("Copy chữ"), wide("Chọn tất cả chữ"), wide("Copy ảnh"));
+        let cmd = unsafe {
+            let Ok(menu) = CreatePopupMenu() else { return };
+            let pc = |w: &Vec<u16>| windows::core::PCWSTR(w.as_ptr());
+            let _ = AppendMenuW(menu, item(has_sel), CMD_COPY_TEXT, pc(&copy_text));
+            let _ = AppendMenuW(menu, item(has_text), CMD_SELECT_ALL, pc(&select_all));
+            let _ = AppendMenuW(menu, MF_SEPARATOR, 0, windows::core::PCWSTR::null());
+            let _ = AppendMenuW(menu, MF_STRING, CMD_COPY_IMAGE, pc(&copy_image));
+            // Không giữ borrow: menu chạy vòng lặp message riêng (wndproc vẫn nhận WM_MOUSELEAVE...).
+            let cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, x, y, None, self.hwnd, None);
+            let _ = DestroyMenu(menu);
+            cmd.0 as usize
+        };
+        match cmd {
+            CMD_COPY_TEXT => self.copy(),
+            CMD_SELECT_ALL => self.select_all(),
+            CMD_COPY_IMAGE => emit(Action::PreviewCopy(self.st.borrow().path.clone())),
+            _ => {}
+        }
+    }
+
     /// Bản sao ảnh đang xem nếu đúng file `path` (cho OCR, không phải đọc lại file).
     pub fn image_of(&self, path: &std::path::Path) -> Option<RgbaImage> {
         let st = self.st.borrow();
@@ -613,6 +830,10 @@ impl Handler for Preview {
             WM_MOUSEMOVE => {
                 if self.st.borrow().resize.is_some() {
                     self.resize_move();
+                    return Some(LRESULT(0));
+                }
+                if self.st.borrow().text_press.is_some() {
+                    self.drag_select(loword(lp.0), hiword(lp.0));
                     return Some(LRESULT(0));
                 }
                 let h = self.hit(loword(lp.0), hiword(lp.0));
@@ -664,6 +885,8 @@ impl Handler for Preview {
                     }
                 } else if self.hit(x, y).is_some() {
                     IDC_HAND
+                } else if self.st.borrow().text_press.is_some() || self.text_at(x, y).is_some() {
+                    IDC_IBEAM
                 } else {
                     return None;
                 };
@@ -687,8 +910,12 @@ impl Handler for Preview {
                     if start {
                         unsafe { SetCapture(hwnd) };
                     }
+                } else if let Some(p) = self.text_at(x, y) {
+                    // Bấm trên chữ: kéo để chọn (vùng chọn cũ giữ tới khi kéo hoặc thả).
+                    self.text_down(p, x, y);
                 } else {
-                    // Kéo ở bất kỳ đâu ngoài nút: để Windows di chuyển cửa sổ.
+                    self.set_sel(None);
+                    // Kéo ở bất kỳ đâu ngoài nút và chữ: để Windows di chuyển cửa sổ.
                     let (cx, cy) = cursor_pos();
                     let pt = ((cy as u16 as isize) << 16) | (cx as u16 as isize);
                     unsafe {
@@ -700,7 +927,45 @@ impl Handler for Preview {
                 }
                 Some(LRESULT(0))
             }
+            WM_LBUTTONDBLCLK => {
+                // Bấm đúp trên chữ: chọn từ đó. Chỗ khác: như bấm đơn (class có CS_DBLCLKS).
+                let (x, y) = (loword(lp.0), hiword(lp.0));
+                let on_text = self.text_at(x, y).filter(|_| self.hit(x, y).is_none() && self.edge(x, y).is_none());
+                let range = on_text.and_then(|p| self.st.borrow().text.as_ref().map(|t| t.word_range(p)));
+                match range {
+                    Some(r) => {
+                        self.st.borrow_mut().last_dbl = Some((unsafe { GetMessageTime() }, (x, y)));
+                        self.set_sel(Some(r));
+                    }
+                    None => return self.handle(hwnd, WM_LBUTTONDOWN, wp, lp),
+                }
+                Some(LRESULT(0))
+            }
+            WM_CONTEXTMENU => {
+                // lParam là toạ độ màn hình; -1 = mở bằng bàn phím (Shift+F10): đặt menu ở góc trên-trái ảnh.
+                let (mut x, mut y) = (loword(lp.0), hiword(lp.0));
+                if x == -1 && y == -1 {
+                    let r = self.st.borrow().view.map(|v| v.rect).unwrap_or_default();
+                    (x, y) = (r.x + 16, r.y + 16);
+                }
+                self.context_menu(x, y);
+                Some(LRESULT(0))
+            }
             WM_LBUTTONUP => {
+                let text_click = {
+                    let mut st = self.st.borrow_mut();
+                    st.text_press.take().map(|_| !std::mem::take(&mut st.selecting))
+                };
+                if let Some(click) = text_click {
+                    unsafe {
+                        let _ = ReleaseCapture();
+                    }
+                    // Bấm rồi thả, không kéo: bỏ vùng chọn.
+                    if click {
+                        self.set_sel(None);
+                    }
+                    return Some(LRESULT(0));
+                }
                 if self.resize_end() {
                     unsafe {
                         let _ = ReleaseCapture();
@@ -718,7 +983,12 @@ impl Handler for Preview {
                 Some(LRESULT(0))
             }
             WM_CAPTURECHANGED => {
-                self.st.borrow_mut().press = None;
+                {
+                    let mut st = self.st.borrow_mut();
+                    st.press = None;
+                    st.text_press = None;
+                    st.selecting = false;
+                }
                 self.resize_end();
                 Some(LRESULT(0))
             }
@@ -745,11 +1015,16 @@ impl Handler for Preview {
                 let vk = wp.0 as u16;
                 let ctrl = unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0;
                 match vk {
-                    v if v == VK_ESCAPE.0 => self.close(),
-                    0x43 if ctrl => {
-                        let path = self.st.borrow().path.clone();
-                        emit(Action::PreviewCopy(path));
+                    v if v == VK_ESCAPE.0 => {
+                        // Có vùng chọn thì Esc bỏ vùng chọn trước, lần sau mới đóng.
+                        if self.selected_text().is_some() {
+                            self.set_sel(None);
+                        } else {
+                            self.close();
+                        }
                     }
+                    0x43 if ctrl => self.copy(),
+                    0x41 if ctrl => self.select_all(),
                     v if v == VK_OEM_PLUS.0 || v == VK_ADD.0 => self.zoom(1, None, self.center()),
                     v if v == VK_OEM_MINUS.0 || v == VK_SUBTRACT.0 => self.zoom(-1, None, self.center()),
                     v if v == 0x30 || v == VK_NUMPAD0.0 => {

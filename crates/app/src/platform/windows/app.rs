@@ -73,14 +73,16 @@ pub enum Action {
     PreviewLoaded(std::path::PathBuf, Result<RgbaImage, String>),
     PreviewCopy(std::path::PathBuf),
     PreviewReveal(std::path::PathBuf),
-    /// Preview vừa đóng: chỉ để hẹn lại trim working set.
+    /// Preview vừa đóng: huỷ job OCR nền, hẹn lại trim working set.
     PreviewClosed,
     /// Người dùng vừa kéo, đổi cỡ hoặc zoom Preview: khung mới.
     PreviewBox(Rect),
     /// Nút [T] trên Preview: OCR ảnh đang xem, hoặc huỷ nếu đang OCR nó.
     PreviewOcr(std::path::PathBuf),
-    /// Worker OCR xong job (text đã hậu xử lý, hoặc câu lỗi cho người dùng).
-    OcrDone(u32, Result<String, String>),
+    /// Worker OCR xong job (chữ đã sắp theo thứ tự đọc, hoặc câu lỗi cho người dùng).
+    OcrDone(u32, Result<chup_core::ocr::TextLayout, String>),
+    /// Copy chữ người dùng vừa chọn trên Preview.
+    CopyText(String),
     /// Nút "Tải gói" trong Cài đặt.
     OcrDownload,
     /// Nút "Xoá gói" trong Cài đặt.
@@ -323,13 +325,14 @@ impl App {
                 Ok(()) => vec![],
                 Err(e) => vec![Effect::Toast(Toast::error(e))],
             },
-            Action::PreviewClosed => vec![],
+            Action::PreviewClosed => self.model.preview_closed(),
             Action::PreviewBox(r) => self.model.set_preview_box(r),
             Action::PreviewOcr(path) => match &self.model.ocr_busy {
-                Some(OcrJob { source: OcrSource::Preview(p), .. }) if *p == path => self.model.ocr_cancel(),
+                Some(OcrJob { source: OcrSource::Preview(p), copy: true, .. }) if *p == path => self.model.ocr_cancel(),
                 _ => self.model.ocr_request(OcrSource::Preview(path)),
             },
             Action::OcrDone(id, r) => self.model.ocr_done(id, r),
+            Action::CopyText(text) => vec![Effect::CopyText(text)],
             Action::OcrDownload => {
                 // Exe phụ còn sống (gói vừa hỏng/xoá dở) giữ thư mục gói: tắt trước để bước rename khi cài không lỗi.
                 self.ocr.stop_helper();
@@ -479,7 +482,7 @@ impl App {
                 Effect::CancelOcr => self.ocr.cancel(),
                 Effect::OcrBusyChanged => {
                     let busy = match &self.model.ocr_busy {
-                        Some(OcrJob { source: OcrSource::Preview(p), .. }) => Some(p.clone()),
+                        Some(OcrJob { source: OcrSource::Preview(p), copy: true, .. }) => Some(p.clone()),
                         _ => None,
                     };
                     self.preview.set_ocr_busy(busy);
@@ -497,6 +500,7 @@ impl App {
                     self.ocr.stop_helper();
                     post_ocr_download(true)
                 }
+                Effect::PreviewText(path, text) => self.preview.set_text(&path, text),
             }
         }
     }
@@ -642,8 +646,8 @@ impl App {
         };
         let Some((view, work)) = self.preview_view(img.dimensions()) else { return vec![] };
         let p = &self.model.config.preview;
-        self.preview.show(path, img, view, work, p.always_on_top, p.opacity);
-        vec![]
+        self.preview.show(path.clone(), img, view, work, p.always_on_top, p.opacity);
+        self.model.preview_shown(path)
     }
 
     /// Chỗ và cỡ mở Preview theo Cài đặt (SPEC 17). Trả về view và work area của màn hình đó.

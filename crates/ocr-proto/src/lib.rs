@@ -10,7 +10,7 @@ use std::io::{self, Read, Write};
 use serde::{Deserialize, Serialize};
 
 /// Tăng khi đổi định dạng tin. Exe phụ lệch số này với `chup.exe` thì không dùng được.
-pub const PROTO: u32 = 1;
+pub const PROTO: u32 = 2;
 
 /// Khung lớn nhất nhận vào (ảnh xám 16384 × 16384 = 256 MiB). Lớn hơn thì coi là luồng hỏng.
 pub const MAX_FRAME: usize = 256 << 20;
@@ -64,6 +64,20 @@ pub struct Line {
     pub text: String,
     pub bbox: [i32; 4],
     pub conf: f32,
+    /// Các từ trong dòng, theo thứ tự đọc (để chọn chữ trên Preview). Rỗng thì cả dòng coi là một từ.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub words: Vec<Word>,
+}
+
+/// Một từ trong dòng, cùng hệ toạ độ với [`Line::bbox`].
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Word {
+    pub text: String,
+    pub bbox: [i32; 4],
+    pub conf: f32,
+    /// `[x, w]` của từng ký tự (để chọn một phần của từ). Rỗng = engine không có (Windows OCR): Chup tự ước lượng.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub chars: Vec<[i32; 2]>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -160,7 +174,15 @@ mod tests {
     fn response_json_shapes() {
         let ok = Response::Ok {
             id: 3,
-            lines: vec![Line { text: "Xin chào".into(), bbox: [1, 2, 30, 10], conf: 91.5 }],
+            lines: vec![Line {
+                text: "Xin chào".into(),
+                bbox: [1, 2, 30, 10],
+                conf: 91.5,
+                words: vec![
+                    Word { text: "Xin".into(), bbox: [1, 2, 12, 10], conf: 92.0, chars: vec![[1, 4], [5, 3], [8, 5]] },
+                    Word { text: "chào".into(), bbox: [15, 2, 16, 10], conf: 91.0, chars: vec![] },
+                ],
+            }],
         };
         let err = Response::Err { id: 4, error: "hỏng".into() };
         for r in [&ok, &err] {
@@ -170,7 +192,9 @@ mod tests {
         }
         assert_eq!(serde_json::to_value(&err).unwrap(), serde_json::json!({ "id": 4, "error": "hỏng" }));
         assert_eq!((ok.id(), err.id()), (3, 4));
-        let hello: Hello = serde_json::from_str(r#"{"proto":1,"tesseract":"5.5.1"}"#).unwrap();
+        let bare: Line = serde_json::from_str(r#"{"text":"a","bbox":[0,0,1,1],"conf":1}"#).unwrap();
+        assert!(bare.words.is_empty(), "dòng không có words vẫn đọc được");
+        let hello: Hello = serde_json::from_str(r#"{"proto":2,"tesseract":"5.5.1"}"#).unwrap();
         assert_eq!(hello.proto, PROTO);
     }
 }

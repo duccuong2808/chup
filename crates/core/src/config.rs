@@ -71,10 +71,18 @@ pub enum OcrLanguage {
     Vi,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct OcrConfig {
     pub language: OcrLanguage,
+    /// Tự nhận diện chữ ở nền khi mở Preview để chọn chữ được ngay (SPEC 17.2). Config cũ thiếu field: bật.
+    pub auto_preview: bool,
+}
+
+impl Default for OcrConfig {
+    fn default() -> Self {
+        Self { language: OcrLanguage::default(), auto_preview: true }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -372,7 +380,18 @@ mod tests {
         assert!(apply_patch(&cfg, &json!({ "hotkeys": { "ocr": "f1" } })).is_err(), "trùng Freeze");
         assert!(apply_patch(&cfg, &json!({ "ocr": { "language": "fr" } })).is_err());
         let s = serde_json::to_value(&next).unwrap();
-        assert_eq!(s["ocr"], json!({ "language": "vi" }));
+        assert_eq!(s["ocr"], json!({ "language": "vi", "autoPreview": true }));
+    }
+
+    #[test]
+    fn ocr_auto_preview_defaults_on_for_old_configs() {
+        let old: OcrConfig = serde_json::from_value(json!({ "language": "vi" })).unwrap();
+        assert!(old.auto_preview, "config cũ thiếu field: bật");
+        let cfg = Config::with_save_dir(Path::new("/x"));
+        assert!(cfg.ocr.auto_preview);
+        let off = apply_patch(&cfg, &json!({ "ocr": { "autoPreview": false } })).unwrap();
+        assert!(!off.ocr.auto_preview);
+        assert_eq!(off.ocr.language, OcrLanguage::En, "patch một field giữ field kia");
     }
 
     #[test]

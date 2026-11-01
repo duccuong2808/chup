@@ -106,7 +106,7 @@ installer/chup.nsi  installer NSIS
 ```
 
 - **Cấu hình**: `%APPDATA%\app.chup.desktop\config.json`.
-- **Log và cache thumbnail**: `%LOCALAPPDATA%\app.chup.desktop\` (`chup.log`, `thumbs\`).
+- **Log và cache thumbnail**: `%LOCALAPPDATA%\app.chup.desktop\` (`chup.log`, `thumbs\`; bộ cài tải gói OCR ghi `chup-install-ocr.log`).
 - **Gói OCR tiếng Việt**: `%LOCALAPPDATA%\app.chup.desktop\ocr\vi-1\`.
 
 ## Số đo
@@ -189,6 +189,26 @@ Cách giữ RAM thấp:
   - RAM: đang mở 121 MB; đóng rồi trim còn 2 MB working set.
   - Lỗi tìm thấy và đã sửa: góc bo tròn (pixel alpha 0) không nhận chuột nên không kéo góc được.
 
+- OCR (bản `7475765`; VM ARM64 chạy bản x64 qua giả lập, nên số đo chậm hơn máy thật):
+  - CI: vcpkg build Tesseract tĩnh (lần đầu ~30 phút, có cache ~20 s); `chup-ocr.exe` 6,4 MB chỉ phụ thuộc DLL
+    hệ thống; test pipe trên runner: CER 0,85% (np200), 0,21% (np100).
+  - Bộ cài: tích ô "OCR tiếng Việt" thì `--install-ocr` tải qua WinHTTP, SHA-256 khớp, config chuyển sang
+    tiếng Việt. Không tích thì không có thư mục `ocr`. Gỡ cài đặt tắt cả hai exe, xoá exe và thư mục `ocr`.
+  - Tiếng Việt (Notepad, 200%): sai ~0,7% ký tự ở câu thường ("Chup" thành "Chụp"); dòng chỉ gồm dấu
+    đứng rời (ắ ằ ẳ ẵ ặ) thì đọc sai. Kết quả NFC, clipboard CF_UNICODETEXT xuống dòng CRLF.
+    Job đầu 1,9–2,2 s (khởi động `chup-ocr.exe` ~1,7 s lần đầu, ~0,2 s khi file đã nằm trong cache), sau đó ~0,4 s.
+    `chup-ocr.exe` 43–49 MB.
+  - Tiếng Anh (Windows OCR): 40–60 ms, nhận thẳng `SoftwareBitmap` Gray8 (không phải chuyển Bgra8).
+  - Nút [T] trên toolbar, "Chữ" khi Freeze, [T] trên Preview đều copy và hiện toast. Vùng không có chữ: toast
+    "Không tìm thấy chữ". Hotkey "Chụp text" (gán Ctrl+Alt+T trong Cài đặt): overlay Freeze có gợi ý, thả chuột là
+    OCR luôn, không hiện toolbar.
+  - `chup-ocr.exe` tự tắt đúng 5 phút sau job cuối (log "tắt chup-ocr.exe sau 5 phút không dùng"); `chup.exe` còn 8 MB.
+  - Chọn tiếng Việt khi chưa có gói rồi bấm [T]: hỏi tải (ghi 4,4 MB), có thanh tiến trình, tải xong tự OCR
+    ảnh vừa yêu cầu. Chặn mạng (tường lửa): báo "Không tải được gói. Kiểm tra mạng rồi thử lại.", bấm Thử lại
+    sau khi mở mạng thì tải được. Xoá gói khi `chup-ocr.exe` đang chạy: xoá được (tắt exe phụ trước).
+  - Lỗi tìm thấy và đã sửa: chữ tiếng Việt trong bộ cài hỏng (script thiếu BOM UTF-8); "Xoá gói" lỗi
+    os error 32 vì `chup-ocr.exe` giữ thư mục gói, rồi tải lại cũng lỗi; instance thứ hai ghi đè `chup.log`.
+
 - Clipboard (khi chụp và nút Copy, ảnh 2193×1350): có đủ `PNG` (đúng byte của file), CF_DIBV5,
   và `Bitmap`/`DIB` do Windows tự suy ra. Chuẩn bị ~16–20 ms, giữ clipboard ~9–10 ms.
 - Nút mở folder (Explorer chọn sẵn file), nút bỏ khỏi stack, Xoá hết, `Ctrl+Alt+S` chụp lại vùng cuối.
@@ -209,10 +229,8 @@ tự đặt ảnh, nên không do Chup. Muốn kiểm tra clipboard thì phải 
 4. Freeze với 2 màn hình, màn 4K, màn 150%; video YouTube đang chạy (VM không có Chrome).
    Thời gian Freeze trên máy x64 thật.
 5. Preview: nhiều màn hình (mở trên màn của stack, kéo sang màn khác DPI), ảnh 4K, cảm giác mượt khi kéo mép ở 4K.
-6. **OCR (Phase 2.3) chưa chạy trên Windows lần nào.** Đã kiểm chứng trên macOS: `chup-ocr.exe` (Tesseract 5.5.4
-   qua pipe) đọc ảnh spike với CER 0,85% (np200) và 0,21% (np100), mỗi ảnh ~0,33 s, nạp model 0,6 s; logic cài gói
-   với dữ liệu thật (SHA-256 khớp). Chưa chạy: build vcpkg trên CI, Windows OCR, WinHTTP, hộp thoại tải,
-   `--install-ocr` từ installer, các nút [T], hotkey "Chụp text".
+6. OCR: bấm Huỷ giữa lúc đang tải gói (mạng VM tải 4,4 MB quá nhanh, không kịp bấm);
+   máy x64 thật (VM là ARM64 chạy giả lập); user Windows có tên tiếng Việt (đường dẫn có dấu).
 
 **Vấn đề đang theo dõi:** kéo thumbnail đôi khi không bắt đầu kéo. Trên VM, nhấn chuột ngay khi
 vừa rê vào thumbnail thì không kéo được (0/4); dừng ≥ 0,15 s thì 9/9. Có 1 lần lỗi dù đã dừng

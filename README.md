@@ -4,7 +4,7 @@ Chụp màn hình theo vùng cho Windows. Ảnh vừa chụp nằm thành stack 
 và kéo thả thẳng được sang app khác. Đặc tả đầy đủ ở [SPEC.md](SPEC.md).
 
 - **Trạng thái**: Phase 1 (v1, Windows) xong, cộng bước 1.5: bỏ Tauri/WebView2, giao diện
-  vẽ native bằng Win32 + Direct2D/DirectWrite.
+  vẽ native bằng Win32 + Direct2D/DirectWrite. Phase 2.1 (Freeze: chụp đóng băng menu, tooltip) xong.
 - **Rust thuần, không WebView.** Installer ~480 KB, `chup.exe` ~1 MB, RAM khi rảnh dưới 1 MB
   (xem [Số đo](#số-đo)).
 
@@ -60,6 +60,8 @@ Workflow `.github/workflows/build.yml` chạy trên `windows-latest`:
 | Di chuyển / đổi kích thước vùng | Kéo phần lề quanh viền / kéo 8 ô vuông nhỏ |
 | Dùng ảnh trong stack | Kéo thumbnail thả vào app khác; click để mở ảnh; hover để copy / mở folder / bỏ khỏi stack |
 | Thu gọn stack | Hover stack → nút `›`; click tab nhỏ ở mép màn hình để mở lại |
+| Chụp đóng băng (menu, tooltip) | `F1`, hoặc menu tray "Chụp đóng băng" / "… sau 3 giây". Màn hình đóng băng ngay; kéo chọn vùng, chỉnh bằng 8 ô vuông, kéo trong vùng để di chuyển |
+| Lưu / Copy / huỷ (Freeze) | `Enter`, double-click trong vùng hoặc nút **Lưu** / nút **Copy** (chỉ clipboard, không lưu file) / `Esc` hoặc click phải |
 
 ## Cấu trúc code
 
@@ -116,6 +118,13 @@ Bản native:
   300 ms. VM này là Windows **ARM64**, `chup.exe` (x64) chạy qua giả lập Prism, nên trên máy x64
   thật sẽ nhanh hơn; cần đo lại ở đó.
 
+Freeze (đo 2026-11-01, cùng VM ARM64 chạy x64 qua giả lập, 1 màn hình 3600×2024):
+- Nhấn F1 → ảnh đóng băng hiện: **194–224 ms** (ngân sách SPEC 250 ms, tính cho 2 màn hình gồm
+  1 màn 4K trên máy thật). Gồm chụp 134–165 ms + hiện overlay 52–64 ms (tô ảnh ~32 ms).
+  Lần đầu sau khi khởi động 346 ms (Direct2D còn nguội: vẽ gợi ý + toolbar 49 ms).
+- Lưu vùng 717×844: 40–93 ms.
+- RAM (private): 25 MB trước, 81 MB trong phiên (ảnh + DIB cỡ màn hình), về 25 MB ngay khi đóng.
+
 Cách giữ RAM thấp:
 - Bộ nhớ đồ hoạ chỉ cấp khi cửa sổ đang hiện: DIB overlay (cỡ màn hình, ~29 MB ở 4K) và DIB
   frame giải phóng khi ẩn / khi thôi kéo.
@@ -139,6 +148,18 @@ Cách giữ RAM thấp:
 - Không cướp focus: sau khi chụp, app đang dùng vẫn giữ focus.
 - Single instance: chạy lần 2 thì mở Cài đặt.
 - Cài đặt: ghi phím tắt, báo lỗi tổ hợp đã bị app khác chiếm, `Esc` huỷ ghi phím.
+- Freeze (bản `0aa7947`):
+  - Menu chuột phải trên Desktop + `F1`: ảnh đóng băng có menu, crop ra đúng pixel và nét ở 200%.
+  - Tooltip taskbar ("Microsoft Edge") + hẹn giờ 3 giây từ tray: ảnh có tooltip; icon tray mờ
+    trong lúc chờ; overlay vẫn lấy được focus (`Esc` đóng được).
+  - Mục tray "Chụp đóng băng": menu tray không lọt vào ảnh.
+  - Kéo chọn vùng, resize bằng handle, kéo trong vùng để di chuyển (chỗ cũ vẽ lại sạch);
+    hover nút toolbar đổi màu, con trỏ bàn tay.
+  - Lưu bằng `Enter` và double-click: có file, vào stack. Copy: không tạo file, clipboard có ảnh,
+    có toast. `Esc` và click phải: huỷ, không tạo file.
+  - Stack không lọt vào ảnh đóng băng. Toolbar chế độ thường vẫn như cũ sau khi tách hàm vẽ.
+  - Config v1 tự lên v2 với `freeze = "F1"`; ô hotkey "Chụp đóng băng" trong Cài đặt, đặt trùng
+    thì báo lỗi.
 
 - Clipboard (khi chụp và nút Copy, ảnh 2193×1350): có đủ `PNG` (đúng byte của file), CF_DIBV5,
   và `Bitmap`/`DIB` do Windows tự suy ra. Chuẩn bị ~16–20 ms, giữ clipboard ~9–10 ms.
@@ -154,8 +175,11 @@ tự đặt ảnh, nên không do Chup. Muốn kiểm tra clipboard thì phải 
 1. Nhiều màn hình, nhất là màn hình khác DPI (100% + 150%), và rút màn hình phụ khi frame đang
    ở trên đó. Phần quy đổi toạ độ có unit test. VM hiện chỉ có 1 màn hình.
 2. Tooltip/menu có hiệu ứng trong suốt có lọt vào ảnh không (`xcap` chụp bằng GDI `BitBlt`
-   không có cờ `CAPTUREBLT`).
+   không có cờ `CAPTUREBLT`). Menu Desktop và tooltip taskbar của Windows 11 thì có (test Freeze);
+   menu của app khác (Explorer, Chrome) chưa thử.
 3. Kéo thả vào Zalo PC, Slack, Word.
+4. Freeze với 2 màn hình, màn 4K, màn 150%; video YouTube đang chạy (VM không có Chrome).
+   Thời gian Freeze trên máy x64 thật.
 
 **Vấn đề đang theo dõi:** kéo thumbnail đôi khi không bắt đầu kéo. Trên VM, nhấn chuột ngay khi
 vừa rê vào thumbnail thì không kéo được (0/4); dừng ≥ 0,15 s thì 9/9. Có 1 lần lỗi dù đã dừng
@@ -170,3 +194,5 @@ vừa rê vào thumbnail thì không kéo được (0/4); dừng ≥ 0,15 s thì
 - **Trim khi rảnh**: sau 15 s không thao tác, app giải phóng bộ đệm và trả working set
   cho hệ điều hành. Lần chọn vùng đầu tiên sau đó chậm hơn (đo được ~113 ms so với ~35 ms).
 - **Cài đặt bố cục 2 cột**.
+- **Freeze, mục tray "Chụp đóng băng"** chờ ~350 ms cho menu tray tắt hẳn rồi mới chụp (F1 chụp ngay).
+- **Freeze, lúc đếm ngược hẹn giờ**: icon tray mờ đi kèm tooltip, thay vì một icon riêng.

@@ -10,7 +10,7 @@ fn main() {
         }
         // Thư viện hệ thống mà các bản static của vcpkg cần (curl/schannel, libarchive...). Thừa cũng không sao:
         // linker chỉ lấy import được dùng tới.
-        for lib in ["user32", "advapi32", "ws2_32", "crypt32", "secur32", "bcrypt", "normaliz", "iphlpapi", "wldap32"] {
+        for lib in ["user32", "advapi32", "ws2_32", "crypt32", "secur32", "bcrypt", "normaliz", "iphlpapi", "wldap32", "xmllite"] {
             println!("cargo:rustc-link-lib={lib}");
         }
         // Code page UTF-8 cho các API "A"/fopen của CRT (phòng đường dẫn có dấu; chup.exe cũng truyền "." làm tessdata).

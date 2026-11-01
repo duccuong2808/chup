@@ -573,7 +573,14 @@ impl Model {
     pub fn preview_shown(&mut self, path: PathBuf) -> Vec<Effect> {
         self.preview_open = Some(path.clone());
         match self.ocr_cached(&path, self.config.ocr.language) {
-            Some(text) => vec![Effect::PreviewText(path, text)],
+            Some(text) => {
+                let mut fx = vec![Effect::PreviewText(path, text)];
+                // Job nền của ảnh trước còn chạy: huỷ, không thì kết quả của nó đè cache của ảnh này.
+                if self.ocr_busy.take_if(|j| !j.copy).is_some() {
+                    fx.push(Effect::CancelOcr);
+                }
+                fx
+            }
             None => self.ocr_auto_preview(),
         }
     }
@@ -619,6 +626,14 @@ impl Model {
             fx.extend(self.ocr_auto_preview());
         }
         fx
+    }
+
+    /// Lớp platform đã dừng worker (tắt exe phụ để tải/xoá gói): job đang chạy sẽ không bao giờ báo kết quả.
+    pub fn ocr_abort(&mut self) -> Vec<Effect> {
+        match self.ocr_busy.take() {
+            Some(j) if j.copy => vec![Effect::OcrBusyChanged],
+            _ => vec![],
+        }
     }
 
     /// Huỷ job đang chạy (bấm [T] lần nữa). Không chạy lại job nền.
@@ -1200,6 +1215,27 @@ mod tests {
         m.ocr_request(OcrSource::Image { scale: 1.0 });
         assert!(m.preview_shown(PathBuf::from("/a.png")).is_empty());
         assert_eq!(m.ocr_cancel(), vec![Effect::CancelOcr, Effect::OcrBusyChanged]);
+    }
+
+    #[test]
+    fn abort_clears_job_and_cached_preview_cancels_other_background_job() {
+        let mut m = model();
+        let a = PathBuf::from("/pics/a.png");
+        let job = started(&m.preview_shown(a.clone()));
+        assert!(m.ocr_abort().is_empty(), "job nền: không có spinner để tắt");
+        assert!(m.ocr_busy.is_none());
+        assert!(m.ocr_done(job.id, Ok(lay("muộn"))).is_empty());
+        m.ocr_request(OcrSource::Image { scale: 1.0 });
+        assert_eq!(m.ocr_abort(), vec![Effect::OcrBusyChanged]);
+        // b đã có trong cache; mở a (job nền chạy) rồi quay lại b: huỷ job của a.
+        let b = PathBuf::from("/pics/b.png");
+        let jb = started(&m.preview_shown(b.clone()));
+        m.ocr_done(jb.id, Ok(lay("bê")));
+        started(&m.preview_shown(a));
+        let fx = m.preview_shown(b);
+        assert!(matches!(fx[0], Effect::PreviewText(..)));
+        assert_eq!(fx[1], Effect::CancelOcr);
+        assert!(m.ocr_busy.is_none());
     }
 
     #[test]

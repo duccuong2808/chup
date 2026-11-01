@@ -97,21 +97,32 @@ impl Api {
                 let page = TessResultIteratorGetPageIterator(it);
                 // Duyệt theo ký tự: gặp đầu dòng thì mở dòng mới, đầu từ thì mở từ mới (text, conf, bbox
                 // lấy ở mức dòng / từ), mỗi ký tự góp `[x, w]` vào từ hiện tại.
+                // Dòng hoặc từ hiện tại không lấy được (text null, lỗi bbox): bỏ qua phần tử con của nó,
+                // không gắn nhầm sang dòng / từ trước.
+                let (mut line_ok, mut word_ok) = (false, false);
                 loop {
                     if TessPageIteratorIsAtBeginningOf(page, RIL_TEXTLINE) != 0 || lines.is_empty() {
-                        if let Some((text, bbox, conf)) = item(it, page, RIL_TEXTLINE) {
-                            lines.push(Line { text, bbox, conf, words: vec![] });
-                        }
+                        line_ok = match item(it, page, RIL_TEXTLINE) {
+                            Some((text, bbox, conf)) => {
+                                lines.push(Line { text, bbox, conf, words: vec![] });
+                                true
+                            }
+                            None => false,
+                        };
+                        word_ok = false;
                     }
-                    let new_word = TessPageIteratorIsAtBeginningOf(page, RIL_WORD) != 0
-                        || lines.last().is_some_and(|l| l.words.is_empty());
-                    if new_word {
-                        if let (Some((text, bbox, conf)), Some(line)) = (item(it, page, RIL_WORD), lines.last_mut()) {
-                            line.words.push(Word { text, bbox, conf, chars: vec![] });
-                        }
+                    let new_word = TessPageIteratorIsAtBeginningOf(page, RIL_WORD) != 0 || !word_ok;
+                    if line_ok && new_word {
+                        word_ok = match (item(it, page, RIL_WORD), lines.last_mut()) {
+                            (Some((text, bbox, conf)), Some(line)) => {
+                                line.words.push(Word { text, bbox, conf, chars: vec![] });
+                                true
+                            }
+                            _ => false,
+                        };
                     }
                     let (mut l, mut t, mut r, mut b) = (0, 0, 0, 0);
-                    if TessPageIteratorBoundingBox(page, RIL_SYMBOL, &mut l, &mut t, &mut r, &mut b) != 0 {
+                    if line_ok && word_ok && TessPageIteratorBoundingBox(page, RIL_SYMBOL, &mut l, &mut t, &mut r, &mut b) != 0 {
                         if let Some(w) = lines.last_mut().and_then(|l| l.words.last_mut()) {
                             w.chars.push([l, r - l]);
                         }

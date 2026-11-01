@@ -74,6 +74,8 @@ pub struct Job {
     pub lang: OcrLanguage,
     pub scale: f64,
     pub img: RgbaImage,
+    /// Job nền cho Preview: huỷ thì để chạy xong rồi bỏ kết quả, không kill exe phụ (khỏi nạp lại model).
+    pub background: bool,
 }
 
 /// State chia sẻ giữa worker và UI thread (một mutex + condvar).
@@ -82,7 +84,8 @@ struct Shared {
     /// Job chờ chạy (chỉ giữ cái mới nhất).
     pending: Option<Job>,
     /// Job worker đang chạy: chỉ worker đặt và xoá. Watchdog dựa vào đây.
-    current: Option<(u32, OcrLanguage)>,
+    /// (id, ngôn ngữ, job nền).
+    current: Option<(u32, OcrLanguage, bool)>,
     /// UI thread huỷ (hoặc thay) job đang chạy: worker bỏ kết quả.
     cancelled: bool,
     /// Exe phụ đang chạy, để UI thread / watchdog kill được trong lúc worker đang chờ đọc pipe.
@@ -98,10 +101,11 @@ impl Shared {
     }
 
     /// Dừng job đang chạy: đánh dấu huỷ; nếu là Tesseract thì kill exe phụ (Windows OCR nhanh, để chạy xong).
+    /// Job nền thì không kill: người dùng không chờ nó, còn nạp lại model tốn thêm ~0,6 s cho lần OCR sau.
     fn stop_current(&mut self) {
-        if let Some((_, lang)) = self.current {
+        if let Some((_, lang, background)) = self.current {
             self.cancelled = true;
-            if lang == OcrLanguage::Vi {
+            if lang == OcrLanguage::Vi && !background {
                 self.kill();
             }
         }
@@ -172,7 +176,7 @@ fn run(shared: SharedRef, ocr_root: PathBuf) {
             let mut sh = lock(&shared);
             loop {
                 if let Some(j) = sh.pending.take() {
-                    sh.current = Some((j.id, j.lang));
+                    sh.current = Some((j.id, j.lang, j.background));
                     sh.cancelled = false;
                     break j;
                 }
@@ -328,7 +332,7 @@ fn watchdog(shared: &SharedRef, id: u32, timeout: Duration) {
     std::thread::spawn(move || {
         std::thread::sleep(timeout);
         let mut s = lock(&sh);
-        if s.current.is_some_and(|(cur, _)| cur == id) && s.child.is_some() {
+        if s.current.is_some_and(|(cur, _, _)| cur == id) && s.child.is_some() {
             log::warn!("ocr: job {id} quá {}s, kill chup-ocr.exe", timeout.as_secs());
             s.kill();
         }

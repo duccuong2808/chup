@@ -337,14 +337,16 @@ impl App {
                 // Exe phụ còn sống (gói vừa hỏng/xoá dở) giữ thư mục gói: tắt trước để bước rename khi cài không lỗi.
                 self.ocr.stop_helper();
                 post_ocr_download(false);
-                vec![]
+                // Job đang chạy đã bị dừng, sẽ không báo kết quả.
+                self.model.ocr_abort()
             }
             Action::OcrRemove => {
                 self.ocr.stop_helper();
-                let mut fx = match pack::remove(&self.ocr_root) {
-                    Ok(()) => vec![Effect::Toast(Toast::info("Đã xoá gói OCR tiếng Việt"))],
-                    Err(e) => vec![Effect::Toast(Toast::error(e))],
-                };
+                let mut fx = self.model.ocr_abort();
+                fx.push(match pack::remove(&self.ocr_root) {
+                    Ok(()) => Effect::Toast(Toast::info("Đã xoá gói OCR tiếng Việt")),
+                    Err(e) => Effect::Toast(Toast::error(e)),
+                });
                 fx.extend(self.model.set_ocr_vi(ocr::vi_state(&self.ocr_root)));
                 fx
             }
@@ -498,7 +500,9 @@ impl App {
                 }
                 Effect::AskOcrDownload => {
                     self.ocr.stop_helper();
-                    post_ocr_download(true)
+                    post_ocr_download(true);
+                    let fx = self.model.ocr_abort();
+                    self.apply(fx);
                 }
                 Effect::PreviewText(path, text) => self.preview.set_text(&path, text),
             }
@@ -647,6 +651,10 @@ impl App {
         let Some((view, work)) = self.preview_view(img.dimensions()) else { return vec![] };
         let p = &self.model.config.preview;
         self.preview.show(path.clone(), img, view, work, p.always_on_top, p.opacity);
+        // `show` có thể thất bại (thiếu bộ nhớ) và tự đóng: khi đó không nhận diện nền.
+        if !self.preview.is_visible() {
+            return vec![];
+        }
         self.model.preview_shown(path)
     }
 
@@ -779,7 +787,9 @@ impl App {
             OcrSource::Image { .. } => self.ocr_image.take(),
         };
         match img {
-            Some(img) => self.ocr.submit(ocr::Job { id: job.id, lang: job.lang, scale: job.scale, img }),
+            Some(img) => {
+                self.ocr.submit(ocr::Job { id: job.id, lang: job.lang, scale: job.scale, img, background: !job.copy })
+            }
             None => {
                 let fx = self.model.ocr_done(job.id, Err("Không đọc được ảnh để OCR".into()));
                 self.apply(fx);

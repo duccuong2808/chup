@@ -28,7 +28,7 @@ use windows::Win32::{
         Controls::WM_MOUSELEAVE,
         HiDpi::GetDpiForWindow,
         Input::KeyboardAndMouse::{
-            GetDoubleClickTime, GetKeyState, ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
+            GetCapture, GetDoubleClickTime, GetKeyState, ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT,
             VK_ADD, VK_CONTROL, VK_ESCAPE, VK_MENU, VK_NUMPAD0, VK_OEM_MINUS, VK_OEM_PLUS, VK_SHIFT, VK_SUBTRACT,
         },
         WindowsAndMessaging::{
@@ -322,6 +322,12 @@ impl Preview {
             st.pill = None;
             st.hits.clear();
             st.clear_text();
+        }
+        // Đóng giữa lúc đang kéo (chọn chữ, đổi cỡ, bấm nút): cửa sổ ẩn không còn xử lý WM_LBUTTONUP để nhả capture.
+        if unsafe { GetCapture() } == self.hwnd {
+            unsafe {
+                let _ = ReleaseCapture();
+            }
         }
         if was_open {
             emit(Action::PreviewClosed);
@@ -928,8 +934,12 @@ impl Handler for Preview {
                 Some(LRESULT(0))
             }
             WM_LBUTTONDBLCLK => {
-                // Bấm đúp trên chữ: chọn từ đó. Chỗ khác: như bấm đơn (class có CS_DBLCLKS).
+                // Bấm đúp trên chữ: chọn từ đó. Trên nút: bỏ qua (không thành 2 lần bấm, vd. [T] bấm rồi huỷ).
+                // Chỗ khác: như bấm đơn (class có CS_DBLCLKS).
                 let (x, y) = (loword(lp.0), hiword(lp.0));
+                if self.hit(x, y).is_some() {
+                    return Some(LRESULT(0));
+                }
                 let on_text = self.text_at(x, y).filter(|_| self.hit(x, y).is_none() && self.edge(x, y).is_none());
                 let range = on_text.and_then(|p| self.st.borrow().text.as_ref().map(|t| t.word_range(p)));
                 match range {
@@ -1016,8 +1026,19 @@ impl Handler for Preview {
                 let ctrl = unsafe { GetKeyState(VK_CONTROL.0 as i32) } < 0;
                 match vk {
                     v if v == VK_ESCAPE.0 => {
-                        // Có vùng chọn thì Esc bỏ vùng chọn trước, lần sau mới đóng.
-                        if self.selected_text().is_some() {
+                        // Đang bấm giữ trên chữ: huỷ thao tác kéo chọn. Có vùng chọn thì Esc bỏ vùng chọn trước,
+                        // lần sau mới đóng.
+                        let pressing = {
+                            let mut st = self.st.borrow_mut();
+                            st.selecting = false;
+                            st.text_press.take().is_some()
+                        };
+                        if pressing {
+                            unsafe {
+                                let _ = ReleaseCapture();
+                            }
+                            self.set_sel(None);
+                        } else if self.selected_text().is_some() {
                             self.set_sel(None);
                         } else {
                             self.close();

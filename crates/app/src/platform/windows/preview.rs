@@ -333,7 +333,9 @@ impl Preview {
         let t0 = std::time::Instant::now();
         let rad = RADIUS * k;
         let full = rectf(0.0, 0.0, w as f32, h as f32);
-        c.begin(Color::rgba(0, 0, 0, 0.0));
+        // Alpha 1/255 thay vì 0: pixel alpha 0 của layered window không nhận chuột, mà góc bo tròn
+        // vẫn phải kéo được để đổi cỡ.
+        c.begin(Color::rgba(0, 0, 0, 1.0 / 255.0));
         let ir = v.image_rect(img.dimensions());
         let fills = ir.w as i32 == w && ir.h as i32 == h;
         if !fills {

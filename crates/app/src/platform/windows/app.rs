@@ -7,10 +7,12 @@ use chup_core::{
     capture::{self, PersistOutcome},
     coords::{monitor_at, Rect},
     config::{Edge, StackMonitor},
-    model::{Effect, FrameMode, Model, Toast},
+    model::{Effect, FrameMode, Model, Toast, FREEZE_DELAY_MS},
 };
 use image::RgbaImage;
-use windows::Win32::UI::WindowsAndMessaging::{PostQuitMessage, SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE};
+use windows::Win32::UI::WindowsAndMessaging::{
+    KillTimer, PostQuitMessage, SetTimer, SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE,
+};
 
 use super::{
     frame::Frame,
@@ -21,7 +23,7 @@ use super::{
     toolbar::Toolbar,
     tray::Tray,
     util::{self, cursor_pos},
-    win::emit,
+    win::{self, emit},
 };
 
 pub enum Action {
@@ -50,7 +52,11 @@ pub enum Action {
     ResumeHotkeys,
     OpenSaveDir,
     DisplayChanged,
+    FreezeTimerFired,
 }
+
+/// Id timer hẹn giờ "Chụp đóng băng sau 3 giây" trên cửa sổ chính (mod.rs bắn `FreezeTimerFired`).
+pub const TIMER_FREEZE: usize = 5;
 
 pub struct App {
     pub model: Model,
@@ -140,6 +146,8 @@ impl App {
             Action::Menu(id) => match id.as_str() {
                 "select" => self.model.start_selection(),
                 "recapture" => self.model.request_capture(),
+                "freeze" => self.model.start_freeze(),
+                "freeze_delayed" => self.model.start_freeze_delayed(),
                 "open_folder" => self.open_save_dir(),
                 "settings" => {
                     self.open_settings();
@@ -154,6 +162,7 @@ impl App {
             Action::Hotkey(id) => match self.hotkeys.as_ref().and_then(|h| h.kind_of(id)) {
                 Some(Kind::SelectRegion) => self.model.start_selection(),
                 Some(Kind::Capture) => self.model.request_capture(),
+                Some(Kind::Freeze) => self.model.start_freeze(),
                 None => vec![],
             },
             Action::OpenSettings => {
@@ -191,6 +200,7 @@ impl App {
                 vec![Effect::ConfigChanged]
             }
             Action::OpenSaveDir => self.open_save_dir(),
+            Action::FreezeTimerFired => self.model.freeze_timer_fired(),
             Action::DisplayChanged => {
                 let fx = self.model.set_monitors(util::monitors());
                 self.sync_overlays();
@@ -202,7 +212,7 @@ impl App {
 
     /// App đang rảnh: không chọn vùng, Cài đặt đã đóng (frame có thể đang hiện, nhất là ở chế độ Mờ).
     pub fn is_idle(&self) -> bool {
-        !self.model.selecting && self.settings.is_none()
+        !self.model.selecting && self.model.freeze.is_none() && !self.model.freeze_timer && self.settings.is_none()
     }
 
     /// Rảnh đủ lâu: giải phóng DIB của overlay và trả working set lại cho Windows.
@@ -276,6 +286,20 @@ impl App {
                 Effect::ApplyHotkeys => self.apply_hotkeys(),
                 Effect::SyncAutostart => self.sync_autostart(),
                 Effect::ConfigChanged => self.refresh_settings(),
+                Effect::StartFreezeTimer => {
+                    unsafe { SetTimer(Some(win::app_hwnd()), TIMER_FREEZE, FREEZE_DELAY_MS, None) };
+                    if let Some(t) = &self.tray {
+                        t.set_waiting(true);
+                    }
+                }
+                Effect::CancelFreezeTimer => {
+                    unsafe {
+                        let _ = KillTimer(Some(win::app_hwnd()), TIMER_FREEZE);
+                    }
+                    if let Some(t) = &self.tray {
+                        t.set_waiting(false);
+                    }
+                }
                 // Freeze: nối ở Task 10 của docs/plans/2026-11-01-freeze.md.
                 _ => {}
             }

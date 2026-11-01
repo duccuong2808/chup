@@ -11,6 +11,7 @@ use super::{app::Action, win::emit};
 pub enum Kind {
     SelectRegion,
     Capture,
+    Freeze,
 }
 
 pub struct Hotkeys {
@@ -38,13 +39,14 @@ impl Hotkeys {
         Ok(Hotkeys { mgr, registered: vec![] })
     }
 
-    /// Huỷ hết rồi đăng ký lại; trả về lỗi theo tên (`selectRegion`, `capture`).
+    /// Huỷ hết rồi đăng ký lại; trả về lỗi theo tên (`selectRegion`, `capture`, `freeze`).
     pub fn apply(&mut self, cfg: &HotkeyConfig) -> BTreeMap<String, String> {
         self.pause();
         let mut errors = BTreeMap::new();
         for (name, accel, kind) in [
             ("selectRegion", cfg.select_region.trim(), Kind::SelectRegion),
             ("capture", cfg.capture.trim(), Kind::Capture),
+            ("freeze", cfg.freeze.trim(), Kind::Freeze),
         ] {
             if accel.is_empty() {
                 continue;

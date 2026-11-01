@@ -49,6 +49,38 @@ pub fn grab_region(rect: Rect) -> Result<RgbaImage, String> {
         .map_err(|e| format!("Chụp màn hình thất bại: {e}"))
 }
 
+/// Ảnh của 1 màn hình trong lần chụp Freeze: rect physical của màn hình kèm ảnh (hoặc lỗi).
+pub type MonitorShot = (Rect, Result<RgbaImage, String>);
+
+/// Chụp mọi màn hình song song (Freeze, SPEC 14.3).
+/// Mỗi thread tự lấy `Monitor` của mình, không chia sẻ đối tượng xcap giữa các thread.
+pub fn grab_monitors() -> Result<Vec<MonitorShot>, String> {
+    let mons = xcap::Monitor::all().map_err(|e| format!("Không liệt kê được màn hình: {e}"))?;
+    let rects: Vec<Rect> = mons
+        .iter()
+        .filter_map(|m| Some(Rect::new(m.x().ok()?, m.y().ok()?, m.width().ok()?, m.height().ok()?)))
+        .collect();
+    drop(mons);
+    Ok(std::thread::scope(|s| {
+        let jobs: Vec<_> = rects
+            .iter()
+            .map(|r| {
+                s.spawn(move || {
+                    let (cx, cy) = r.center();
+                    xcap::Monitor::from_point(cx, cy)
+                        .and_then(|m| m.capture_image())
+                        .map_err(|e| format!("Chụp màn hình thất bại: {e}"))
+                })
+            })
+            .collect();
+        rects
+            .iter()
+            .zip(jobs)
+            .map(|(r, j)| (*r, j.join().unwrap_or_else(|_| Err("Thread chụp bị panic".into()))))
+            .collect()
+    }))
+}
+
 pub struct PersistOptions {
     pub save_dir: PathBuf,
     pub fallback_dir: PathBuf,

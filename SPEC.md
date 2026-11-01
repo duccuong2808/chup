@@ -274,16 +274,19 @@ File: `%APPDATA%\app.chup.desktop\config.json` (giữ nguyên đường dẫn c�
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "saveDir": "C:\\Users\\<user>\\Pictures\\Chup",
   "fileNamePattern": "chup-{yyyyMMdd-HHmmss-SSS}",
   "copyToClipboard": true,
-  "hotkeys": { "selectRegion": "Ctrl+Alt+A", "capture": "Ctrl+Alt+S" },
+  "hotkeys": { "selectRegion": "Ctrl+Alt+A", "capture": "Ctrl+Alt+S", "freeze": "F1" },
   "stack": { "edge": "right", "monitor": "primary" },
   "afterCaptureNormal": "close",
   "launchAtStartup": false
 }
 ```
+
+- Version 2 (Phase 2.1) thêm `hotkeys.freeze`. Migrate từ v1: điền `"F1"`; nếu F1 đã được dùng cho hotkey khác thì để trống (tắt).
+- Chuỗi rỗng = tắt hotkey đó. Hai hotkey không được trùng nhau.
 
 Config hỏng hoặc parse lỗi: backup thành `config.bak.json`, rồi dùng mặc định.
 

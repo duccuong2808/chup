@@ -18,6 +18,7 @@ use super::{
     frame::Frame,
     hotkeys::{Hotkeys, Kind},
     overlay::Overlay,
+    preview::Preview,
     settings::{Settings, SettingsView},
     stack::StackWin,
     toolbar::Toolbar,
@@ -61,6 +62,14 @@ pub enum Action {
     FreezeConfirm { rect: Rect, action: FreezeAction },
     FreezeCancel,
     FreezeCopied(Result<(), String>),
+    /// Ảnh cho Preview đã giải mã xong (worker).
+    PreviewLoaded(std::path::PathBuf, Result<RgbaImage, String>),
+    PreviewCopy(std::path::PathBuf),
+    PreviewReveal(std::path::PathBuf),
+    /// Preview vừa đóng: chỉ để hẹn lại trim working set.
+    PreviewClosed,
+    /// Người dùng vừa kéo, đổi cỡ hoặc zoom Preview: khung mới.
+    PreviewBox(Rect),
 }
 
 /// Id timer hẹn giờ "Chụp đóng băng sau 3 giây" trên cửa sổ chính (mod.rs bắn `FreezeTimerFired`).
@@ -76,6 +85,7 @@ pub struct App {
     frame: Rc<Frame>,
     toolbar: Rc<Toolbar>,
     stack: Rc<StackWin>,
+    preview: Rc<Preview>,
     settings: Option<Rc<Settings>>,
     tray: Option<Tray>,
     hotkeys: Option<Hotkeys>,
@@ -95,12 +105,14 @@ impl App {
         let frame = Frame::create()?;
         let toolbar = Toolbar::create()?;
         let stack = StackWin::create()?;
+        let preview = Preview::create()?;
         let mut app = App {
             model,
             overlays: vec![],
             frame,
             toolbar,
             stack,
+            preview,
             settings: None,
             tray: None,
             hotkeys: None,
@@ -149,7 +161,7 @@ impl App {
             Action::Persisted(res) => self.model.capture_persisted(res),
             Action::StackRemove(id) => self.model.stack_remove(&id),
             Action::StackClear => self.model.stack_clear(),
-            Action::ShotOpen(id) => self.with_shot_file(&id, util::shell_open),
+            Action::ShotOpen(id) => self.model.shot_open(&id),
             Action::ShotReveal(id) => self.with_shot_file(&id, util::shell_reveal),
             Action::ShotCopy(id) => {
                 let (path, fx) = self.model.ensure_shot_file(&id);
@@ -256,6 +268,23 @@ impl App {
             }
             Action::FreezeCancel => self.model.freeze_cancel(),
             Action::FreezeCopied(r) => self.model.freeze_copied(r),
+            Action::PreviewLoaded(path, res) => self.on_preview_loaded(path, res),
+            Action::PreviewCopy(path) => {
+                std::thread::spawn(move || {
+                    let t = match chup_core::clipboard::copy_file_image(&path) {
+                        Ok(()) => Toast::info("Đã copy ảnh"),
+                        Err(e) => Toast::error(e),
+                    };
+                    emit(Action::Toast(t));
+                });
+                vec![]
+            }
+            Action::PreviewReveal(path) => match util::shell_reveal(&path) {
+                Ok(()) => vec![],
+                Err(e) => vec![Effect::Toast(Toast::error(e))],
+            },
+            Action::PreviewClosed => vec![],
+            Action::PreviewBox(r) => self.model.set_preview_box(r),
             Action::DisplayChanged => {
                 let fx = self.model.set_monitors(util::monitors());
                 self.sync_overlays();
@@ -270,7 +299,11 @@ impl App {
 
     /// App đang rảnh: không chọn vùng, Cài đặt đã đóng (frame có thể đang hiện, nhất là ở chế độ Mờ).
     pub fn is_idle(&self) -> bool {
-        !self.model.selecting && self.model.freeze.is_none() && !self.model.freeze_timer && self.settings.is_none()
+        !self.model.selecting
+            && self.model.freeze.is_none()
+            && !self.model.freeze_timer
+            && self.settings.is_none()
+            && !self.preview.is_visible()
     }
 
     /// Rảnh đủ lâu: giải phóng DIB của overlay và trả working set lại cho Windows.
@@ -343,7 +376,11 @@ impl App {
                 Effect::StartCapture(job) => self.start_capture(job.rect, job.hide_ui),
                 Effect::ApplyHotkeys => self.apply_hotkeys(),
                 Effect::SyncAutostart => self.sync_autostart(),
-                Effect::ConfigChanged => self.refresh_settings(),
+                Effect::ConfigChanged => {
+                    self.refresh_settings();
+                    let p = &self.model.config.preview;
+                    self.preview.apply_config(p.always_on_top, p.opacity);
+                }
                 Effect::StartFreezeTimer => {
                     unsafe { SetTimer(Some(win::app_hwnd()), TIMER_FREEZE, FREEZE_DELAY_MS, None) };
                     if let Some(t) = &self.tray {
@@ -362,6 +399,7 @@ impl App {
                 Effect::ShowFreezeOverlays => self.show_freeze_overlays(),
                 Effect::FreezePersist(rect) => self.freeze_output(rect, true),
                 Effect::FreezeCopy(rect) => self.freeze_output(rect, false),
+                Effect::OpenPreview(path) => self.open_preview(path),
             }
         }
     }
@@ -475,6 +513,73 @@ impl App {
                 fx
             }
         }
+    }
+
+    // ---------- Preview (SPEC 17) ----------
+
+    fn open_preview(&mut self, path: std::path::PathBuf) {
+        self.preview.request(path.clone());
+        std::thread::spawn(move || {
+            let t0 = std::time::Instant::now();
+            let r = image::open(&path).map(|i| i.to_rgba8()).map_err(|e| format!("Không mở được ảnh: {e}"));
+            log::info!("preview: giải mã ảnh mất {:?}", t0.elapsed());
+            emit(Action::PreviewLoaded(path, r));
+        });
+    }
+
+    fn on_preview_loaded(&mut self, path: std::path::PathBuf, res: Result<RgbaImage, String>) -> Vec<Effect> {
+        // Người dùng đã bấm thumbnail khác trong lúc giải mã: bỏ ảnh này.
+        if !self.preview.is_pending(&path) {
+            return vec![];
+        }
+        let img = match res {
+            Ok(img) => img,
+            Err(e) => {
+                self.preview.cancel_pending();
+                return vec![Effect::Toast(Toast::error(e))];
+            }
+        };
+        let Some((view, work)) = self.preview_view(img.dimensions()) else { return vec![] };
+        let p = &self.model.config.preview;
+        self.preview.show(path, img, view, work, p.always_on_top, p.opacity);
+        vec![]
+    }
+
+    /// Chỗ và cỡ mở Preview theo Cài đặt (SPEC 17). Trả về view và work area của màn hình đó.
+    fn preview_view(&self, img: (u32, u32)) -> Option<(chup_core::preview::View, Rect)> {
+        use chup_core::{config::PreviewPosition, preview};
+        let mons = &self.model.monitors;
+        let p = &self.model.config.preview;
+        if p.position == PreviewPosition::Remember {
+            if let Some(b) = p.last {
+                let bx = Rect::new(b.x, b.y, b.w, b.h);
+                let (cx, cy) = bx.center();
+                // Màn hình chứa khung cũ đã bị rút thì mở như "cạnh stack".
+                if let Some(m) = monitor_at(mons, cx, cy).filter(|m| m.rect.contains_point(cx, cy)) {
+                    let min = super::preview::min_size(m.scale);
+                    return Some((preview::open_in_box(img, bx, m.work, min), m.work));
+                }
+            }
+        }
+        // Màn hình của stack (nơi vừa bấm thumbnail).
+        let mon = self
+            .stack_monitor
+            .as_ref()
+            .and_then(|k| mons.iter().find(|m| &m.key == k))
+            .or_else(|| {
+                let (x, y) = cursor_pos();
+                monitor_at(mons, x, y)
+            })
+            .or(mons.first())?;
+        let min = super::preview::min_size(mon.scale);
+        let view = if p.position == PreviewPosition::Center {
+            preview::open_center(img, mon.work, p.size, min)
+        } else {
+            let edge_right = self.model.config.stack.edge == Edge::Right;
+            let gap = (12.0 * mon.scale).round() as i32;
+            preview::open_beside_stack(img, mon.work, p.size, min, self.stack.window_rect(), edge_right, gap)
+        };
+        Some((view, mon.work))
     }
 
     // ---------- Freeze (SPEC 14) ----------

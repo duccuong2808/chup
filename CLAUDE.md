@@ -5,7 +5,7 @@ Rust thuần, **không WebView**: giao diện Win32 + Direct2D/DirectWrite. Lõi
 
 - **Đặc tả là nguồn sự thật: [SPEC.md](SPEC.md).** Mọi thay đổi hành vi phải khớp SPEC; nếu cần lệch thì cập nhật SPEC và ghi vào mục "Khác với SPEC" trong README.
 - Trạng thái: Phase 1 xong và đã test trên Windows 11 thật; bước 1.5 (bỏ Tauri, UI native) xong; 2.1 Freeze (SPEC mục 14, thiết kế ở `docs/plans/2026-11-01-freeze-design.md`) xong và đã test trên VM. Kết quả test ở README, mục "Đã kiểm chứng và chưa kiểm chứng".
-- Phase tiếp theo: 2.2 preview to khi bấm thumbnail (beads chup-b0m), rồi OCR (SPEC mục 15), rồi tự động chọn vùng (SPEC mục 16).
+- Đang làm: 2.2 Preview khi bấm thumbnail (SPEC mục 17, thiết kế `docs/plans/2026-11-01-preview-design.md`, beads chup-b0m). Sau đó: OCR (SPEC mục 15, nút [T] trên Preview), rồi tự động chọn vùng (SPEC mục 16).
 
 ## Lệnh
 

@@ -206,3 +206,21 @@ impl raw_window_handle::HasWindowHandle for HwndHandle {
         Ok(unsafe { raw_window_handle::WindowHandle::borrow_raw(raw) })
     }
 }
+
+/// Gắn icon của exe (resource id 1, nhúng lúc build trên Windows) cho cửa sổ (title bar, taskbar, Alt+Tab).
+pub fn set_app_icon(hwnd: windows::Win32::Foundation::HWND) {
+    use windows::core::PCWSTR;
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetSystemMetrics, LoadImageW, SendMessageW, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_SHARED, SM_CXICON,
+        SM_CXSMICON, WM_SETICON,
+    };
+    for (which, metric) in [(ICON_BIG, SM_CXICON), (ICON_SMALL, SM_CXSMICON)] {
+        let sz = unsafe { GetSystemMetrics(metric) };
+        let icon =
+            unsafe { LoadImageW(Some(super::win::hinstance()), PCWSTR(1 as *const u16), IMAGE_ICON, sz, sz, LR_SHARED) };
+        if let Ok(h) = icon {
+            unsafe { SendMessageW(hwnd, WM_SETICON, Some(WPARAM(which as usize)), Some(LPARAM(h.0 as isize))) };
+        }
+    }
+}

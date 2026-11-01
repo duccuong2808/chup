@@ -5,6 +5,7 @@ và kéo thả thẳng được sang app khác. Đặc tả đầy đủ ở [SP
 
 - **Trạng thái**: Phase 1 (v1, Windows) xong, cộng bước 1.5: bỏ Tauri/WebView2, giao diện
   vẽ native bằng Win32 + Direct2D/DirectWrite. Phase 2.1 (Freeze: chụp đóng băng menu, tooltip) xong.
+  Phase 2.2 (Preview khi bấm thumbnail) đang test.
 - **Rust thuần, không WebView.** Installer ~480 KB, `chup.exe` ~1 MB, RAM khi rảnh dưới 1 MB
   (xem [Số đo](#số-đo)).
 
@@ -58,9 +59,10 @@ Workflow `.github/workflows/build.yml` chạy trên `windows-latest`:
 | Chụp lại vùng cuối | `Ctrl+Alt+S` khi không có vùng chọn, hoặc menu tray |
 | Chế độ mờ | Nút **Mờ**: viền nhạt, chuột đi xuyên qua, vẫn chụp được bằng phím tắt |
 | Di chuyển / đổi kích thước vùng | Kéo phần lề quanh viền / kéo 8 ô vuông nhỏ |
-| Dùng ảnh trong stack | Kéo thumbnail thả vào app khác; click để mở ảnh; hover để copy / mở folder / bỏ khỏi stack |
+| Dùng ảnh trong stack | Kéo thumbnail thả vào app khác; click để mở Preview; hover để copy / mở folder / bỏ khỏi stack |
 | Thu gọn stack | Hover stack → nút `›`; click tab nhỏ ở mép màn hình để mở lại |
 | Chụp đóng băng (menu, tooltip) | `F1`, hoặc menu tray "Chụp đóng băng" / "… sau 3 giây". Màn hình đóng băng ngay; kéo chọn vùng, chỉnh bằng 8 ô vuông, kéo trong vùng để di chuyển |
+| Preview | Kéo để di chuyển, kéo mép/góc để đổi cỡ, lăn chuột để zoom, `Ctrl` + lăn chuột đổi opacity. Hover: ghim (luôn nằm trên), copy, folder, đóng. `Esc` đóng. Lần sau mở đúng chỗ và cỡ cũ (đổi trong Cài đặt) |
 | Lưu / Copy / huỷ (Freeze) | `Enter`, double-click trong vùng hoặc nút **Lưu** / nút **Copy** (chỉ clipboard, không lưu file) / `Esc` hoặc click phải |
 
 ## Cấu trúc code
@@ -180,6 +182,7 @@ tự đặt ảnh, nên không do Chup. Muốn kiểm tra clipboard thì phải 
 3. Kéo thả vào Zalo PC, Slack, Word.
 4. Freeze với 2 màn hình, màn 4K, màn 150%; video YouTube đang chạy (VM không có Chrome).
    Thời gian Freeze trên máy x64 thật.
+5. Preview (Phase 2.2): toàn bộ mục 17.6, chưa chạy trên Windows.
 
 **Vấn đề đang theo dõi:** kéo thumbnail đôi khi không bắt đầu kéo. Trên VM, nhấn chuột ngay khi
 vừa rê vào thumbnail thì không kéo được (0/4); dừng ≥ 0,15 s thì 9/9. Có 1 lần lỗi dù đã dừng

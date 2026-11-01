@@ -66,6 +66,54 @@ impl Default for StackConfig {
     }
 }
 
+/// Chỗ mở Preview.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PreviewPosition {
+    /// Vị trí và cỡ lần trước (người dùng kéo, đổi cỡ là nhớ). Chưa có thì như `Stack`.
+    Remember,
+    /// Sát cạnh stack, căn đáy.
+    Stack,
+    Center,
+}
+
+/// Rect đã lưu (physical px toàn desktop).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SavedRect {
+    pub x: i32,
+    pub y: i32,
+    pub w: u32,
+    pub h: u32,
+}
+
+/// Cửa sổ Preview khi bấm thumbnail (SPEC 17).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PreviewConfig {
+    /// Luôn nằm trên cửa sổ khác.
+    pub always_on_top: bool,
+    /// %, 20–100.
+    pub opacity: u8,
+    pub position: PreviewPosition,
+    /// Cỡ khi mở (khi không có khung lần trước): ảnh tối đa bấy nhiêu % work area mỗi chiều, 20–100.
+    pub size: u8,
+    /// Khung lần trước, dùng khi `position = remember`.
+    pub last: Option<SavedRect>,
+}
+
+impl Default for PreviewConfig {
+    fn default() -> Self {
+        Self { always_on_top: true, opacity: 100, position: PreviewPosition::Remember, size: 50, last: None }
+    }
+}
+
+impl PreviewConfig {
+    fn clamp(&mut self) {
+        self.opacity = crate::preview::clamp_opacity(self.opacity);
+        self.size = self.size.clamp(20, 100);
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Config {
@@ -80,6 +128,8 @@ pub struct Config {
     /// Fallback SPEC 6.4: ẩn frame/toolbar/stack trước khi chụp.
     /// Tự bật nếu không loại được cửa sổ khỏi ảnh chụp; người dùng cũng có thể bật tay.
     pub hide_ui_during_capture: bool,
+    /// Phase 2.2: field mới có serde default nên không tăng version.
+    pub preview: PreviewConfig,
 }
 
 impl Default for Config {
@@ -94,6 +144,7 @@ impl Default for Config {
             after_capture_normal: AfterCapture::Close,
             launch_at_startup: false,
             hide_ui_during_capture: false,
+            preview: PreviewConfig::default(),
         }
     }
 }
@@ -122,6 +173,7 @@ impl Config {
             }
         }
         self.version = CONFIG_VERSION;
+        self.preview.clamp();
         self
     }
 }
@@ -191,6 +243,7 @@ pub fn apply_patch(cfg: &Config, patch: &serde_json::Value) -> Result<Config, St
     merge_json(&mut v, patch);
     let mut next: Config = serde_json::from_value(v).map_err(|e| format!("Giá trị không hợp lệ: {e}"))?;
     next.version = CONFIG_VERSION;
+    next.preview.clamp();
     if next.file_name_pattern.trim().is_empty() {
         return Err("Pattern tên file không được để trống".into());
     }
@@ -250,6 +303,33 @@ mod tests {
         let cfg = Config::with_save_dir(Path::new("/x"));
         assert!(apply_patch(&cfg, &json!({ "hotkeys": { "freeze": "Ctrl+Alt+S" } })).is_err());
         assert!(apply_patch(&cfg, &json!({ "hotkeys": { "freeze": "", "capture": "" } })).is_ok());
+    }
+
+    #[test]
+    fn preview_defaults_and_opacity_is_clamped() {
+        let cfg = Config::with_save_dir(Path::new("/x"));
+        assert_eq!(cfg.preview.opacity, 100);
+        assert!(cfg.preview.always_on_top);
+        assert_eq!(cfg.preview.position, PreviewPosition::Remember);
+        assert_eq!(cfg.preview.size, 50);
+        let next = apply_patch(
+            &cfg,
+            &json!({ "preview": { "opacity": 5, "alwaysOnTop": false, "position": "center", "size": 0 } }),
+        )
+        .unwrap();
+        assert_eq!((next.preview.always_on_top, next.preview.opacity), (false, 20));
+        assert_eq!((next.preview.position, next.preview.size), (PreviewPosition::Center, 20));
+        assert!(apply_patch(&cfg, &json!({ "preview": { "opacity": 300 } })).is_err());
+        let next = apply_patch(&cfg, &json!({ "preview": { "last": { "x": -10, "y": 5, "w": 300, "h": 200 } } })).unwrap();
+        assert_eq!(next.preview.last, Some(SavedRect { x: -10, y: 5, w: 300, h: 200 }));
+
+        let dir = std::env::temp_dir().join(format!("chup-cfg-{}", ulid::Ulid::generate()));
+        fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("config.json");
+        fs::write(&p, r#"{ "version": 2, "preview": { "opacity": 0 } }"#).unwrap();
+        let cfg = load(&p, Path::new("/pics")).config;
+        assert_eq!(cfg.preview.opacity, 20);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

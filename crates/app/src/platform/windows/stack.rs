@@ -144,6 +144,16 @@ impl StackWin {
         self.relayout();
     }
 
+    /// Rect cửa sổ stack nếu đang hiện (Preview mở sát cạnh nó).
+    pub fn window_rect(&self) -> Option<Rect> {
+        if !self.st.borrow().visible || self.st.borrow().hidden_for_capture {
+            return None;
+        }
+        let mut r = windows::Win32::Foundation::RECT::default();
+        unsafe { windows::Win32::UI::WindowsAndMessaging::GetWindowRect(self.hwnd, &mut r) }.ok()?;
+        Some(super::util::rect_of(&r))
+    }
+
     pub fn toast(&self, t: Toast) {
         let id = {
             let mut st = self.st.borrow_mut();

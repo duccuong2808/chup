@@ -102,6 +102,8 @@ pub enum Effect {
     FreezePersist(Rect),
     /// Crop rồi chỉ copy vào clipboard: không tạo file, không vào stack.
     FreezeCopy(Rect),
+    /// Mở cửa sổ Preview cho file ảnh này (SPEC 17).
+    OpenPreview(PathBuf),
 }
 
 pub struct Paths {
@@ -421,6 +423,28 @@ impl Model {
         (None, fx)
     }
 
+    /// Click thumbnail: mở Preview (SPEC 17). File mất thì bỏ khỏi stack và báo.
+    pub fn shot_open(&mut self, id: &str) -> Vec<Effect> {
+        let (path, mut fx) = self.ensure_shot_file(id);
+        fx.extend(path.map(Effect::OpenPreview));
+        fx
+    }
+
+    /// Người dùng vừa kéo hoặc đổi cỡ Preview: nhớ khung để lần sau mở đúng chỗ (chỉ khi chọn "như lần trước").
+    pub fn set_preview_box(&mut self, r: Rect) -> Vec<Effect> {
+        let p = &self.config.preview;
+        let saved = config::SavedRect { x: r.x, y: r.y, w: r.w, h: r.h };
+        if p.position != config::PreviewPosition::Remember || p.last == Some(saved) {
+            return vec![];
+        }
+        let mut next = self.config.clone();
+        next.preview.last = Some(saved);
+        match self.commit_config(next) {
+            Ok(fx) => fx,
+            Err(e) => vec![Effect::Toast(Toast::error(e))],
+        }
+    }
+
     // ---------- màn hình (SPEC 7) ----------
 
     pub fn set_monitors(&mut self, mons: Vec<MonitorInfo>) -> Vec<Effect> {
@@ -682,5 +706,42 @@ mod tests {
         assert!(m.paths.config_file.is_file());
         assert!(m.update_config(&serde_json::json!({ "fileNamePattern": "" })).is_err());
         assert_eq!(m.config.hotkeys.capture, "F2");
+    }
+
+    #[test]
+    fn shot_open_previews_existing_file_or_drops_missing_one() {
+        let mut m = model();
+        let dir = std::env::temp_dir().join(format!("chup-shot-{}", ulid::Ulid::generate()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let shot = |id: &str| crate::capture::Shot {
+            id: id.into(),
+            path: dir.join(format!("{id}.png")),
+            thumb_path: dir.join(format!("t-{id}.png")),
+            thumb: std::sync::Arc::new(image::RgbaImage::new(1, 1)),
+            width: 1,
+            height: 1,
+            created_at: chrono::Local::now(),
+        };
+        std::fs::write(dir.join("a.png"), b"x").unwrap();
+        m.stack.push(shot("a"));
+        m.stack.push(shot("b"));
+        assert_eq!(m.shot_open("a"), vec![Effect::OpenPreview(dir.join("a.png"))]);
+        let fx = m.shot_open("b");
+        assert_eq!(fx[0], Effect::StackChanged);
+        assert!(matches!(fx[1], Effect::Toast(_)));
+        assert!(m.shot("b").is_none());
+        assert!(m.shot_open("zzz").is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn preview_box_is_saved_only_when_remembering() {
+        let mut m = model();
+        let r = Rect::new(-500, 10, 400, 300);
+        assert_eq!(m.set_preview_box(r), vec![Effect::ConfigChanged]);
+        assert_eq!(m.config.preview.last, Some(config::SavedRect { x: -500, y: 10, w: 400, h: 300 }));
+        assert!(m.set_preview_box(r).is_empty());
+        m.config.preview.position = config::PreviewPosition::Center;
+        assert!(m.set_preview_box(Rect::new(0, 0, 10, 10)).is_empty());
     }
 }

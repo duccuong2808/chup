@@ -80,6 +80,24 @@ pub fn copy_image(img: &RgbaImage, _png: Option<&[u8]>) -> Result<(), String> {
     .map_err(|e| e.to_string())
 }
 
+/// Text cho CF_UNICODETEXT: UTF-16, xuống dòng CRLF (Notepad cũ, nhiều app Win32 cần), kết thúc NUL.
+pub fn utf16_crlf(text: &str) -> Vec<u16> {
+    let mut out: Vec<u16> = text.replace("\r\n", "\n").replace('\n', "\r\n").encode_utf16().collect();
+    out.push(0);
+    out
+}
+
+/// Copy text (kết quả OCR).
+#[cfg(windows)]
+pub fn copy_text(text: &str) -> Result<(), String> {
+    win::copy_text(text)
+}
+
+#[cfg(not(windows))]
+pub fn copy_text(text: &str) -> Result<(), String> {
+    arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)).map_err(|e| e.to_string())
+}
+
 /// Copy ảnh từ file (nút Copy trên stack). File PNG thì dùng thẳng byte của file.
 pub fn copy_file_image(path: &std::path::Path) -> Result<(), String> {
     let bytes = std::fs::read(path).map_err(|e| format!("Không đọc được ảnh: {e}"))?;
@@ -102,6 +120,7 @@ mod win {
     };
 
     const CF_DIBV5: u32 = 17;
+    const CF_UNICODETEXT: u32 = 13;
 
     /// Khối bộ nhớ global; tự giải phóng nếu chưa giao cho clipboard.
     struct Global(Option<HGLOBAL>);
@@ -163,6 +182,18 @@ mod win {
         }
     }
 
+    pub fn copy_text(text: &str) -> Result<(), String> {
+        let wide = super::utf16_crlf(text);
+        let mut mem = Global::new(wide.len() * 2, |d| {
+            for (o, c) in d.chunks_exact_mut(2).zip(&wide) {
+                o.copy_from_slice(&c.to_le_bytes());
+            }
+        })?;
+        let _open = Open::new()?;
+        unsafe { EmptyClipboard() }.map_err(|e| format!("Không xoá được clipboard: {e}"))?;
+        mem.give(CF_UNICODETEXT).map_err(|e| format!("Không đặt được text vào clipboard: {e}"))
+    }
+
     pub fn copy(img: &RgbaImage, png: Option<&[u8]>) -> Result<(), String> {
         let t0 = std::time::Instant::now();
         let mut png_mem = match png {
@@ -219,6 +250,13 @@ mod tests {
         assert_eq!(u32_at(60), 0, "phần còn lại của header phải là 0");
         // Bottom-up: hàng dưới của ảnh nằm đầu; BGRA.
         assert_eq!(&d[124..140], &[255, 0, 0, 255, 255, 255, 255, 128, 0, 0, 255, 255, 0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn text_is_crlf_utf16_with_nul() {
+        let w = utf16_crlf("Việt\nb\r\nc");
+        assert_eq!(String::from_utf16(&w[..w.len() - 1]).unwrap(), "Việt\r\nb\r\nc");
+        assert_eq!(*w.last().unwrap(), 0);
     }
 
     #[test]

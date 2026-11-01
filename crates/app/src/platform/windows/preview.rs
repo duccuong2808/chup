@@ -66,14 +66,21 @@ const MK_CONTROL: usize = 0x0008;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Btn {
+    /// OCR: copy chữ trong ảnh (SPEC 15.2). Đang OCR thì vẽ vòng "bận", bấm lần nữa là huỷ.
+    Ocr,
     Pin,
     Copy,
     Folder,
     Close,
 }
 
-const BUTTONS: [(Btn, Icon); 4] =
-    [(Btn::Pin, Icon::Pin), (Btn::Copy, Icon::Copy), (Btn::Folder, Icon::Folder), (Btn::Close, Icon::Close)];
+const BUTTONS: [(Btn, Icon); 5] = [
+    (Btn::Ocr, Icon::Text),
+    (Btn::Pin, Icon::Pin),
+    (Btn::Copy, Icon::Copy),
+    (Btn::Folder, Icon::Folder),
+    (Btn::Close, Icon::Close),
+];
 
 #[derive(Default)]
 struct State {
@@ -106,6 +113,8 @@ struct State {
     resize: Option<(Grip, View, (i32, i32))>,
     /// Đã zoom, chưa báo App lưu khung (đợi `TIMER_SAVE`).
     save_pending: bool,
+    /// File đang được OCR (nút [T] vẽ "bận" khi trùng file đang xem).
+    ocr_busy: Option<PathBuf>,
 }
 
 /// Cỡ cửa sổ nhỏ nhất (physical px) ở scale `k`.
@@ -401,7 +410,9 @@ impl Preview {
                     continue;
                 }
                 let hot = st.hover == Some(*btn);
-                let bg = if *btn == Btn::Pin && st.topmost {
+                let busy = *btn == Btn::Ocr && st.ocr_busy.as_ref() == Some(&st.path);
+                let icon = if busy { &Icon::Busy } else { icon };
+                let bg = if (*btn == Btn::Pin && st.topmost) || busy {
                     Theme::current().accent.with_alpha(if hot { 1.0 } else { 0.9 })
                 } else {
                     Color::rgba(0, 0, 0, if hot { 0.85 } else { 0.6 })
@@ -557,9 +568,29 @@ impl Preview {
         self.repaint();
     }
 
+    /// File đang được OCR (`None` = không OCR gì): nút [T] của đúng file đó vẽ vòng "bận".
+    pub fn set_ocr_busy(&self, busy: Option<PathBuf>) {
+        let changed = {
+            let mut st = self.st.borrow_mut();
+            let changed = st.ocr_busy != busy;
+            st.ocr_busy = busy;
+            changed
+        };
+        if changed && self.open.get() {
+            self.repaint();
+        }
+    }
+
+    /// Bản sao ảnh đang xem nếu đúng file `path` (cho OCR, không phải đọc lại file).
+    pub fn image_of(&self, path: &std::path::Path) -> Option<RgbaImage> {
+        let st = self.st.borrow();
+        st.img.as_ref().filter(|_| self.open.get() && st.path == path).cloned()
+    }
+
     fn click(&self, b: Btn) {
         let path = self.st.borrow().path.clone();
         match b {
+            Btn::Ocr => emit(Action::PreviewOcr(path)),
             Btn::Pin => self.toggle_pin(),
             Btn::Copy => emit(Action::PreviewCopy(path)),
             Btn::Folder => emit(Action::PreviewReveal(path)),

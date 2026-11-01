@@ -21,11 +21,16 @@ và kéo thả thẳng được sang app khác. Đặc tả đầy đủ ở [SP
 
 ```powershell
 cargo build --release -p chup        # target\release\chup.exe
-makensis /DVERSION=0.2.0 /DEXE=target\release\chup.exe installer\chup.nsi
+# chup-ocr.exe (OCR tiếng Việt): cần vcpkg `tesseract:x64-windows-static` và biến VCPKG_ROOT
+cargo build --release --manifest-path crates\ocr-helper\Cargo.toml
+makensis /DVERSION=0.2.0 /DEXE=target\release\chup.exe /DOCR_DIR=<thư mục có chup-ocr.exe + NOTICE-ocr.txt> installer\chup.nsi
 ```
 
 - Installer cài cho user hiện tại vào `%LOCALAPPDATA%\Chup`, không cần quyền admin.
   Chạy với `/S` để cài im lặng.
+- Mục **"OCR tiếng Việt"** trong installer (mặc định bỏ trống) tải dữ liệu `vie`/`eng` (~4,4 MB) từ
+  [tesseract-ocr/tessdata_fast](https://github.com/tesseract-ocr/tessdata_fast) bằng `chup.exe --install-ocr`.
+  Không tích thì tải sau trong Cài đặt. Engine `chup-ocr.exe` luôn nằm trong installer.
 - Chup chạy nền ở khay hệ thống, **không mở cửa sổ nào khi khởi động**.
   - Nhấn `Ctrl+Alt+A` hoặc click trái icon tray để chọn vùng.
   - Click phải icon tray để mở menu (Cài đặt, Thoát…).
@@ -37,15 +42,18 @@ Test và lint (lõi chạy được trên mọi OS; code Windows check được 
 cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 cargo clippy -p chup --target x86_64-pc-windows-msvc -- -D warnings
+# chup-ocr.exe ngoài workspace; macOS cần `brew install tesseract pkg-config`
+CHUP_TESSDATA=<thư mục có vie/eng.traineddata> cargo test --release --manifest-path crates/ocr-helper/Cargo.toml
 ```
 
 ### CI/CD (GitHub Actions)
 
 Workflow `.github/workflows/build.yml` chạy trên `windows-latest`:
 
-- Mỗi lần push / PR: job `check` (`cargo test`, `cargo clippy -D warnings`) và job `build`
-  (`cargo build --release` + NSIS) chạy song song. Kết quả là artifact `chup-windows-<sha>`
-  gồm installer và `chup.exe` (tab Actions → chọn run → Artifacts).
+- Mỗi lần push / PR: job `check` (`cargo test`, `cargo clippy -D warnings`), job `ocr-helper`
+  (vcpkg `tesseract:x64-windows-static`, build + test `chup-ocr.exe` với ảnh của spike, gom license),
+  rồi job `build` (`cargo build --release` + NSIS kèm `chup-ocr.exe`). Kết quả là artifact
+  `chup-windows-<sha>` gồm installer, `chup.exe`, `chup-ocr.exe` (tab Actions → chọn run → Artifacts).
 - Push tag `v*` (vd: `git tag v0.2.0 && git push origin v0.2.0`): tạo thêm GitHub Release dạng
   draft kèm installer. Nhớ đổi `version` trong `Cargo.toml` (workspace) cho khớp tag trước.
 
@@ -64,6 +72,7 @@ Workflow `.github/workflows/build.yml` chạy trên `windows-latest`:
 | Chụp đóng băng (menu, tooltip) | `F1`, hoặc menu tray "Chụp đóng băng" / "… sau 3 giây". Màn hình đóng băng ngay; kéo chọn vùng, chỉnh bằng 8 ô vuông, kéo trong vùng để di chuyển |
 | Preview | Kéo để di chuyển, kéo mép/góc để đổi cỡ, lăn chuột để zoom, `Ctrl` + lăn chuột đổi opacity. Hover: ghim (luôn nằm trên), copy, folder, đóng. `Esc` đóng. Lần sau mở đúng chỗ và cỡ cũ (đổi trong Cài đặt) |
 | Lưu / Copy / huỷ (Freeze) | `Enter`, double-click trong vùng hoặc nút **Lưu** / nút **Copy** (chỉ clipboard, không lưu file) / `Esc` hoặc click phải |
+| Copy chữ trong ảnh (OCR) | Nút **[T]** trên Preview, trên toolbar vùng chọn, hoặc nút **Chữ** khi Freeze; hotkey "Chụp text" (gán trong Cài đặt): chọn vùng là copy chữ luôn. Không lưu file. Tiếng Việt cần tải gói (Cài đặt) |
 
 ## Cấu trúc code
 
@@ -75,6 +84,7 @@ crates/core/src/            chup-core: không phụ thuộc OS, unit test đư�
 ├─ coords.rs       hình học: Rect, màn hình, vị trí toolbar/stack, lề frame
 ├─ config.rs       load / save / migrate / patch config.json
 ├─ stack.rs        stack tối đa 5 shot
+├─ ocr/            OCR: tiền xử lý, hậu xử lý (sắp dòng, NFC), gói dữ liệu tiếng Việt (pack.rs)
 ├─ hotkey_name.rs  ghi phím tắt: mã VK -> "Ctrl+Alt+A"
 └─ icons.rs        icon dạng SVG path
 crates/app/src/platform/windows/   bin `chup`: vỏ Win32
@@ -87,12 +97,17 @@ crates/app/src/platform/windows/   bin `chup`: vỏ Win32
 ├─ toolbar.rs      nút Chụp / Mờ / Đóng
 ├─ stack.rs        thumbnail, nút hover, kéo thả file, toast
 ├─ settings.rs     cửa sổ Cài đặt (control Win32 gốc)
+├─ ocr.rs          worker OCR: Windows OCR (tiếng Anh) + chup-ocr.exe qua pipe (tiếng Việt)
+├─ ocr_download.rs tải gói tiếng Việt (WinHTTP, TaskDialog), chế độ `--install-ocr`
 ├─ tray.rs, hotkeys.rs, logger.rs, util.rs
+crates/ocr-proto/   khung tin giữa chup.exe và chup-ocr.exe
+crates/ocr-helper/  chup-ocr.exe: Tesseract link tĩnh (ngoài workspace)
 installer/chup.nsi  installer NSIS
 ```
 
 - **Cấu hình**: `%APPDATA%\app.chup.desktop\config.json`.
 - **Log và cache thumbnail**: `%LOCALAPPDATA%\app.chup.desktop\` (`chup.log`, `thumbs\`).
+- **Gói OCR tiếng Việt**: `%LOCALAPPDATA%\app.chup.desktop\ocr\vi-1\`.
 
 ## Số đo
 
@@ -194,6 +209,10 @@ tự đặt ảnh, nên không do Chup. Muốn kiểm tra clipboard thì phải 
 4. Freeze với 2 màn hình, màn 4K, màn 150%; video YouTube đang chạy (VM không có Chrome).
    Thời gian Freeze trên máy x64 thật.
 5. Preview: nhiều màn hình (mở trên màn của stack, kéo sang màn khác DPI), ảnh 4K, cảm giác mượt khi kéo mép ở 4K.
+6. **OCR (Phase 2.3) chưa chạy trên Windows lần nào.** Đã kiểm chứng trên macOS: `chup-ocr.exe` (Tesseract 5.5.4
+   qua pipe) đọc ảnh spike với CER 0,85% (np200) và 0,21% (np100), mỗi ảnh ~0,33 s, nạp model 0,6 s; logic cài gói
+   với dữ liệu thật (SHA-256 khớp). Chưa chạy: build vcpkg trên CI, Windows OCR, WinHTTP, hộp thoại tải,
+   `--install-ocr` từ installer, các nút [T], hotkey "Chụp text".
 
 **Vấn đề đang theo dõi:** kéo thumbnail đôi khi không bắt đầu kéo. Trên VM, nhấn chuột ngay khi
 vừa rê vào thumbnail thì không kéo được (0/4); dừng ≥ 0,15 s thì 9/9. Có 1 lần lỗi dù đã dừng
@@ -210,3 +229,4 @@ vừa rê vào thumbnail thì không kéo được (0/4); dừng ≥ 0,15 s thì
 - **Cài đặt bố cục 2 cột**.
 - **Freeze, mục tray "Chụp đóng băng"** chờ ~350 ms cho menu tray tắt hẳn rồi mới chụp (F1 chụp ngay).
 - **Freeze, lúc đếm ngược hẹn giờ**: icon tray mờ đi kèm tooltip, thay vì một icon riêng.
+- **OCR, nút [T] lúc đang chạy**: hiện vòng "bận" đứng yên (không quay) trên nút; bấm lần nữa là huỷ.

@@ -32,6 +32,10 @@ pub enum Icon {
     ChevronLeft,
     Check,
     Pin,
+    /// OCR: copy chữ.
+    Text,
+    /// Đang chạy (vòng 3/4), thay nút đang bận.
+    Busy,
 }
 
 impl Icon {
@@ -53,6 +57,8 @@ impl Icon {
             Icon::ChevronLeft => vec![Stroke(p("M15 6l-6 6 6 6"))],
             Icon::Check => vec![Stroke(p("M5 12l5 5 9-10"))],
             Icon::Pin => vec![Stroke(p("M9 3h6M10 3v6l-3 4h10l-3-4V3M12 13v8"))],
+            Icon::Text => vec![Stroke(p("M5 7V5h14v2M12 5v14M9 19h6"))],
+            Icon::Busy => vec![Stroke(p("M12 4a8 8 0 1 0 8 8"))],
         }
     }
 }
@@ -231,6 +237,8 @@ mod tests {
             Icon::ChevronLeft,
             Icon::Check,
             Icon::Pin,
+            Icon::Text,
+            Icon::Busy,
         ] {
             assert!(!i.shapes().is_empty());
         }

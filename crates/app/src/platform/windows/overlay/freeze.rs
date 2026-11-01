@@ -1,5 +1,6 @@
 //! Chế độ Freeze của overlay (SPEC 14.3): hiện ảnh đóng băng 1:1, chọn vùng, chỉnh bằng 8 handle,
-//! toolbar [✓ Lưu][Copy][✕] vẽ ngay trong overlay (không phải cửa sổ riêng).
+//! toolbar [✓ Lưu][Copy][T Chữ][✕] vẽ ngay trong overlay (không phải cửa sổ riêng).
+//! Chế độ "Chụp text" (SPEC 15.2): không có toolbar, thả chuột là OCR luôn.
 //! Hình học nằm ở `chup_core::selection`, pixel ở `chup_core::freeze`.
 
 use chup_core::{
@@ -37,6 +38,7 @@ use super::{
 
 const HINT_FROZEN: &str = "Ảnh đã đóng băng · Kéo để chọn vùng · Enter để lưu · Esc để huỷ";
 const HINT_FAILED: &str = "Không chụp được màn hình này · Esc để huỷ";
+const HINT_OCR: &str = "Chụp text · Kéo để chọn vùng có chữ · Esc để huỷ";
 /// Handle vẽ 8 DIP, vùng bắt chuột 14 DIP cho dễ trúng.
 const HANDLE_DIP: f64 = 8.0;
 const HANDLE_HIT_DIP: f64 = 14.0;
@@ -45,13 +47,15 @@ const BAR_GAP_DIP: f64 = 6.0;
 const WHITE: u32 = 0xFFFF_FFFF;
 const DARK: u32 = 0xFF20_2020;
 
-const BUTTONS: [BarButton; 3] = [
+const BUTTONS: [BarButton; 4] = [
     BarButton { icon: Icon::Check, label: "Lưu", primary: true, active: false },
     BarButton { icon: Icon::Copy, label: "Copy", primary: false, active: false },
+    BarButton { icon: Icon::Text, label: "Chữ", primary: false, active: false },
     BarButton { icon: Icon::Close, label: "", primary: false, active: false },
 ];
 /// Hành động của từng nút; `None` = huỷ.
-const ACTIONS: [Option<FreezeAction>; 3] = [Some(FreezeAction::Save), Some(FreezeAction::Copy), None];
+const ACTIONS: [Option<FreezeAction>; 4] =
+    [Some(FreezeAction::Save), Some(FreezeAction::Copy), Some(FreezeAction::Ocr), None];
 
 #[derive(Clone, Copy)]
 enum Drag {
@@ -73,6 +77,19 @@ pub(super) struct Frozen {
     bar: Option<Bar>,
     /// Cạnh handle (physical px).
     handle: i32,
+    /// "Chụp text": không toolbar, thả chuột / Enter / double-click là OCR.
+    ocr_only: bool,
+}
+
+impl Frozen {
+    /// Hành động mặc định (Enter, double-click).
+    fn default_action(&self) -> FreezeAction {
+        if self.ocr_only {
+            FreezeAction::Ocr
+        } else {
+            FreezeAction::Save
+        }
+    }
 }
 
 /// Toolbar vẽ sẵn vào sprite riêng, khi cần mới blend vào DIB của overlay.
@@ -167,19 +184,23 @@ fn extent(st: &State) -> Rect {
 }
 
 impl Overlay {
-    /// Hiện overlay ở chế độ Freeze. `img = None`: màn hình này chụp hỏng.
+    /// Hiện overlay ở chế độ Freeze. `img = None`: màn hình này chụp hỏng. `ocr_only`: "Chụp text".
     /// Trả về `false` nếu không hiện được (không cấp được DIB).
-    pub fn show_frozen(&self, focus: bool, img: Option<RgbaImage>) -> bool {
+    pub fn show_frozen(&self, focus: bool, img: Option<RgbaImage>, ocr_only: bool) -> bool {
         let (w, h) = (self.mon.rect.w as i32, self.mon.rect.h as i32);
         let t0 = std::time::Instant::now();
         let k = self.mon.scale as f32;
-        let text = if img.is_some() { HINT_FROZEN } else { HINT_FAILED };
+        let text = match (img.is_some(), ocr_only) {
+            (false, _) => HINT_FAILED,
+            (true, true) => HINT_OCR,
+            (true, false) => HINT_FROZEN,
+        };
         let white = Color::rgba(255, 255, 255, 1.0);
         let hint = pill(text, 13.0 * k, 12.0 * k, 6.0 * k, 999.0, Color::rgba(0, 0, 0, 0.7), white).map(|s| {
             let at = Rect::new((w - s.w) / 2, self.s(24.0), s.w as u32, s.h as u32);
             Sprite { s, at }
         });
-        let bar = Bar::new(k);
+        let bar = if ocr_only { None } else { Bar::new(k) };
         let t_prep = t0.elapsed();
         {
             let mut st = self.st.borrow_mut();
@@ -194,7 +215,8 @@ impl Overlay {
             st.sel = None;
             st.label_at = None;
             st.label_text.clear();
-            st.frozen = Some(Frozen { img, sel: None, drag: Drag::Idle, hint, bar, handle: self.s(HANDLE_DIP) });
+            st.frozen =
+                Some(Frozen { img, sel: None, drag: Drag::Idle, hint, bar, handle: self.s(HANDLE_DIP), ocr_only });
             self.frozen_mode.set(true);
             super::paint(&mut st, Rect::new(0, 0, w as u32, h as u32));
         }
@@ -309,7 +331,8 @@ impl Overlay {
             emit(Action::FreezeSelecting(self.hwnd.0 as isize));
         }
         if save {
-            self.frozen_confirm(Some(FreezeAction::Save));
+            let action = self.st.borrow().frozen.as_ref().map(Frozen::default_action);
+            self.frozen_confirm(action);
         }
     }
 
@@ -345,6 +368,7 @@ impl Overlay {
     /// Kết thúc lần kéo. `click = false` khi mất capture (Alt+Tab, Win, UAC…): không bấm nút nào.
     fn frozen_end(&self, p: (i32, i32), click: bool) {
         let mut clicked = None;
+        let mut auto_ocr = false;
         self.frozen_update(|f| match std::mem::replace(&mut f.drag, Drag::Idle) {
             Drag::Button(i) => {
                 if click && f.bar_hit(p) == Some(i) {
@@ -361,6 +385,7 @@ impl Overlay {
                 if f.sel.is_some_and(|s| s.w < 4 || s.h < 4) {
                     f.sel = None;
                 }
+                auto_ocr = click && f.ocr_only && f.sel.is_some();
                 Change::Sel
             }
             Drag::Adjust { .. } => Change::Sel,
@@ -368,6 +393,8 @@ impl Overlay {
         });
         if let Some(i) = clicked {
             self.frozen_confirm(ACTIONS[i]);
+        } else if auto_ocr {
+            self.frozen_confirm(Some(FreezeAction::Ocr));
         }
     }
 
@@ -442,7 +469,8 @@ impl Overlay {
                 Some(LRESULT(0))
             }
             WM_KEYDOWN if wp.0 as u16 == VK_RETURN.0 => {
-                self.frozen_confirm(Some(FreezeAction::Save));
+                let action = self.st.borrow().frozen.as_ref().map(Frozen::default_action);
+                self.frozen_confirm(action);
                 Some(LRESULT(0))
             }
             _ => None,

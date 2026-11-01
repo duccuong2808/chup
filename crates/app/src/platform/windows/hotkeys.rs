@@ -12,6 +12,8 @@ pub enum Kind {
     SelectRegion,
     Capture,
     Freeze,
+    /// "Chụp text" (SPEC 15.2).
+    Ocr,
 }
 
 pub struct Hotkeys {
@@ -39,7 +41,7 @@ impl Hotkeys {
         Ok(Hotkeys { mgr, registered: vec![] })
     }
 
-    /// Huỷ hết rồi đăng ký lại; trả về lỗi theo tên (`selectRegion`, `capture`, `freeze`).
+    /// Huỷ hết rồi đăng ký lại; trả về lỗi theo tên (`selectRegion`, `capture`, `freeze`, `ocr`).
     pub fn apply(&mut self, cfg: &HotkeyConfig) -> BTreeMap<String, String> {
         self.pause();
         let mut errors = BTreeMap::new();
@@ -47,6 +49,7 @@ impl Hotkeys {
             ("selectRegion", cfg.select_region.trim(), Kind::SelectRegion),
             ("capture", cfg.capture.trim(), Kind::Capture),
             ("freeze", cfg.freeze.trim(), Kind::Freeze),
+            ("ocr", cfg.ocr.trim(), Kind::Ocr),
         ] {
             if accel.is_empty() {
                 continue;

@@ -5,6 +5,8 @@ mod frame;
 mod gfx;
 mod hotkeys;
 mod logger;
+mod ocr;
+mod ocr_download;
 mod overlay;
 mod preview;
 mod settings;
@@ -38,7 +40,7 @@ use windows::{
 
 use self::{
     app::{Action, App},
-    win::{emit, take_actions, Handler, WM_APP_ACTION, WM_APP_SHOW_SETTINGS},
+    win::{emit, take_actions, Handler, WM_APP_ACTION, WM_APP_OCR_DOWNLOAD, WM_APP_SHOW_SETTINGS},
 };
 
 thread_local! {
@@ -65,6 +67,14 @@ impl Handler for AppWindow {
             }
             WM_APP_SHOW_SETTINGS => {
                 emit(Action::OpenSettings);
+                Some(LRESULT(0))
+            }
+            WM_APP_OCR_DOWNLOAD => {
+                // Modal: chạy ngoài lúc App bị borrow; Action trong lúc hộp thoại mở vẫn được xử lý.
+                let root = ocr::ocr_root(&util::dirs().cache_dir);
+                if let Some(out) = ocr_download::run(&root, wp.0 == 1) {
+                    emit(Action::OcrPack(out));
+                }
                 Some(LRESULT(0))
             }
             // Đổi độ phân giải, cắm/rút màn hình, đổi work area (taskbar): gộp lại trong 300 ms.
@@ -141,6 +151,15 @@ pub fn run() -> i32 {
     logger::init(&dirs.cache_dir.join("chup.log"));
     log::info!("Chup {} khởi động", env!("CARGO_PKG_VERSION"));
 
+    // Bộ cài gọi: chỉ tải gói OCR tiếng Việt rồi thoát (không cần khoá 1 instance, không tray/hotkey).
+    if std::env::args().any(|a| a == "--install-ocr") {
+        return ocr_download::install_mode(
+            &ocr::ocr_root(&dirs.cache_dir),
+            &dirs.config_dir.join("config.json"),
+            &dirs.pictures.join("Chup"),
+        );
+    }
+
     // Chỉ 1 instance (SPEC 7): instance mới nhờ instance cũ mở Cài đặt rồi thoát.
     let _mutex = unsafe { CreateMutexW(None, true, w!("Local\\app.chup.desktop.single")) };
     if unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
@@ -195,7 +214,7 @@ pub fn run() -> i32 {
         Paths { config_file, thumbs_dir, default_save_dir },
         util::monitors(),
     );
-    match App::new(model) {
+    match App::new(model, ocr::ocr_root(&dirs.cache_dir)) {
         Ok(app) => APP.with(|c| *c.borrow_mut() = Some(app)),
         Err(e) => {
             log::error!("Không khởi tạo được Chup: {e}");

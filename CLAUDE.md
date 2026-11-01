@@ -5,7 +5,10 @@ Rust thuần, **không WebView**: giao diện Win32 + Direct2D/DirectWrite. Lõi
 
 - **Đặc tả là nguồn sự thật: [SPEC.md](SPEC.md).** Mọi thay đổi hành vi phải khớp SPEC; nếu cần lệch thì cập nhật SPEC và ghi vào mục "Khác với SPEC" trong README.
 - Trạng thái: Phase 1 xong và đã test trên Windows 11 thật; bước 1.5 (bỏ Tauri, UI native) xong; 2.1 Freeze (SPEC mục 14, thiết kế ở `docs/plans/2026-11-01-freeze-design.md`) xong và đã test trên VM. Kết quả test ở README, mục "Đã kiểm chứng và chưa kiểm chứng".
-- 2.2 Preview khi bấm thumbnail (SPEC mục 17, thiết kế `docs/plans/2026-11-01-preview-design.md`) xong, đã test trên VM. Tiếp theo: OCR (SPEC mục 15, nút [T] trên Preview), rồi tự động chọn vùng (SPEC mục 16).
+- 2.2 Preview khi bấm thumbnail (SPEC mục 17, thiết kế `docs/plans/2026-11-01-preview-design.md`) xong, đã test trên VM.
+- 2.3 OCR (SPEC mục 15, thiết kế `docs/plans/2026-11-01-ocr-design.md`): code xong, **chưa chạy trên Windows** (epic beads `chup-2fy`).
+  Tiếng Anh = Windows OCR; tiếng Việt = `chup-ocr.exe` (Tesseract link tĩnh, nằm trong installer) + dữ liệu tessdata_fast
+  tải từ GitHub cộng đồng (repo này private, không phát file OCR). Tiếp theo: tự động chọn vùng (SPEC mục 16).
 
 ## Lệnh
 
@@ -13,8 +16,10 @@ Rust thuần, **không WebView**: giao diện Win32 + Direct2D/DirectWrite. Lõi
 cargo test --workspace                                   # test lõi (chạy được trên macOS)
 cargo clippy --workspace --all-targets -- -D warnings
 cargo clippy -p chup --target x86_64-pc-windows-msvc -- -D warnings   # check code Windows từ macOS (không link)
+# chup-ocr.exe nằm ngoài workspace (cần Tesseract: macOS `brew install tesseract pkg-config`, Windows vcpkg static)
+CHUP_TESSDATA=<thư mục vie/eng.traineddata> cargo test --release --manifest-path crates/ocr-helper/Cargo.toml
 cargo build --release -p chup                            # trên Windows
-makensis /DVERSION=0.2.0 /DEXE=target\release\chup.exe installer\chup.nsi   # installer
+makensis /DVERSION=0.2.0 /DEXE=target\release\chup.exe /DOCR_DIR=<chup-ocr.exe + NOTICE-ocr.txt> installer\chup.nsi   # installer
 ```
 
 Máy dev là macOS: check/clippy cho target Windows chạy được (cần `rustup target add x86_64-pc-windows-msvc`), nhưng không link được. Bản chạy thật lấy từ CI (artifact `chup-windows-<sha>` có cả `chup.exe` và installer).

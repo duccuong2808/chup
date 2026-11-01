@@ -287,6 +287,8 @@ File: `%APPDATA%\app.chup.desktop\config.json` (giữ nguyên đường dẫn c�
 ```
 
 - Phase 2.2 thêm `preview` (mục 17.4); field mới có default nên vẫn là version 2.
+- Phase 2.3 thêm `ocr: { "language": "en" }` (`en` = Windows OCR, `vi` = Tesseract tiếng Việt + Anh) và
+  `hotkeys.ocr` ("Chụp text", mặc định rỗng); vẫn version 2.
 - Version 2 (Phase 2.1) thêm `hotkeys.freeze`. Migrate từ v1: điền `"F1"`; nếu F1 đã được dùng cho hotkey khác thì để trống (tắt).
 - Chuỗi rỗng = tắt hotkey đó. Hai hotkey không được trùng nhau.
 
@@ -467,26 +469,31 @@ Thêm 2 mục vào menu tray:
 
 ## 15. Phase 2 — OCR: copy text từ ảnh
 
+Thiết kế chi tiết: `docs/plans/2026-11-01-ocr-design.md`.
+
 ### 15.1 Mục tiêu
 
 - Lấy text (tiếng Việt có dấu và tiếng Anh) từ một shot, hoặc trực tiếp từ vùng chọn, rồi copy vào clipboard.
 - **Offline hoàn toàn**: không gửi ảnh lên cloud.
-- **Installer không phình**: model OCR chỉ tải về khi dùng lần đầu.
+- **Installer không phình**: gói OCR tiếng Việt không nằm trong installer. Người dùng chọn tải nó **khi cài**
+  (ô "OCR tiếng Việt", mặc định bỏ trống), hoặc tải sau trong app.
 
 ### 15.2 UX
 
 - **Preview** (mục 17): toolbar có thêm nút **[T]**.
   - Bấm vào: OCR ảnh đang xem và copy text.
   - Hiện toast "Đã copy N dòng" kèm 1 dòng preview.
-- **Toolbar Live mode**: thêm nút **[T Chụp text]**. Chụp region, OCR, copy text, **không lưu file và không thêm vào stack**.
-- **Toolbar Freeze mode**: thêm nút **[T]** (`freeze_confirm` với `action: "ocr"`).
+- **Toolbar Live mode**: thêm nút **[T]** (chỉ icon, trước ✕). Chụp region, OCR, copy text, **không lưu file và không thêm vào stack**.
+- **Toolbar Freeze mode**: thêm nút **[T Chữ]** (`freeze_confirm` với `action: "ocr"`).
 - **Hotkey "Chụp text"**: mặc định chưa gán.
   - Khi người dùng gán, hotkey mở overlay ở Freeze mode.
   - Chọn vùng xong là OCR luôn, không hiện toolbar.
 - **Không tìm thấy chữ**: hiện toast "Không tìm thấy chữ", clipboard giữ nguyên.
 - **Đang OCR**: hiện spinner trên Preview hoặc toolbar, có thể huỷ.
-- **Lần đầu dùng, chưa có model**:
-  - Hỏi người dùng có tải gói OCR không, ghi rõ dung lượng.
+- **Bộ cài**: trang chọn thành phần có ô **"OCR tiếng Việt (tải thêm ~4,4 MB)"**, mặc định bỏ trống. Tích thì bộ cài
+  chạy `chup.exe --install-ocr` (cửa sổ tải có tiến trình). Tải lỗi vẫn cài xong app.
+- **Lần đầu dùng tiếng Việt, chưa có gói** (hoặc nút "Tải gói" trong Cài đặt):
+  - Hỏi người dùng có tải gói OCR không, ghi rõ dung lượng. Tải xong thì OCR luôn ảnh vừa yêu cầu.
   - Tải có thanh tiến trình, verify checksum.
   - Mất mạng hoặc file lỗi thì xoá file dở dang, cho thử lại.
 
@@ -506,61 +513,49 @@ Thêm 2 mục vào menu tray:
 - **Chốt (người dùng chọn 2 lựa chọn):** "Tiếng Anh" dùng Windows OCR (mặc định, không tải gì);
   "Tiếng Việt + Anh" dùng Tesseract `vie_fast+eng_fast`.
 
-**Đề xuất (trước spike):**
-- Dùng `trait OcrEngine`. Engine mặc định cho mỗi OS sẽ chốt sau spike (mục 15.6).
-- Ứng viên số 1 cho Windows là **PaddleOCR qua ONNX**, vì đây là đường duy nhất vừa chạy mọi OS vừa có khả năng đọc tiếng Việt trên Windows.
-- Trên OS nào engine có sẵn hỗ trợ tiếng Việt (macOS), ưu tiên engine có sẵn vì không tốn dung lượng tải.
-
 **Kiểm tra Windows OCR có pack tiếng Việt không** (chạy PowerShell quyền Admin):
 
 ```powershell
 Get-WindowsCapability -Online | Where-Object { $_.Name -Like 'Language.OCR*' }
 ```
 
-Nếu kết quả không có dòng `vi-VN` thì loại Windows OCR khỏi đường xử lý tiếng Việt.
-
 ### 15.4 Kiến trúc
 
 ```rust
-pub struct OcrLine { pub text: String, pub bbox: [i32; 4], pub confidence: f32 }
-pub struct OcrResult { pub lines: Vec<OcrLine> }
+pub struct OcrLine { pub text: String, pub bbox: [i32; 4], pub conf: f32 }
 
-pub trait OcrEngine: Send + Sync {
-    fn id(&self) -> &'static str;
-    fn languages(&self) -> Vec<String>;
-    fn recognize(&self, img: &image::RgbaImage, langs: &[&str]) -> Result<OcrResult, OcrError>;
+pub trait OcrEngine {
+    fn recognize(&mut self, img: &image::GrayImage) -> Result<Vec<OcrLine>, String>;
 }
 ```
 
-```
-src-tauri/src/ocr/
-├─ mod.rs            # trait, pipeline, chọn engine theo OS + config
-├─ paddle.rs         # ONNX (ort)
-├─ win.rs            # Windows.Media.Ocr qua crate `windows`
-├─ mac.rs            # Vision qua `objc2-vision`
-└─ model_manager.rs  # tải, verify checksum, version, xoá model
-```
-
-- **Vị trí model và ONNX Runtime**: `%LOCALAPPDATA%\<identifier>\ocr\`, tải theo nhu cầu.
-- **DLL của ONNX Runtime** load động lúc chạy (tính năng load-dynamic của `ort`; kiểm tra tên feature theo version đang dùng), nên không nằm trong installer.
-- **Lazy-load**: chỉ load model khi dùng lần đầu. **Giải phóng sau 5 phút không dùng** để trả RAM.
-- **Luồng chạy**: OCR chạy trên thread riêng. Hàng đợi chỉ giữ 1 job; job mới tới thì huỷ job đang chờ.
-- **Cache**: lưu kết quả theo shot (`Shot.ocr_text: Option<String>`). Copy lần 2 không OCR lại.
+- **"Tiếng Anh"**: `Windows.Media.Ocr` (WinRT qua crate `windows`) chạy trong `chup.exe`.
+- **"Tiếng Việt + Anh"**: exe phụ **`chup-ocr.exe`** (crate `crates/ocr-helper`, ngoài workspace) link tĩnh Tesseract 5,
+  do CI của Chup build và **nằm trong bộ cài** cạnh `chup.exe`. Chup chạy nó như process con, gửi ảnh xám qua pipe
+  (khung tin ở crate `crates/ocr-proto`), nhận lại các dòng. Process gắn Job Object `KILL_ON_JOB_CLOSE`.
+- **Gói tiếng Việt** = `vie.traineddata` + `eng.traineddata` (~4,4 MB) tải **từ GitHub cộng đồng**
+  (`tesseract-ocr/tessdata_fast`, ghim commit; repo Chup không phát hành file OCR). `chup.exe` ghi cứng tên, kích thước,
+  SHA-256 từng file. Cài vào `%LOCALAPPDATA%\app.chup.desktop\ocr\vi-<N>\` qua thư mục tạm rồi rename; lỗi thì xoá
+  phần dở dang. Tải bằng WinHTTP. Logic cài ở `core::ocr::pack` (test được).
+- **`chup.exe --install-ocr`**: cửa sổ tải (tiến trình, Huỷ), exit code 0 xong / 1 lỗi / 2 huỷ. Bộ cài và app dùng chung.
+- **Lazy-load**: exe phụ chỉ chạy khi cần, giữ sống giữa các lần OCR, **tắt sau 5 phút không dùng** để trả RAM.
+  Huỷ job đang chạy = kill process. Crash hoặc quá 15 s = kill, báo lỗi.
+- **Luồng chạy**: 1 worker thread giữ cả 2 engine. Hàng đợi chỉ giữ 1 job; job mới tới thì thay job đang chờ.
+- **Cache**: nhớ kết quả cuối theo (file, ngôn ngữ). Copy lần 2 không OCR lại.
 
 ### 15.5 Pipeline
 
 1. **Lấy ảnh**:
    - "Chụp text" và Freeze: dùng `RgbaImage` trong memory.
-   - Shot trong stack: đọc lại file.
-2. **Tiền xử lý**:
-   - Upscale 2× (Lanczos) khi chữ nhỏ. Chữ chụp ở scale 100% thường nhỏ hơn nhiều so với kích thước dòng chữ mà model kỳ vọng. Ngưỡng cụ thể chốt sau spike.
-   - Với theme tối (chữ sáng trên nền tối): thử đảo màu nếu confidence thấp. Spike sẽ quyết định có cần không.
-3. **Nhận diện**: trả về các dòng kèm bbox và confidence.
-4. **Hậu xử lý**:
+   - Preview: ảnh Preview đã giải mã.
+2. **Tiền xử lý** (`core::ocr::prepare`): chuyển xám. **Tesseract và scale màn hình lúc chụp < 1,5 thì phóng ×2**
+   (spike: chữ ~12 px kém hẳn nếu không phóng). Windows OCR không phóng. Không đảo màu (Tesseract 5 tự thử ảnh đảo).
+3. **Nhận diện**: trả về các dòng kèm bbox và confidence (Windows OCR không có confidence: 1,0).
+4. **Hậu xử lý** (`core::ocr::postprocess`):
+   - Bỏ dòng rác: không có chữ/số, hoặc ≤ 2 ký tự và confidence < 50.
    - Sắp xếp dòng từ trên xuống dưới, trái sang phải. Hai bbox chồng nhau theo chiều dọc > 50% thì coi là cùng hàng, nối bằng dấu cách.
    - **Chuẩn hoá Unicode về NFC** (crate `unicode-normalization`). Tiếng Việt ở dạng tổ hợp (NFD) khi dán vào một số app sẽ lỗi hiển thị dấu hoặc không tìm kiếm được.
-   - Bỏ dòng có confidence dưới ngưỡng (spike chốt).
-5. **Kết thúc**: ghi text vào clipboard, gửi event để hiện toast.
+5. **Kết thúc**: ghi text vào clipboard, hiện toast "Đã copy N dòng: “dòng đầu…”".
 
 **Giới hạn đã biết:** layout nhiều cột (báo, bảng) sẽ bị trộn thứ tự dòng. Chấp nhận ở Phase 2.
 
@@ -584,7 +579,7 @@ src-tauri/src/ocr/
 | Vùng nhỏ (khoảng 5 dòng) | ≤ 500 ms |
 | Vùng 1920×1080 dày chữ | ≤ 2 s |
 | RAM thêm khi model đang load | ≤ 150 MB, về mức Phase 1 sau khi giải phóng |
-| Dung lượng installer | Không tăng so với Phase 1 |
+| Dung lượng installer | Không tăng so với Phase 1 (chỉ thêm `chup-ocr.exe` ~1,5–2 MB nén; dữ liệu tiếng Việt ~4,4 MB tải riêng) |
 
 ### 15.8 Nghiệm thu
 
@@ -594,6 +589,8 @@ src-tauri/src/ocr/
 - [ ] Mất mạng lúc tải gói OCR: báo lỗi, thử lại được, không để lại file hỏng.
 - [ ] Sau 5 phút không dùng: RAM giảm về mức Phase 1.
 - [ ] "Chụp text" không tạo file, không thêm vào stack.
+- [ ] Bộ cài: không tích "OCR tiếng Việt" thì không tải gì; tích thì tải xong và OCR tiếng Việt dùng được ngay;
+  mất mạng lúc cài vẫn cài xong app. Gỡ cài đặt xoá gói.
 
 ---
 
@@ -713,7 +710,7 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-preview-design.md`.
 - **Opacity**: mặc định theo Cài đặt (100%, chọn 100–20%). `Ctrl` + lăn chuột chỉnh ±10% cho cửa sổ đang mở
   (không lưu). Không thấp hơn 20%.
 - **Luôn nằm trên** cửa sổ khác: Cài đặt (mặc định bật). Nút ghim trên toolbar bật/tắt cho cửa sổ đang mở.
-- **Toolbar** góc trên-phải, chỉ hiện khi hover: [Ghim] [Copy] [Folder] [✕] (OCR thêm [T]).
+- **Toolbar** góc trên-phải, chỉ hiện khi hover: [T] [Ghim] [Copy] [Folder] [✕] ([T] = OCR, mục 15.2).
 - Đổi zoom hoặc opacity: nhãn "75%" / "Opacity 60%" ở đáy trong 1,2 giây.
 - `Esc` hoặc ✕: đóng. `Ctrl+C`: copy ảnh.
 - Preview lấy focus khi mở; có trên taskbar và Alt+Tab (tiêu đề là tên file).

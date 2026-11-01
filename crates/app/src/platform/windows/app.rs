@@ -7,7 +7,8 @@ use chup_core::{
     capture::{self, MonitorShot, PersistOutcome},
     coords::{monitor_at, Rect},
     config::{Edge, StackMonitor},
-    model::{Effect, FrameMode, FreezeAction, Model, Toast, FREEZE_DELAY_MS},
+    model::{Effect, FrameMode, FreezeAction, Model, OcrJob, OcrSource, Toast, FREEZE_DELAY_MS},
+    ocr::pack,
 };
 use image::RgbaImage;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -17,6 +18,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use super::{
     frame::Frame,
     hotkeys::{Hotkeys, Kind},
+    ocr::{self, Worker},
+    ocr_download::Outcome,
     overlay::Overlay,
     preview::Preview,
     settings::{Settings, SettingsView},
@@ -36,6 +39,10 @@ pub enum Action {
     CloseRegion,
     Capture,
     Grabbed(Result<RgbaImage, String>),
+    /// Nút [T] trên toolbar Live.
+    CaptureText,
+    /// Ảnh của "Chụp text" (vùng đã chụp, để biết scale).
+    TextGrabbed(Result<RgbaImage, String>, Rect),
     Persisted(Result<PersistOutcome, String>),
     StackRemove(String),
     StackClear,
@@ -70,6 +77,16 @@ pub enum Action {
     PreviewClosed,
     /// Người dùng vừa kéo, đổi cỡ hoặc zoom Preview: khung mới.
     PreviewBox(Rect),
+    /// Nút [T] trên Preview: OCR ảnh đang xem, hoặc huỷ nếu đang OCR nó.
+    PreviewOcr(std::path::PathBuf),
+    /// Worker OCR xong job (text đã hậu xử lý, hoặc câu lỗi cho người dùng).
+    OcrDone(u32, Result<String, String>),
+    /// Nút "Tải gói" trong Cài đặt.
+    OcrDownload,
+    /// Nút "Xoá gói" trong Cài đặt.
+    OcrRemove,
+    /// Hộp thoại tải gói đã đóng.
+    OcrPack(Outcome),
 }
 
 /// Id timer hẹn giờ "Chụp đóng băng sau 3 giây" trên cửa sổ chính (mod.rs bắn `FreezeTimerFired`).
@@ -98,10 +115,15 @@ pub struct App {
     picked: Option<(Rect, RgbaImage)>,
     /// Lúc bắt đầu chụp Freeze, để log thời gian tới lúc ảnh hiện (ngân sách 250 ms, SPEC 14.6).
     freeze_t0: Option<std::time::Instant>,
+    ocr: Worker,
+    /// `%LOCALAPPDATA%\app.chup.desktop\ocr`: gói dữ liệu tiếng Việt.
+    ocr_root: std::path::PathBuf,
+    /// Ảnh cho `OcrSource::Image` (crop từ Freeze, Chụp text), giữ tới khi job bắt đầu (kể cả lúc chờ tải gói).
+    ocr_image: Option<RgbaImage>,
 }
 
 impl App {
-    pub fn new(model: Model) -> windows::core::Result<App> {
+    pub fn new(model: Model, ocr_root: std::path::PathBuf) -> windows::core::Result<App> {
         let frame = Frame::create()?;
         let toolbar = Toolbar::create()?;
         let stack = StackWin::create()?;
@@ -121,7 +143,13 @@ impl App {
             frozen: vec![],
             picked: None,
             freeze_t0: None,
+            ocr: Worker::start(ocr_root.clone()),
+            ocr_root,
+            ocr_image: None,
         };
+        pack::cleanup_old(&app.ocr_root);
+        let st = ocr::vi_state(&app.ocr_root);
+        app.model.set_ocr_vi(st);
 
         // SPEC 6.4: loại frame/toolbar/stack khỏi ảnh chụp (Windows 10 bản 2004 trở lên).
         let ok = [app.frame.hwnd, app.toolbar.hwnd, app.stack.hwnd]
@@ -158,6 +186,17 @@ impl App {
             Action::CloseRegion => self.model.close_region(),
             Action::Capture => self.model.request_capture(),
             Action::Grabbed(res) => self.on_grabbed(res),
+            Action::CaptureText => self.model.request_capture_text(),
+            Action::TextGrabbed(res, rect) => {
+                self.restore_ui_after_capture();
+                match res {
+                    Err(e) => vec![Effect::Toast(Toast::error(e))],
+                    Ok(img) => {
+                        self.ocr_image = Some(img);
+                        self.model.ocr_request(OcrSource::Image { scale: self.model.scale_at(&rect) })
+                    }
+                }
+            }
             Action::Persisted(res) => self.model.capture_persisted(res),
             Action::StackRemove(id) => self.model.stack_remove(&id),
             Action::StackClear => self.model.stack_clear(),
@@ -199,6 +238,7 @@ impl App {
                 Some(Kind::SelectRegion) => self.model.start_selection(),
                 Some(Kind::Capture) => self.model.request_capture(),
                 Some(Kind::Freeze) => self.model.start_freeze(),
+                Some(Kind::Ocr) => self.model.start_freeze_ocr(),
                 None => vec![],
             },
             Action::OpenSettings => {
@@ -285,6 +325,37 @@ impl App {
             },
             Action::PreviewClosed => vec![],
             Action::PreviewBox(r) => self.model.set_preview_box(r),
+            Action::PreviewOcr(path) => match &self.model.ocr_busy {
+                Some(OcrJob { source: OcrSource::Preview(p), .. }) if *p == path => self.model.ocr_cancel(),
+                _ => self.model.ocr_request(OcrSource::Preview(path)),
+            },
+            Action::OcrDone(id, r) => self.model.ocr_done(id, r),
+            Action::OcrDownload => {
+                post_ocr_download(false);
+                vec![]
+            }
+            Action::OcrRemove => {
+                let mut fx = match pack::remove(&self.ocr_root) {
+                    Ok(()) => vec![Effect::Toast(Toast::info("Đã xoá gói OCR tiếng Việt"))],
+                    Err(e) => vec![Effect::Toast(Toast::error(e))],
+                };
+                fx.extend(self.model.set_ocr_vi(ocr::vi_state(&self.ocr_root)));
+                fx
+            }
+            Action::OcrPack(out) => {
+                if out == Outcome::Installed {
+                    let had_pending = self.model.ocr_has_pending();
+                    let mut fx = self.model.ocr_pack_installed(ocr::vi_state(&self.ocr_root));
+                    if !had_pending {
+                        fx.push(Effect::Toast(Toast::info("Đã tải gói OCR tiếng Việt")));
+                    }
+                    fx
+                } else {
+                    self.model.ocr_pack_aborted();
+                    self.ocr_image = None;
+                    vec![]
+                }
+            }
             Action::DisplayChanged => {
                 let fx = self.model.set_monitors(util::monitors());
                 self.sync_overlays();
@@ -373,7 +444,7 @@ impl App {
                     self.layout_stack_target();
                     self.stack.toast(t);
                 }
-                Effect::StartCapture(job) => self.start_capture(job.rect, job.hide_ui),
+                Effect::StartCapture(job) => self.start_capture(job.rect, job.hide_ui, job.text),
                 Effect::ApplyHotkeys => self.apply_hotkeys(),
                 Effect::SyncAutostart => self.sync_autostart(),
                 Effect::ConfigChanged => {
@@ -400,6 +471,26 @@ impl App {
                 Effect::FreezePersist(rect) => self.freeze_output(rect, true),
                 Effect::FreezeCopy(rect) => self.freeze_output(rect, false),
                 Effect::OpenPreview(path) => self.open_preview(path),
+                Effect::FreezeOcr(rect) => self.freeze_ocr(rect),
+                Effect::StartOcr(job) => self.start_ocr(job),
+                Effect::CancelOcr => self.ocr.cancel(),
+                Effect::OcrBusyChanged => {
+                    let busy = match &self.model.ocr_busy {
+                        Some(OcrJob { source: OcrSource::Preview(p), .. }) => Some(p.clone()),
+                        _ => None,
+                    };
+                    self.preview.set_ocr_busy(busy);
+                }
+                Effect::CopyText(text) => {
+                    std::thread::spawn(move || {
+                        let t = match chup_core::clipboard::copy_text(&text) {
+                            Ok(()) => Toast::info(chup_core::ocr::copied_message(&text)),
+                            Err(e) => Toast::error(e),
+                        };
+                        emit(Action::Toast(t));
+                    });
+                }
+                Effect::AskOcrDownload => post_ocr_download(true),
             }
         }
     }
@@ -476,7 +567,7 @@ impl App {
         }
     }
 
-    fn start_capture(&mut self, rect: Rect, hide_ui: bool) {
+    fn start_capture(&mut self, rect: Rect, hide_ui: bool, text: bool) {
         if hide_ui {
             self.toolbar.set_hidden_for_capture(true);
             self.stack.set_hidden_for_capture(true);
@@ -490,15 +581,19 @@ impl App {
             let t0 = std::time::Instant::now();
             let r = capture::grab_region(rect);
             log::info!("chụp {}×{} mất {:?}", rect.w, rect.h, t0.elapsed());
-            emit(Action::Grabbed(r));
+            emit(if text { Action::TextGrabbed(r, rect) } else { Action::Grabbed(r) });
         });
     }
 
-    fn on_grabbed(&mut self, res: Result<RgbaImage, String>) -> Vec<Effect> {
+    fn restore_ui_after_capture(&mut self) {
         if std::mem::take(&mut self.ui_hidden_for_capture) {
             self.toolbar.set_hidden_for_capture(false);
             self.stack.set_hidden_for_capture(false);
         }
+    }
+
+    fn on_grabbed(&mut self, res: Result<RgbaImage, String>) -> Vec<Effect> {
+        self.restore_ui_after_capture();
         match res {
             Err(e) => self.model.capture_grabbed(Err(e)),
             Ok(img) => {
@@ -612,7 +707,7 @@ impl App {
             if img.is_none() {
                 log::warn!("freeze: không có ảnh cho màn hình {}", o.mon.key);
             }
-            shown |= o.show_frozen(i == focus, img);
+            shown |= o.show_frozen(i == focus, img, self.model.freeze_ocr);
         }
         if let Some(t0) = self.freeze_t0.take() {
             log::info!("freeze: từ nhấn hotkey tới lúc ảnh hiện {:?}", t0.elapsed());
@@ -630,7 +725,8 @@ impl App {
             log::warn!("freeze: không có ảnh để crop");
             return;
         };
-        let opts = self.model.persist_options();
+        let mut opts = self.model.persist_options();
+        opts.scale = self.model.scale_at(&rect);
         std::thread::spawn(move || {
             let shot = chup_core::freeze::crop(&img, mon, rect);
             drop(img);
@@ -647,6 +743,38 @@ impl App {
                 emit(Action::FreezeCopied(chup_core::clipboard::copy_image(&shot, None)));
             }
         });
+    }
+
+    // ---------- OCR (SPEC 15) ----------
+
+    fn freeze_ocr(&mut self, rect: Rect) {
+        let Some((mon, img)) = self.picked.take() else {
+            log::warn!("freeze: không có ảnh để OCR");
+            return;
+        };
+        let Some(shot) = chup_core::freeze::crop(&img, mon, rect) else {
+            self.apply(vec![Effect::Toast(Toast::error("Vùng chọn nằm ngoài ảnh"))]);
+            return;
+        };
+        drop(img);
+        self.ocr_image = Some(shot);
+        let fx = self.model.ocr_request(OcrSource::Image { scale: self.model.scale_at(&rect) });
+        self.apply(fx);
+    }
+
+    fn start_ocr(&mut self, job: OcrJob) {
+        let img = match &job.source {
+            // Preview đã giải mã sẵn; đã đóng hoặc đổi ảnh (vd. chờ tải gói xong) thì đọc lại file.
+            OcrSource::Preview(p) => self.preview.image_of(p).or_else(|| image::open(p).ok().map(|i| i.to_rgba8())),
+            OcrSource::Image { .. } => self.ocr_image.take(),
+        };
+        match img {
+            Some(img) => self.ocr.submit(ocr::Job { id: job.id, lang: job.lang, scale: job.scale, img }),
+            None => {
+                let fx = self.model.ocr_done(job.id, Err("Không đọc được ảnh để OCR".into()));
+                self.apply(fx);
+            }
+        }
     }
 
     fn apply_hotkeys(&mut self) {
@@ -676,6 +804,7 @@ impl App {
                 capture::render_file_name(&self.model.config.file_name_pattern, &chrono_now())
             ),
             exclusion_ok: self.model.capture_exclusion_ok,
+            ocr_vi: self.model.ocr_vi,
         }
     }
 
@@ -699,6 +828,17 @@ impl App {
         if let Some(s) = &self.settings {
             s.refresh(self.settings_view());
         }
+    }
+}
+
+/// Hộp thoại tải gói là modal: cửa sổ chính mở nó sau khi App xử lý xong Action hiện tại.
+fn post_ocr_download(ask: bool) {
+    use windows::Win32::{
+        Foundation::{LPARAM, WPARAM},
+        UI::WindowsAndMessaging::PostMessageW,
+    };
+    unsafe {
+        let _ = PostMessageW(Some(win::app_hwnd()), win::WM_APP_OCR_DOWNLOAD, WPARAM(ask as usize), LPARAM(0));
     }
 }
 

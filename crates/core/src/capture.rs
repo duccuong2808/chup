@@ -30,6 +30,8 @@ pub struct Shot {
     pub width: u32,
     pub height: u32,
     pub created_at: DateTime<Local>,
+    /// Scale màn hình lúc chụp: OCR dùng để biết chữ có nhỏ không (SPEC 15.5).
+    pub scale: f64,
 }
 
 /// Chụp `rect` (physical px toàn desktop). Vùng được cắt theo màn hình chứa tâm của nó.
@@ -87,6 +89,8 @@ pub struct PersistOptions {
     pub pattern: String,
     pub copy_to_clipboard: bool,
     pub thumbs_dir: PathBuf,
+    /// Scale màn hình chứa vùng chụp (ghi vào `Shot::scale`).
+    pub scale: f64,
 }
 
 pub struct PersistOutcome {
@@ -134,6 +138,7 @@ pub fn persist_shot(img: &RgbaImage, opts: &PersistOptions) -> Result<PersistOut
             width: w,
             height: h,
             created_at: now,
+            scale: opts.scale,
         },
         warnings,
     })
@@ -323,6 +328,7 @@ mod tests {
             pattern: "t-{SSS}".into(),
             copy_to_clipboard: false,
             thumbs_dir: root.join("thumbs"),
+            scale: 1.5,
         };
         let img = RgbaImage::from_pixel(640, 100, image::Rgba([10, 20, 30, 255]));
         let out = persist_shot(&img, &opts).unwrap();

@@ -33,6 +33,8 @@ use super::{app::Action, util::wide};
 pub const WM_APP_ACTION: u32 = WM_APP + 1;
 /// Instance thứ 2 nhờ instance đang chạy mở Cài đặt.
 pub const WM_APP_SHOW_SETTINGS: u32 = WM_APP + 2;
+/// Hỏi/tải gói OCR tiếng Việt (wParam 1 = hỏi trước). Chạy ngoài lúc App đang bị borrow vì hộp thoại là modal.
+pub const WM_APP_OCR_DOWNLOAD: u32 = WM_APP + 3;
 
 static QUEUE: Mutex<Vec<Action>> = Mutex::new(Vec::new());
 static APP_HWND: AtomicIsize = AtomicIsize::new(0);

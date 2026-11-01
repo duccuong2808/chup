@@ -5,14 +5,15 @@ use std::{collections::BTreeMap, path::PathBuf};
 
 use crate::{
     capture::{PersistOptions, PersistOutcome, Shot},
-    config::{self, AfterCapture, Config},
+    config::{self, AfterCapture, Config, OcrLanguage},
     coords::{self, frame_margin, monitor_at, MonitorInfo, Rect},
     stack::{self, Stack},
 };
 
 /// Kích thước toolbar (CSS px = DIP) theo mode.
-pub const TOOLBAR_NORMAL_DIP: (f64, f64) = (220.0, 44.0);
-pub const TOOLBAR_FADED_DIP: (f64, f64) = (116.0, 40.0);
+/// Normal: [Chụp] [Mờ] [T] [✕]; Faded: 4 icon.
+pub const TOOLBAR_NORMAL_DIP: (f64, f64) = (252.0, 44.0);
+pub const TOOLBAR_FADED_DIP: (f64, f64) = (148.0, 40.0);
 /// Khoảng cách toolbar với viền frame (DIP).
 const TOOLBAR_GAP_DIP: f64 = 6.0;
 
@@ -48,6 +49,36 @@ impl Toast {
 pub enum FreezeAction {
     Save,
     Copy,
+    /// OCR vùng chọn, copy text (SPEC 15.2). Không lưu file, không vào stack.
+    Ocr,
+}
+
+/// Ảnh cần OCR. Ảnh không đi qua `Model`: lớp platform giữ nó.
+#[derive(Clone, Debug, PartialEq)]
+pub enum OcrSource {
+    /// Ảnh Preview đang xem (file trong stack). Kết quả được cache theo file.
+    Preview(PathBuf),
+    /// Ảnh lớp platform vừa crop / chụp (Freeze, Chụp text). `scale`: scale màn hình lúc chụp.
+    Image { scale: f64 },
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct OcrJob {
+    pub id: u32,
+    pub source: OcrSource,
+    pub lang: OcrLanguage,
+    /// Scale màn hình lúc chụp, để `ocr::prepare` biết có phóng ×2 không.
+    pub scale: f64,
+}
+
+/// OCR tiếng Việt dùng được chưa (lớp platform kiểm tra file và báo cho Model).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OcrViState {
+    Ready,
+    /// Chưa tải dữ liệu tessdata.
+    NoPack,
+    /// Thiếu `chup-ocr.exe` cạnh `chup.exe` (chạy exe rời, không qua bộ cài).
+    NoHelper,
 }
 
 /// Phiên Freeze (SPEC 14.3). Vùng đang chọn là state của overlay, Model không giữ.
@@ -67,10 +98,13 @@ pub struct CaptureJob {
     pub rect: Rect,
     /// Fallback SPEC 6.4: ẩn toolbar và stack trước khi chụp.
     pub hide_ui: bool,
+    /// "Chụp text" (SPEC 15.2): chụp rồi OCR, không lưu file, không vào stack, không đóng vùng chọn.
+    pub text: bool,
 }
 
 /// Việc lớp platform phải làm. Dữ liệu chi tiết (rect frame, rect toolbar...) đọc lại từ `Model`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// `PartialEq` (không `Eq`): `OcrJob` có scale kiểu f64.
+#[derive(Clone, Debug, PartialEq)]
 pub enum Effect {
     ShowOverlays,
     HideOverlays,
@@ -104,6 +138,18 @@ pub enum Effect {
     FreezeCopy(Rect),
     /// Mở cửa sổ Preview cho file ảnh này (SPEC 17).
     OpenPreview(PathBuf),
+    /// Crop vùng từ ảnh đóng băng rồi gọi `ocr_request(OcrSource::Image)`.
+    FreezeOcr(Rect),
+    /// Giao job cho worker OCR (job mới thay job đang chạy/chờ).
+    StartOcr(OcrJob),
+    /// Huỷ job OCR đang chạy.
+    CancelOcr,
+    /// Đang OCR bật/tắt: Preview, toolbar vẽ lại nút [T] (spinner).
+    OcrBusyChanged,
+    /// Ghi text vào clipboard rồi báo (`ocr::copied_message`).
+    CopyText(String),
+    /// Chưa có gói tiếng Việt: hỏi người dùng có tải không.
+    AskOcrDownload,
 }
 
 pub struct Paths {
@@ -130,6 +176,16 @@ pub struct Model {
     pub freeze: Option<FreezePhase>,
     /// Đang đếm ngược "Chụp đóng băng sau 3 giây".
     pub freeze_timer: bool,
+    /// Phiên Freeze hiện tại là "Chụp text": thả chuột là OCR luôn, không có toolbar.
+    pub freeze_ocr: bool,
+    pub ocr_vi: OcrViState,
+    /// Job OCR đang chạy.
+    pub ocr_busy: Option<OcrJob>,
+    ocr_next_id: u32,
+    /// Yêu cầu OCR đang chờ tải gói tiếng Việt xong.
+    ocr_pending: Option<OcrSource>,
+    /// Kết quả cuối: (file Preview, ngôn ngữ) -> text.
+    ocr_cache: Option<(PathBuf, OcrLanguage, String)>,
 }
 
 impl Model {
@@ -148,6 +204,12 @@ impl Model {
             capture_exclusion_ok: true,
             freeze: None,
             freeze_timer: false,
+            freeze_ocr: false,
+            ocr_vi: OcrViState::NoPack,
+            ocr_busy: None,
+            ocr_next_id: 0,
+            ocr_pending: None,
+            ocr_cache: None,
         }
     }
 
@@ -256,6 +318,15 @@ impl Model {
 
     /// Hotkey Chụp hoặc nút Chụp: chụp region hiện tại, không có thì vùng cuối.
     pub fn request_capture(&mut self) -> Vec<Effect> {
+        self.capture_job(false)
+    }
+
+    /// Nút [T] trên toolbar Live: chụp vùng rồi OCR (SPEC 15.2).
+    pub fn request_capture_text(&mut self) -> Vec<Effect> {
+        self.capture_job(true)
+    }
+
+    fn capture_job(&mut self, text: bool) -> Vec<Effect> {
         if self.freeze.is_some() {
             return vec![];
         }
@@ -267,7 +338,7 @@ impl Model {
             return fx;
         }
         let hide_ui = self.config.hide_ui_during_capture || !self.capture_exclusion_ok;
-        vec![Effect::StartCapture(CaptureJob { rect, hide_ui })]
+        vec![Effect::StartCapture(CaptureJob { rect, hide_ui, text })]
     }
 
     /// Đã lấy xong ảnh (chưa lưu). Normal mode thì đóng frame theo cấu hình.
@@ -288,7 +359,13 @@ impl Model {
             pattern: self.config.file_name_pattern.clone(),
             copy_to_clipboard: self.config.copy_to_clipboard,
             thumbs_dir: self.paths.thumbs_dir.clone(),
+            scale: self.region.or(self.last_region).map(|r| self.scale_at(&r)).unwrap_or(1.0),
         }
+    }
+
+    /// Scale của màn hình chứa tâm `r` (1,0 nếu không thuộc màn hình nào).
+    pub fn scale_at(&self, r: &Rect) -> f64 {
+        self.monitor_of(r).map(|m| m.scale).unwrap_or(1.0)
     }
 
     /// Đã lưu file (hoặc lỗi).
@@ -308,9 +385,19 @@ impl Model {
     // ---------- Freeze (SPEC 14) ----------
 
     pub fn start_freeze(&mut self) -> Vec<Effect> {
+        self.start_freeze_mode(false)
+    }
+
+    /// Hotkey "Chụp text" (SPEC 15.2): overlay Freeze, chọn vùng xong là OCR luôn.
+    pub fn start_freeze_ocr(&mut self) -> Vec<Effect> {
+        self.start_freeze_mode(true)
+    }
+
+    fn start_freeze_mode(&mut self, ocr: bool) -> Vec<Effect> {
         if self.freeze.is_some() || self.selecting {
             return vec![];
         }
+        self.freeze_ocr = ocr;
         let mut fx = vec![];
         if std::mem::take(&mut self.freeze_timer) {
             fx.push(Effect::CancelFreezeTimer);
@@ -368,6 +455,7 @@ impl Model {
             fx.push(match action {
                 FreezeAction::Save => Effect::FreezePersist(rect),
                 FreezeAction::Copy => Effect::FreezeCopy(rect),
+                FreezeAction::Ocr => Effect::FreezeOcr(rect),
             });
         }
         fx
@@ -385,6 +473,104 @@ impl Model {
             Ok(()) => vec![Effect::Toast(Toast::info("Đã copy ảnh vào clipboard"))],
             Err(e) => vec![Effect::Toast(Toast::error(e))],
         }
+    }
+
+    // ---------- OCR (SPEC 15) ----------
+
+    /// Người dùng yêu cầu OCR (nút [T], Freeze, Chụp text).
+    pub fn ocr_request(&mut self, source: OcrSource) -> Vec<Effect> {
+        let lang = self.config.ocr.language;
+        if let (OcrSource::Preview(p), Some((cp, cl, text))) = (&source, &self.ocr_cache) {
+            if p == cp && *cl == lang {
+                return vec![Effect::CopyText(text.clone())];
+            }
+        }
+        if lang == OcrLanguage::Vi {
+            match self.ocr_vi {
+                OcrViState::Ready => {}
+                OcrViState::NoPack => {
+                    self.ocr_pending = Some(source);
+                    return vec![Effect::AskOcrDownload];
+                }
+                OcrViState::NoHelper => {
+                    return vec![Effect::Toast(Toast::error(
+                        "Thiếu chup-ocr.exe nên chưa OCR tiếng Việt được. Hãy cài Chup bằng bộ cài.",
+                    ))]
+                }
+            }
+        }
+        let scale = match &source {
+            OcrSource::Preview(p) => self.stack.iter().find(|s| &s.path == p).map(|s| s.scale).unwrap_or(1.0),
+            OcrSource::Image { scale } => *scale,
+        };
+        self.ocr_next_id = self.ocr_next_id.wrapping_add(1);
+        let job = OcrJob { id: self.ocr_next_id, source, lang, scale };
+        let was_busy = self.ocr_busy.replace(job.clone()).is_some();
+        let mut fx = vec![Effect::StartOcr(job)];
+        if !was_busy {
+            fx.push(Effect::OcrBusyChanged);
+        }
+        fx
+    }
+
+    /// Worker OCR báo kết quả (text đã hậu xử lý). Job đã bị thay hoặc huỷ thì bỏ qua.
+    pub fn ocr_done(&mut self, id: u32, result: Result<String, String>) -> Vec<Effect> {
+        let Some(job) = self.ocr_busy.take_if(|j| j.id == id) else { return vec![] };
+        let mut fx = vec![Effect::OcrBusyChanged];
+        match result {
+            Err(e) => fx.push(Effect::Toast(Toast::error(e))),
+            Ok(text) if text.trim().is_empty() => fx.push(Effect::Toast(Toast::info("Không tìm thấy chữ"))),
+            Ok(text) => {
+                if let OcrSource::Preview(p) = job.source {
+                    self.ocr_cache = Some((p, job.lang, text.clone()));
+                }
+                fx.push(Effect::CopyText(text));
+            }
+        }
+        fx
+    }
+
+    pub fn ocr_cancel(&mut self) -> Vec<Effect> {
+        match self.ocr_busy.take() {
+            Some(_) => vec![Effect::CancelOcr, Effect::OcrBusyChanged],
+            None => vec![],
+        }
+    }
+
+    /// Lớp platform vừa kiểm tra lại file (khởi động, cài hoặc xoá gói).
+    pub fn set_ocr_vi(&mut self, state: OcrViState) -> Vec<Effect> {
+        if self.ocr_vi == state {
+            return vec![];
+        }
+        self.ocr_vi = state;
+        vec![Effect::ConfigChanged]
+    }
+
+    /// Tải gói tiếng Việt xong: chuyển sang tiếng Việt (người dùng vừa chủ động chọn) và chạy yêu cầu đang chờ.
+    pub fn ocr_pack_installed(&mut self, state: OcrViState) -> Vec<Effect> {
+        let mut fx = self.set_ocr_vi(state);
+        if self.config.ocr.language != OcrLanguage::Vi {
+            let mut next = self.config.clone();
+            next.ocr.language = OcrLanguage::Vi;
+            match self.commit_config(next) {
+                Ok(more) => fx.extend(more),
+                Err(e) => fx.push(Effect::Toast(Toast::error(e))),
+            }
+        }
+        if let Some(src) = self.ocr_pending.take() {
+            fx.extend(self.ocr_request(src));
+        }
+        fx
+    }
+
+    /// Có yêu cầu OCR đang chờ tải gói xong.
+    pub fn ocr_has_pending(&self) -> bool {
+        self.ocr_pending.is_some()
+    }
+
+    /// Không tải gói (từ chối, huỷ, lỗi): bỏ yêu cầu đang chờ.
+    pub fn ocr_pack_aborted(&mut self) {
+        self.ocr_pending = None;
     }
 
     // ---------- stack (SPEC 5.4) ----------
@@ -535,7 +721,7 @@ mod tests {
         assert_eq!(m.frame_margin, 18, "màn hình 150%");
         assert_eq!(m.frame_outer(), Some(Rect::new(1982, 82, 436, 336)));
         let tb = m.toolbar_rect().unwrap();
-        assert_eq!((tb.w, tb.h), (330, 66));
+        assert_eq!((tb.w, tb.h), (378, 66));
         assert!(tb.y >= 400 + 18, "toolbar nằm dưới frame");
     }
 
@@ -565,9 +751,9 @@ mod tests {
         m.select_region(Rect::new(100, 100, 200, 100));
         assert_eq!(m.toggle_fade(), vec![Effect::UpdateFrameMode, Effect::LayoutToolbar]);
         let tb = m.toolbar_rect().unwrap();
-        assert_eq!((tb.w, tb.h), (116, 40));
+        assert_eq!((tb.w, tb.h), (148, 40));
         let fx = m.request_capture();
-        assert!(matches!(fx[0], Effect::StartCapture(CaptureJob { rect, hide_ui: false }) if rect == Rect::new(100, 100, 200, 100)));
+        assert!(matches!(fx[0], Effect::StartCapture(CaptureJob { rect, hide_ui: false, text: false }) if rect == Rect::new(100, 100, 200, 100)));
         assert!(m.capture_grabbed(Ok(())).is_empty(), "Faded: giữ frame");
         assert_eq!(m.mode, FrameMode::Faded);
     }
@@ -721,6 +907,7 @@ mod tests {
             width: 1,
             height: 1,
             created_at: chrono::Local::now(),
+            scale: 1.0,
         };
         std::fs::write(dir.join("a.png"), b"x").unwrap();
         m.stack.push(shot("a"));
@@ -732,6 +919,137 @@ mod tests {
         assert!(m.shot("b").is_none());
         assert!(m.shot_open("zzz").is_empty());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    fn shot_at(path: &std::path::Path, scale: f64) -> crate::capture::Shot {
+        crate::capture::Shot {
+            id: ulid::Ulid::generate().to_string(),
+            path: path.to_path_buf(),
+            thumb_path: path.with_extension("thumb"),
+            thumb: std::sync::Arc::new(image::RgbaImage::new(1, 1)),
+            width: 1,
+            height: 1,
+            created_at: chrono::Local::now(),
+            scale,
+        }
+    }
+
+    fn started(fx: &[Effect]) -> OcrJob {
+        fx.iter()
+            .find_map(|e| match e {
+                Effect::StartOcr(j) => Some(j.clone()),
+                _ => None,
+            })
+            .expect("phải có StartOcr")
+    }
+
+    #[test]
+    fn ocr_english_runs_copies_and_caches_preview() {
+        let mut m = model();
+        let p = PathBuf::from("/pics/a.png");
+        m.stack.push(shot_at(&p, 1.25));
+        let fx = m.ocr_request(OcrSource::Preview(p.clone()));
+        let job = started(&fx);
+        assert_eq!(fx[1], Effect::OcrBusyChanged);
+        assert_eq!((job.lang, job.scale), (OcrLanguage::En, 1.25), "scale lấy từ shot trong stack");
+        assert_eq!(
+            m.ocr_done(job.id, Ok("Xin chào".into())),
+            vec![Effect::OcrBusyChanged, Effect::CopyText("Xin chào".into())]
+        );
+        assert!(m.ocr_busy.is_none());
+        assert_eq!(m.ocr_request(OcrSource::Preview(p.clone())), vec![Effect::CopyText("Xin chào".into())], "cache");
+        // Đổi ngôn ngữ thì không dùng cache cũ.
+        m.config.ocr.language = OcrLanguage::Vi;
+        m.ocr_vi = OcrViState::Ready;
+        let job = started(&m.ocr_request(OcrSource::Preview(p)));
+        assert_eq!(job.lang, OcrLanguage::Vi);
+    }
+
+    #[test]
+    fn ocr_newer_job_replaces_older_and_cancel() {
+        let mut m = model();
+        let a = started(&m.ocr_request(OcrSource::Image { scale: 2.0 }));
+        let fx = m.ocr_request(OcrSource::Image { scale: 1.0 });
+        let b = started(&fx);
+        assert_eq!(fx.len(), 1, "đã bận thì không đổi trạng thái spinner");
+        assert_ne!(a.id, b.id);
+        assert!(m.ocr_done(a.id, Ok("cũ".into())).is_empty(), "kết quả job cũ bị bỏ qua");
+        assert_eq!(m.ocr_cancel(), vec![Effect::CancelOcr, Effect::OcrBusyChanged]);
+        assert!(m.ocr_done(b.id, Ok("muộn".into())).is_empty(), "đã huỷ");
+        assert!(m.ocr_cancel().is_empty());
+    }
+
+    #[test]
+    fn ocr_empty_and_error_results() {
+        let mut m = model();
+        let j = started(&m.ocr_request(OcrSource::Image { scale: 1.0 }));
+        assert_eq!(
+            m.ocr_done(j.id, Ok(" \n".into())),
+            vec![Effect::OcrBusyChanged, Effect::Toast(Toast::info("Không tìm thấy chữ"))]
+        );
+        let j = started(&m.ocr_request(OcrSource::Image { scale: 1.0 }));
+        assert_eq!(m.ocr_done(j.id, Err("hỏng".into()))[1], Effect::Toast(Toast::error("hỏng")));
+    }
+
+    #[test]
+    fn ocr_vietnamese_without_pack_asks_then_runs_after_install() {
+        let mut m = model();
+        m.config.ocr.language = OcrLanguage::Vi;
+        let src = OcrSource::Image { scale: 1.0 };
+        assert_eq!(m.ocr_request(src.clone()), vec![Effect::AskOcrDownload]);
+        assert!(m.ocr_busy.is_none());
+        let fx = m.ocr_pack_installed(OcrViState::Ready);
+        assert_eq!(fx[0], Effect::ConfigChanged);
+        assert_eq!(started(&fx).source, src, "chạy luôn yêu cầu đang chờ");
+
+        // Từ chối tải: lần cài sau không chạy lại yêu cầu cũ.
+        let mut m = model();
+        m.config.ocr.language = OcrLanguage::Vi;
+        m.ocr_request(src);
+        m.ocr_pack_aborted();
+        assert!(!m.ocr_pack_installed(OcrViState::Ready).iter().any(|e| matches!(e, Effect::StartOcr(_))));
+    }
+
+    #[test]
+    fn ocr_pack_installed_from_settings_switches_language() {
+        let mut m = model();
+        let fx = m.ocr_pack_installed(OcrViState::Ready);
+        assert_eq!(m.config.ocr.language, OcrLanguage::Vi);
+        assert!(fx.contains(&Effect::ConfigChanged));
+        assert!(m.paths.config_file.is_file(), "đã lưu config");
+        assert!(m.set_ocr_vi(OcrViState::Ready).is_empty());
+    }
+
+    #[test]
+    fn ocr_vietnamese_without_helper_explains() {
+        let mut m = model();
+        m.config.ocr.language = OcrLanguage::Vi;
+        m.ocr_vi = OcrViState::NoHelper;
+        let fx = m.ocr_request(OcrSource::Image { scale: 1.0 });
+        assert!(matches!(&fx[..], [Effect::Toast(t)] if t.message.contains("chup-ocr.exe")));
+    }
+
+    #[test]
+    fn capture_text_and_freeze_ocr_mode() {
+        let mut m = model();
+        m.select_region(Rect::new(100, 100, 200, 100));
+        assert!(matches!(m.request_capture_text()[0], Effect::StartCapture(CaptureJob { text: true, .. })));
+        assert_eq!(m.start_freeze_ocr(), vec![Effect::HideFrame, Effect::HideToolbar, Effect::FreezeGrab]);
+        assert!(m.freeze_ocr);
+        assert!(m.start_freeze().is_empty(), "đang freeze: không đổi chế độ");
+        assert!(m.freeze_ocr);
+        m.freeze_cancel();
+        m.start_freeze();
+        assert!(!m.freeze_ocr, "Freeze thường");
+    }
+
+    #[test]
+    fn freeze_ocr_confirm() {
+        let mut m = model();
+        m.start_freeze();
+        m.freeze_grabbed(true);
+        let r = Rect::new(1, 2, 30, 40);
+        assert_eq!(m.freeze_confirm(r, FreezeAction::Ocr), vec![Effect::HideOverlays, Effect::FreezeOcr(r)]);
     }
 
     #[test]

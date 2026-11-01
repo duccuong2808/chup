@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 chup-core = { path = "../core" }
+chup-ocr-proto = { path = "../ocr-proto" }
 log = { version = "0.4", features = ["std"] }
 chrono = "0.4"
 serde_json = "1"
@@ -25,15 +26,23 @@ drag = "=2.1.1"
 raw-window-handle = "0.6"
 windows-numerics = "=0.3.1"
 windows = { version = "=0.62.2", features = [
+  "Globalization",
+  "Graphics_Imaging",
+  "Media_Ocr",
+  "Security_Cryptography",
+  "Storage_Streams",
+  "Foundation_Collections",
   "Win32_Foundation",
   "Win32_Graphics_Direct2D",
   "Win32_Graphics_Direct2D_Common",
   "Win32_Graphics_DirectWrite",
   "Win32_Graphics_Dxgi_Common",
+  "Win32_Networking_WinHttp",
   "Win32_Graphics_Dwm",
   "Win32_Graphics_Gdi",
   "Win32_System_Com",
   "Win32_System_DataExchange",
+  "Win32_System_JobObjects",
   "Win32_System_LibraryLoader",
   "Win32_System_Memory",
   "Win32_System_Ole",
@@ -41,6 +50,7 @@ windows = { version = "=0.62.2", features = [
   "Win32_System_Registry",
   "Win32_Security",
   "Win32_System_Threading",
+  "Win32_System_WinRT",
   "Win32_UI_Controls",
   "Win32_UI_HiDpi",
   "Win32_UI_Input_KeyboardAndMouse",

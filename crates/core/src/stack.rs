@@ -38,6 +38,10 @@ impl Stack {
         self.items.iter().find(|s| s.id == id)
     }
 
+    pub fn iter(&self) -> impl Iterator<Item = &Shot> {
+        self.items.iter()
+    }
+
     pub fn list(&self) -> Vec<Shot> {
         self.items.iter().cloned().collect()
     }
@@ -64,6 +68,7 @@ mod tests {
             width: 1,
             height: 1,
             created_at: chrono::Local::now(),
+            scale: 1.0,
         }
     }
 

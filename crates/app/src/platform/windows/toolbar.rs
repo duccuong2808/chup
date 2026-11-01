@@ -1,4 +1,4 @@
-//! Toolbar cạnh vùng chọn: Chụp / Mờ / Huỷ (SPEC 5.1, 5.2). Không bao giờ lấy focus.
+//! Toolbar cạnh vùng chọn: Chụp / Mờ / Chụp text / Huỷ (SPEC 5.1, 5.2, 15.2). Không bao giờ lấy focus.
 //! Faded: chỉ còn icon, mờ 45% (SourceConstantAlpha), rõ lại khi hover.
 
 use std::cell::RefCell;
@@ -28,6 +28,8 @@ use super::{
 enum Btn {
     Capture,
     Fade,
+    /// Chụp vùng rồi OCR, copy chữ (không lưu file).
+    Text,
     Close,
 }
 
@@ -142,9 +144,10 @@ impl Toolbar {
         let items = [
             BarButton { icon: Icon::Camera, label: "Chụp", primary: true, active: false },
             BarButton { icon: Icon::Fade, label: "Mờ", primary: false, active: faded },
+            BarButton { icon: Icon::Text, label: "", primary: false, active: false },
             BarButton { icon: Icon::Close, label: "", primary: false, active: false },
         ];
-        const BTNS: [Btn; 3] = [Btn::Capture, Btn::Fade, Btn::Close];
+        const BTNS: [Btn; 4] = [Btn::Capture, Btn::Fade, Btn::Text, Btn::Close];
         let idx = |b: Option<Btn>| b.and_then(|b| BTNS.iter().position(|x| *x == b));
         let (hover, pressed, inside) = (idx(st.hover), idx(st.pressed), st.inside);
         let Some(c) = st.canvas.as_ref() else { return };
@@ -301,6 +304,7 @@ impl Handler for Toolbar {
                     emit(match b {
                         Btn::Capture => Action::Capture,
                         Btn::Fade => Action::ToggleFade,
+                        Btn::Text => Action::CaptureText,
                         Btn::Close => Action::CloseRegion,
                     });
                 }

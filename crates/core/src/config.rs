@@ -38,6 +38,8 @@ pub struct Hotkeys {
     pub capture: String,
     /// Chụp đóng băng (SPEC 14). Không dùng Alt: Alt làm đóng menu đang mở trước khi kịp chụp.
     pub freeze: String,
+    /// "Chụp text" (SPEC 15.2): mở overlay Freeze, chọn vùng xong là OCR luôn. Mặc định chưa gán.
+    pub ocr: String,
 }
 
 impl Default for Hotkeys {
@@ -46,8 +48,33 @@ impl Default for Hotkeys {
             select_region: "Ctrl+Alt+A".into(),
             capture: "Ctrl+Alt+S".into(),
             freeze: "F1".into(),
+            ocr: String::new(),
         }
     }
+}
+
+impl Hotkeys {
+    /// Các hotkey đang gán (bỏ chuỗi rỗng).
+    fn assigned(&self) -> Vec<&String> {
+        [&self.select_region, &self.capture, &self.freeze, &self.ocr].into_iter().filter(|s| !s.is_empty()).collect()
+    }
+}
+
+/// Ngôn ngữ OCR (SPEC 15.3).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OcrLanguage {
+    /// Tiếng Anh: Windows OCR có sẵn, không tải gì.
+    #[default]
+    En,
+    /// Tiếng Việt + Anh: Tesseract (`chup-ocr.exe`) với dữ liệu tessdata_fast tải về.
+    Vi,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct OcrConfig {
+    pub language: OcrLanguage,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -130,6 +157,8 @@ pub struct Config {
     pub hide_ui_during_capture: bool,
     /// Phase 2.2: field mới có serde default nên không tăng version.
     pub preview: PreviewConfig,
+    /// Phase 2.3 (OCR), cũng không tăng version.
+    pub ocr: OcrConfig,
 }
 
 impl Default for Config {
@@ -145,6 +174,7 @@ impl Default for Config {
             launch_at_startup: false,
             hide_ui_during_capture: false,
             preview: PreviewConfig::default(),
+            ocr: OcrConfig::default(),
         }
     }
 }
@@ -168,7 +198,7 @@ impl Config {
         if self.version < 2 {
             // v1 chưa có hotkey Freeze (serde điền "F1"). Nếu người dùng đã dùng phím đó cho việc khác thì để trống.
             let h = &self.hotkeys;
-            if [&h.select_region, &h.capture].iter().any(|k| k.eq_ignore_ascii_case(&h.freeze)) {
+            if [&h.select_region, &h.capture, &h.ocr].iter().any(|k| k.eq_ignore_ascii_case(&h.freeze)) {
                 self.hotkeys.freeze.clear();
             }
         }
@@ -247,8 +277,7 @@ pub fn apply_patch(cfg: &Config, patch: &serde_json::Value) -> Result<Config, St
     if next.file_name_pattern.trim().is_empty() {
         return Err("Pattern tên file không được để trống".into());
     }
-    let h = &next.hotkeys;
-    let used: Vec<&String> = [&h.select_region, &h.capture, &h.freeze].into_iter().filter(|s| !s.is_empty()).collect();
+    let used = next.hotkeys.assigned();
     for (i, a) in used.iter().enumerate() {
         if used[i + 1..].iter().any(|b| a.eq_ignore_ascii_case(b)) {
             return Err("Hai phím tắt đang trùng nhau".into());
@@ -330,6 +359,20 @@ mod tests {
         let cfg = load(&p, Path::new("/pics")).config;
         assert_eq!(cfg.preview.opacity, 20);
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn ocr_defaults_language_and_hotkey() {
+        let cfg = Config::with_save_dir(Path::new("/x"));
+        assert_eq!(cfg.ocr.language, OcrLanguage::En);
+        assert_eq!(cfg.hotkeys.ocr, "");
+        let next = apply_patch(&cfg, &json!({ "ocr": { "language": "vi" }, "hotkeys": { "ocr": "Ctrl+Alt+T" } })).unwrap();
+        assert_eq!(next.ocr.language, OcrLanguage::Vi);
+        assert_eq!(next.hotkeys.ocr, "Ctrl+Alt+T");
+        assert!(apply_patch(&cfg, &json!({ "hotkeys": { "ocr": "f1" } })).is_err(), "trùng Freeze");
+        assert!(apply_patch(&cfg, &json!({ "ocr": { "language": "fr" } })).is_err());
+        let s = serde_json::to_value(&next).unwrap();
+        assert_eq!(s["ocr"], json!({ "language": "vi" }));
     }
 
     #[test]

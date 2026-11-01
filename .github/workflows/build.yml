@@ -2,6 +2,8 @@
 # - Mỗi lần push / PR: test + clippy trên Windows, build bản release, đóng gói installer NSIS.
 #   Installer và file exe được đính kèm vào run dưới dạng artifact.
 # - Push tag dạng v* (vd: v0.2.0): tạo thêm GitHub Release (draft) kèm installer.
+# - chup-ocr.exe (Tesseract link tĩnh, OCR tiếng Việt) build riêng bằng vcpkg rồi đưa vào installer.
+#   Dữ liệu tiếng Việt KHÔNG nằm trong installer: app tải từ tesseract-ocr/tessdata_fast (xem core::ocr::pack).
 name: Build
 
 on:
@@ -37,9 +39,96 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+  ocr-helper:
+    name: Build chup-ocr.exe (Tesseract, Windows)
+    runs-on: windows-latest
+    env:
+      VCPKG_DEFAULT_BINARY_CACHE: ${{ github.workspace }}\vcpkg-cache
+      # Dữ liệu cho test tích hợp (cùng commit với core::ocr::pack).
+      TESSDATA_COMMIT: 87416418657359cb625c412a48b6e1d6d41c29bd
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/ocr-helper
+
+      - name: Version vcpkg (khoá cache)
+        id: vcpkg
+        shell: pwsh
+        run: echo "commit=$(git -C $env:VCPKG_INSTALLATION_ROOT rev-parse HEAD)" >> $env:GITHUB_OUTPUT
+
+      # Tách restore/save: lưu cache ngay sau khi vcpkg cài xong, kể cả khi bước build sau đó lỗi
+      # (build Tesseract và các thư viện từ mã nguồn mất ~20 phút).
+      - uses: actions/cache/restore@v6
+        id: vcpkg-cache
+        with:
+          path: vcpkg-cache
+          key: vcpkg-tesseract-x64-windows-static-${{ steps.vcpkg.outputs.commit }}
+          restore-keys: vcpkg-tesseract-x64-windows-static-
+
+      - name: vcpkg install tesseract (static)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force vcpkg-cache | Out-Null
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install tesseract:x64-windows-static
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - uses: actions/cache/save@v6
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        with:
+          path: vcpkg-cache
+          key: vcpkg-tesseract-x64-windows-static-${{ steps.vcpkg.outputs.commit }}
+
+      - name: Build + test chup-ocr.exe
+        shell: pwsh
+        run: |
+          $env:VCPKG_ROOT = $env:VCPKG_INSTALLATION_ROOT
+          New-Item -ItemType Directory -Force tessdata | Out-Null
+          foreach ($f in "vie", "eng") {
+            Invoke-WebRequest "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/$env:TESSDATA_COMMIT/$f.traineddata" -OutFile "tessdata\$f.traineddata"
+          }
+          $env:CHUP_TESSDATA = "$PWD\tessdata"
+          cargo test --release --manifest-path crates/ocr-helper/Cargo.toml -- --nocapture
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          cargo build --release --manifest-path crates/ocr-helper/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Gom exe + license
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force ocr-dist | Out-Null
+          Copy-Item crates\ocr-helper\target\release\chup-ocr.exe ocr-dist\
+          & ocr-dist\chup-ocr.exe --version
+          # Phải là exe tự chứa: chỉ được phụ thuộc DLL của Windows (runner có VC redist nên chạy thử không bắt được).
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath
+          $dumpbin = Get-ChildItem "$vs\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" | Select-Object -First 1
+          $deps = & $dumpbin.FullName /dependents ocr-dist\chup-ocr.exe | Where-Object { $_ -match '^\s+\S+\.dll\s*$' } | ForEach-Object { $_.Trim() }
+          Write-Host "DLL phụ thuộc: $($deps -join ', ')"
+          $bad = $deps | Where-Object { $_ -match '(?i)^(vcruntime|msvcp|vcomp|libcurl|tesseract|leptonica|zlib|libpng|jpeg|tiff|webp|gif|openjp|archive)' }
+          if ($bad) { Write-Error "chup-ocr.exe phụ thuộc DLL không có sẵn trên Windows: $($bad -join ', ')"; exit 1 }
+          # License của Tesseract và mọi thư viện link tĩnh (lấy từ vcpkg).
+          $share = "$env:VCPKG_INSTALLATION_ROOT\installed\x64-windows-static\share"
+          $notice = "chup-ocr.exe link tĩnh các thư viện mã nguồn mở dưới đây. Dữ liệu vie/eng.traineddata`r`n" +
+                    "tải riêng từ https://github.com/tesseract-ocr/tessdata_fast (Apache-2.0).`r`n"
+          foreach ($c in Get-ChildItem $share -Recurse -Filter copyright | Sort-Object FullName) {
+            $notice += "`r`n===== $($c.Directory.Name) =====`r`n" + (Get-Content $c.FullName -Raw)
+          }
+          Set-Content -Path ocr-dist\NOTICE-ocr.txt -Value $notice -Encoding utf8
+          Get-ChildItem ocr-dist | Format-Table Name, Length
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: chup-ocr
+          path: ocr-dist/*
+          if-no-files-found: error
+
   build:
     name: Build installer (Windows)
     runs-on: windows-latest
+    needs: ocr-helper
     permissions:
       contents: write # cần để tạo Release khi push tag
     steps:
@@ -48,6 +137,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - uses: Swatinem/rust-cache@v2
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: chup-ocr
+          path: ocr-dist
 
       - name: cargo build --release
         run: cargo build --release -p chup
@@ -63,9 +157,10 @@ jobs:
           }
           New-Item -ItemType Directory -Force dist | Out-Null
           $out = "$PWD\dist\Chup_${version}_x64-setup.exe"
-          & $makensis /V2 "/DVERSION=$version" "/DEXE=$PWD\target\release\chup.exe" "/DOUTFILE=$out" installer\chup.nsi
+          & $makensis /V2 "/DVERSION=$version" "/DEXE=$PWD\target\release\chup.exe" "/DOCR_DIR=$PWD\ocr-dist" "/DOUTFILE=$out" installer\chup.nsi
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item target\release\chup.exe dist\chup.exe
+          Copy-Item ocr-dist\* dist\
           Get-ChildItem dist | Format-Table Name, Length
 
       - uses: actions/upload-artifact@v7

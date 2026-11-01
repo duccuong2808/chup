@@ -9,6 +9,7 @@ pub mod freeze;
 pub mod hotkey_name;
 pub mod icons;
 pub mod model;
+pub mod ocr;
 pub mod preview;
 pub mod selection;
 pub mod stack;

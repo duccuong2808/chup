@@ -8,8 +8,10 @@ use std::{
 };
 
 use chup_core::{
-    config::{AfterCapture, Config, Edge, PreviewPosition, StackMonitor},
+    config::{AfterCapture, Config, Edge, OcrLanguage, PreviewPosition, StackMonitor},
     hotkey_name::{self, Mods, Recorded},
+    model::OcrViState,
+    ocr::pack,
 };
 use serde_json::json;
 use windows::{
@@ -61,6 +63,7 @@ pub struct SettingsView {
     pub hotkey_errors: BTreeMap<String, String>,
     pub preview: String,
     pub exclusion_ok: bool,
+    pub ocr_vi: OcrViState,
 }
 
 const ID_PICK: u16 = 101;
@@ -79,6 +82,9 @@ const ID_PV_TOP: u16 = 113;
 const ID_PV_OPACITY: u16 = 114;
 const ID_PV_POS: u16 = 115;
 const ID_PV_SIZE: u16 = 116;
+const ID_HK_OCR: u16 = 117;
+const ID_OCR_LANG: u16 = 118;
+const ID_OCR_PACK: u16 = 119;
 const TIMER_PATTERN: usize = 1;
 
 const RECORDING_TEXT: &str = "Nhấn tổ hợp phím…";
@@ -159,7 +165,15 @@ struct Handles {
     lbl_hk3: HWND,
     hk3: HWND,
     err3: HWND,
+    lbl_hk4: HWND,
+    hk4: HWND,
+    err4: HWND,
     hint_hk: HWND,
+    sec_ocr: HWND,
+    lbl_ocr_lang: HWND,
+    ocr_lang: HWND,
+    ocr_status: HWND,
+    ocr_pack: HWND,
     sec_after: HWND,
     copy: HWND,
     lbl_after: HWND,
@@ -195,6 +209,7 @@ fn hk_name(id: u16) -> &'static str {
     match id {
         ID_HK_SELECT => "selectRegion",
         ID_HK_FREEZE => "freeze",
+        ID_HK_OCR => "ocr",
         _ => "capture",
     }
 }
@@ -321,6 +336,9 @@ impl Settings {
             lbl_hk3: self.add(st, "Chụp đóng băng (menu, tooltip)", s, none, 0, Kind::Label),
             hk3: self.add(w!("EDIT"), "", edit, WS_EX_CLIENTEDGE, ID_HK_FREEZE, Kind::Control),
             err3: self.add(st, "", s, none, 0, Kind::Error),
+            lbl_hk4: self.add(st, "Chụp text (chọn vùng rồi copy chữ)", s, none, 0, Kind::Label),
+            hk4: self.add(w!("EDIT"), "", edit, WS_EX_CLIENTEDGE, ID_HK_OCR, Kind::Control),
+            err4: self.add(st, "", s, none, 0, Kind::Error),
             hint_hk: self.add(
                 st,
                 "Bấm vào ô rồi nhấn tổ hợp phím. Delete để tắt phím tắt, Esc để huỷ.",
@@ -329,6 +347,11 @@ impl Settings {
                 0,
                 Kind::Hint,
             ),
+            sec_ocr: self.add(st, "COPY CHỮ TỪ ẢNH (OCR)", s, none, 0, Kind::Section),
+            lbl_ocr_lang: self.add(st, "Ngôn ngữ", s, none, 0, Kind::Label),
+            ocr_lang: self.add(w!("COMBOBOX"), "", combo, none, ID_OCR_LANG, Kind::Control),
+            ocr_status: self.add(st, "", s, none, 0, Kind::Hint),
+            ocr_pack: self.add(w!("BUTTON"), "", button, none, ID_OCR_PACK, Kind::Control),
             sec_after: self.add(st, "SAU KHI CHỤP", s, none, 0, Kind::Section),
             copy: self.add(w!("BUTTON"), "Copy ảnh vào clipboard", check, none, ID_COPY, Kind::Control),
             lbl_after: self.add(st, "Vùng chọn ở chế độ thường", s, none, 0, Kind::Label),
@@ -356,6 +379,7 @@ impl Settings {
         for (c, items) in [
             (h.after, &["Đóng vùng chọn", "Giữ vùng chọn để chụp tiếp"][..]),
             (h.edge, &["Phải", "Trái"][..]),
+            (h.ocr_lang, &["Tiếng Anh (có sẵn trong Windows)", "Tiếng Việt + Anh (cần tải gói dữ liệu)"][..]),
             (h.mon, &["Màn hình chính", "Màn hình đang có con trỏ"][..]),
             (h.pv_op, &["100%", "90%", "80%", "70%", "60%", "50%", "40%", "30%", "20%"][..]),
             (h.pv_pos, &["Chỗ và cỡ lần trước", "Cạnh stack", "Giữa màn hình"][..]),
@@ -369,7 +393,7 @@ impl Settings {
                 unsafe { SendMessageW(c, CB_ADDSTRING, None, Some(LPARAM(t.as_ptr() as isize))) };
             }
         }
-        for hk in [h.hk1, h.hk2, h.hk3] {
+        for hk in [h.hk1, h.hk2, h.hk3, h.hk4] {
             unsafe {
                 let _ = SetWindowSubclass(hk, Some(hotkey_proc), 1, self.hwnd.0 as usize);
             }
@@ -457,7 +481,12 @@ impl Settings {
         y += 46.0;
         section(h.sec_hk, x0, &mut y);
         let has = |c: HWND| !get_text(c).is_empty();
-        for (lbl, edit, err) in [(h.lbl_hk1, h.hk1, h.err1), (h.lbl_hk2, h.hk2, h.err2), (h.lbl_hk3, h.hk3, h.err3)] {
+        for (lbl, edit, err) in [
+            (h.lbl_hk1, h.hk1, h.err1),
+            (h.lbl_hk2, h.hk2, h.err2),
+            (h.lbl_hk3, h.hk3, h.err3),
+            (h.lbl_hk4, h.hk4, h.err4),
+        ] {
             let show = has(err);
             mv(lbl, x0, y, col, 18.0);
             y += 20.0;
@@ -473,7 +502,16 @@ impl Settings {
             y += 4.0;
         }
         mv(h.hint_hk, x0, y, col, 34.0);
-        let left_bottom = y + 34.0;
+        y += 46.0;
+        section(h.sec_ocr, x0, &mut y);
+        mv(h.lbl_ocr_lang, x0, y, col, 18.0);
+        y += 20.0;
+        mv(h.ocr_lang, x0, y, col, 200.0);
+        y += 32.0;
+        mv(h.ocr_status, x0, y, col, 34.0);
+        y += 38.0;
+        mv(h.ocr_pack, x0, y, 150.0, 28.0);
+        let left_bottom = y + 28.0;
 
         // Cột phải.
         let mut y = 58.0;
@@ -573,6 +611,25 @@ impl Settings {
         set_combo(h.pv_pos, pos);
         // 30/50/70/90: giá trị khác (sửa tay trong file) lấy mục gần nhất.
         set_combo(h.pv_size, ((c.preview.size as i32 - 20) / 20).clamp(0, 3));
+        set_combo(h.ocr_lang, if c.ocr.language == OcrLanguage::Vi { 1 } else { 0 });
+        let (status, button, enabled) = match v.ocr_vi {
+            OcrViState::Ready => ("Gói dữ liệu tiếng Việt: đã cài.".to_string(), "Xoá gói".to_string(), true),
+            OcrViState::NoPack => (
+                "Gói dữ liệu tiếng Việt: chưa cài. Tải từ GitHub (tesseract-ocr/tessdata_fast).".to_string(),
+                format!("Tải gói ({})", pack::size_label()),
+                true,
+            ),
+            OcrViState::NoHelper => (
+                "Thiếu chup-ocr.exe: hãy cài Chup bằng bộ cài để dùng tiếng Việt.".to_string(),
+                format!("Tải gói ({})", pack::size_label()),
+                false,
+            ),
+        };
+        set_text(h.ocr_status, &status);
+        set_text(h.ocr_pack, &button);
+        unsafe {
+            let _ = EnableWindow(h.ocr_pack, enabled);
+        }
         set_checked(h.autostart, c.launch_at_startup);
         set_checked(h.hideui, c.hide_ui_during_capture || !v.exclusion_ok);
         unsafe {
@@ -602,6 +659,7 @@ impl Settings {
             ("selectRegion", h.hk1, h.err1, &v.config.hotkeys.select_region),
             ("capture", h.hk2, h.err2, &v.config.hotkeys.capture),
             ("freeze", h.hk3, h.err3, &v.config.hotkeys.freeze),
+            ("ocr", h.hk4, h.err4, &v.config.hotkeys.ocr),
         ] {
             if recording != Some(name) {
                 set_text(edit, if val.is_empty() { "Không dùng" } else { val });
@@ -809,6 +867,14 @@ impl Handler for Settings {
                     (ID_PV_OPACITY, CBN_SELCHANGE) => {
                         let v = 100 - 10 * combo_sel(h.pv_op).clamp(0, 8);
                         self.patch(json!({ "preview": { "opacity": v } }))
+                    }
+                    (ID_OCR_LANG, CBN_SELCHANGE) => {
+                        let v = if combo_sel(h.ocr_lang) == 1 { "vi" } else { "en" };
+                        self.patch(json!({ "ocr": { "language": v } }))
+                    }
+                    (ID_OCR_PACK, BN_CLICKED) => {
+                        let ready = self.st.borrow().view.as_ref().is_some_and(|v| v.ocr_vi == OcrViState::Ready);
+                        emit(if ready { Action::OcrRemove } else { Action::OcrDownload });
                     }
                     (ID_HIDEUI, BN_CLICKED) => self.patch(json!({ "hideUiDuringCapture": checked(h.hideui) })),
                     (ID_AFTER, CBN_SELCHANGE) => {

@@ -1,4 +1,5 @@
 /target/
+/crates/ocr-helper/target/
 /dist/
 *.log
 

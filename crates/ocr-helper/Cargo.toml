@@ -1,0 +1,36 @@
+# Exe phụ `chup-ocr.exe`: Tesseract (link tĩnh) cho OCR tiếng Việt (SPEC 15.4).
+# Nằm NGOÀI workspace vì cần Tesseract để link:
+# - Windows (CI): vcpkg `tesseract:x64-windows-static`, đặt VCPKG_ROOT.
+# - macOS (dev/test): `brew install tesseract pkg-config`.
+# Test: CHUP_TESSDATA=<thư mục có vie/eng.traineddata> cargo test --manifest-path crates/ocr-helper/Cargo.toml
+[package]
+name = "chup-ocr"
+description = "Chup: exe phụ chạy Tesseract cho OCR tiếng Việt"
+version = "0.2.0"
+edition = "2021"
+rust-version = "1.82"
+license = "UNLICENSED"
+build = "build.rs"
+
+[[bin]]
+name = "chup-ocr"
+path = "src/main.rs"
+
+[dependencies]
+chup-ocr-proto = { path = "../ocr-proto" }
+
+[dev-dependencies]
+chup-core = { path = "../core" }
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
+
+[build-dependencies]
+vcpkg = "=0.2.15"
+embed-manifest = "=1.5.1"
+pkg-config = "=0.3.34"
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true

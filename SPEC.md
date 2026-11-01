@@ -499,7 +499,14 @@ Thêm 2 mục vào menu tray:
 | PaddleOCR PP-OCRv5 qua ONNX Runtime (`ort`) | Một engine cho mọi OS. Tiếng Việt dùng model nhận diện nhóm `latin` | Phải tải model và ONNX Runtime. Độ chính xác dấu tiếng Việt **chưa đo** |
 | Tesseract (data `vie`) | Lâu đời, có sẵn data tiếng Việt | Phụ thuộc native lib, khó đóng gói trên Windows. Thường kém với chữ nhỏ trên màn hình |
 
-**Đề xuất:**
+**Kết quả spike (2026-11-01, chi tiết `docs/plans/2026-11-01-ocr-spike.md`):**
+- Windows **không có** gói OCR `vi-VN` (chỉ en-US và các ngôn ngữ khác). Windows OCR đọc tốt tiếng Anh, 24–47 ms.
+- PaddleOCR (PP-OCRv5 latin, v6): sai dấu tiếng Việt, CER 9–18%. **Loại.**
+- Tesseract 5 `vie_fast` (+ `eng_fast`): CER 0,4–1,3% (chữ nhỏ phải phóng ×2), 0,2–0,5 s, 0,5 MB (+3,9 MB).
+- **Chốt (người dùng chọn 2 lựa chọn):** "Tiếng Anh" dùng Windows OCR (mặc định, không tải gì);
+  "Tiếng Việt + Anh" dùng Tesseract `vie_fast+eng_fast`.
+
+**Đề xuất (trước spike):**
 - Dùng `trait OcrEngine`. Engine mặc định cho mỗi OS sẽ chốt sau spike (mục 15.6).
 - Ứng viên số 1 cho Windows là **PaddleOCR qua ONNX**, vì đây là đường duy nhất vừa chạy mọi OS vừa có khả năng đọc tiếng Việt trên Windows.
 - Trên OS nào engine có sẵn hỗ trợ tiếng Việt (macOS), ưu tiên engine có sẵn vì không tốn dung lượng tải.

@@ -1,4 +1,4 @@
-; Installer NSIS cho Chup. Cài cho user hiện tại, không cần quyền admin, không cần WebView2.
+﻿; Installer NSIS cho Chup. Cài cho user hiện tại, không cần quyền admin, không cần WebView2.
 ; Build: makensis /DVERSION=0.2.0 /DEXE=path\chup.exe /DOCR_DIR=path\ocr-dist /DOUTFILE=Chup_0.2.0_x64-setup.exe installer\chup.nsi
 ; OCR_DIR (artifact `chup-ocr` của CI) chứa chup-ocr.exe + NOTICE-ocr.txt. Không có thì bộ cài không có OCR tiếng Việt.
 ; Dữ liệu tiếng Việt không nằm trong bộ cài: mục "OCR tiếng Việt" (mặc định bỏ trống) chạy `chup.exe --install-ocr`
@@ -69,7 +69,7 @@ SectionEnd
 
 !ifdef OCR_DIR
 ; Mặc định bỏ trống (/o): ai cần OCR tiếng Việt mới tải. Không tích vẫn tải được sau trong Cài đặt của Chup.
-Section /o "OCR tiếng Việt (tải thêm ~4,4 MB)" SecOcr
+Section /o "OCR tiếng Việt" SecOcr
   DetailPrint "Đang tải gói OCR tiếng Việt…"
   ExecWait '"$INSTDIR\chup.exe" --install-ocr' $0
   ; 0 = xong, 2 = người dùng huỷ, khác = lỗi (chup.exe đã hỏi Thử lại).
@@ -81,7 +81,7 @@ SectionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
   !insertmacro MUI_DESCRIPTION_TEXT ${SecChup} "Chương trình Chup."
-  !insertmacro MUI_DESCRIPTION_TEXT ${SecOcr} "Tải dữ liệu để copy chữ tiếng Việt từ ảnh (từ GitHub tesseract-ocr/tessdata_fast). Tiếng Anh dùng OCR có sẵn của Windows, không cần tải."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecOcr} "Tải thêm ~4,4 MB dữ liệu (GitHub tesseract-ocr/tessdata_fast) để copy chữ tiếng Việt từ ảnh. Tiếng Anh dùng OCR có sẵn của Windows, không cần tải."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 !endif
 

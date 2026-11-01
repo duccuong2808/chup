@@ -148,11 +148,13 @@ pub fn run() -> i32 {
         let _ = SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     }
     let dirs = util::dirs();
-    logger::init(&dirs.cache_dir.join("chup.log"));
-    log::info!("Chup {} khởi động", env!("CARGO_PKG_VERSION"));
+    // Log chỉ mở khi đã biết mình là ai: File::create ghi đè, nên instance thứ hai hay lệnh
+    // --install-ocr mà mở chup.log sẽ xoá log của instance đang chạy (còn lại một đoạn byte NUL).
 
     // Bộ cài gọi: chỉ tải gói OCR tiếng Việt rồi thoát (không cần khoá 1 instance, không tray/hotkey).
     if std::env::args().any(|a| a == "--install-ocr") {
+        logger::init(&dirs.cache_dir.join("chup-install-ocr.log"));
+        log::info!("Chup {} --install-ocr", env!("CARGO_PKG_VERSION"));
         return ocr_download::install_mode(
             &ocr::ocr_root(&dirs.cache_dir),
             &dirs.config_dir.join("config.json"),
@@ -171,6 +173,8 @@ pub fn run() -> i32 {
         }
         return 0;
     }
+    logger::init(&dirs.cache_dir.join("chup.log"));
+    log::info!("Chup {} khởi động", env!("CARGO_PKG_VERSION"));
 
     // OLE cho kéo thả file và hộp chọn folder (cũng khởi tạo COM STA).
     if let Err(e) = unsafe { OleInitialize(None) } {

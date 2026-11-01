@@ -85,7 +85,10 @@ pub fn cleanup_old(ocr_root: &Path) {
 /// Xoá gói (nút "Xoá gói" trong Cài đặt).
 pub fn remove(ocr_root: &Path) -> Result<(), String> {
     match fs::remove_dir_all(dir(ocr_root)) {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(format!("Không xoá được gói OCR: {e}")),
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            log::warn!("xoá gói OCR: {e}");
+            Err("Không xoá được gói OCR tiếng Việt, hãy thử lại sau.".into())
+        }
         _ => Ok(()),
     }
 }

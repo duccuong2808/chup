@@ -331,10 +331,13 @@ impl App {
             },
             Action::OcrDone(id, r) => self.model.ocr_done(id, r),
             Action::OcrDownload => {
+                // Exe phụ còn sống (gói vừa hỏng/xoá dở) giữ thư mục gói: tắt trước để bước rename khi cài không lỗi.
+                self.ocr.stop_helper();
                 post_ocr_download(false);
                 vec![]
             }
             Action::OcrRemove => {
+                self.ocr.stop_helper();
                 let mut fx = match pack::remove(&self.ocr_root) {
                     Ok(()) => vec![Effect::Toast(Toast::info("Đã xoá gói OCR tiếng Việt"))],
                     Err(e) => vec![Effect::Toast(Toast::error(e))],
@@ -490,7 +493,10 @@ impl App {
                         emit(Action::Toast(t));
                     });
                 }
-                Effect::AskOcrDownload => post_ocr_download(true),
+                Effect::AskOcrDownload => {
+                    self.ocr.stop_helper();
+                    post_ocr_download(true)
+                }
             }
         }
     }

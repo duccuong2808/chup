@@ -47,7 +47,7 @@ Apache-2.0, Leptonica BSD-2 và các thư viện ảnh kèm theo). Artifact CI c
 - **Tải xong** (cả từ bộ cài lẫn từ app): đặt `ocr.language = "vi"` trong config, vì người dùng vừa chủ động chọn.
 - **Bộ cài (NSIS)**:
   - Luôn chép `chup.exe`, `chup-ocr.exe`, `NOTICE-ocr.txt`.
-  - Thêm trang Components: section bắt buộc "Chup" và section tuỳ chọn "OCR tiếng Việt (tải thêm ~4,4 MB)",
+  - Thêm trang Components: section bắt buộc "Chup" và section tuỳ chọn "OCR tiếng Việt" (mô tả: tải thêm ~4,4 MB),
     mặc định **bỏ trống** (`/o`).
   - Tích: chép file xong thì chạy `"$INSTDIR\chup.exe" --install-ocr` và đợi. Exit code 1: MessageBox
     "Không tải được gói OCR tiếng Việt. Có thể tải lại trong Cài đặt của Chup." rồi vẫn cài xong. Code 2: bỏ qua.

@@ -143,6 +143,15 @@ impl Worker {
         sh.pending = None;
         sh.stop_current();
     }
+
+    /// Huỷ mọi job và tắt exe phụ (trước khi xoá gói: exe phụ chạy với thư mục hiện tại là thư mục gói,
+    /// Windows không cho xoá thư mục đó khi nó còn sống).
+    pub fn stop_helper(&self) {
+        let mut sh = lock(&self.shared);
+        sh.pending = None;
+        sh.stop_current();
+        sh.kill();
+    }
 }
 
 /// Thời gian tối đa cho một job: 15 s + 2 s mỗi megapixel ảnh gửi đi (ảnh to chữ dày cần lâu hơn).

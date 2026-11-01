@@ -490,7 +490,7 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-ocr-design.md`.
   - Chọn vùng xong là OCR luôn, không hiện toolbar.
 - **Không tìm thấy chữ**: hiện toast "Không tìm thấy chữ", clipboard giữ nguyên.
 - **Đang OCR**: hiện spinner trên Preview hoặc toolbar, có thể huỷ.
-- **Bộ cài**: trang chọn thành phần có ô **"OCR tiếng Việt (tải thêm ~4,4 MB)"**, mặc định bỏ trống. Tích thì bộ cài
+- **Bộ cài**: trang chọn thành phần có ô **"OCR tiếng Việt"** (mô tả ghi rõ tải thêm ~4,4 MB), mặc định bỏ trống. Tích thì bộ cài
   chạy `chup.exe --install-ocr` (cửa sổ tải có tiến trình). Tải lỗi vẫn cài xong app.
 - **Lần đầu dùng tiếng Việt, chưa có gói** (hoặc nút "Tải gói" trong Cài đặt):
   - Hỏi người dùng có tải gói OCR không, ghi rõ dung lượng. Tải xong thì OCR luôn ảnh vừa yêu cầu.

@@ -4,10 +4,10 @@
 use std::{rc::Rc, time::Duration};
 
 use chup_core::{
-    capture::{self, PersistOutcome},
+    capture::{self, MonitorShot, PersistOutcome},
     coords::{monitor_at, Rect},
     config::{Edge, StackMonitor},
-    model::{Effect, FrameMode, Model, Toast, FREEZE_DELAY_MS},
+    model::{Effect, FrameMode, FreezeAction, Model, Toast, FREEZE_DELAY_MS},
 };
 use image::RgbaImage;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -53,6 +53,12 @@ pub enum Action {
     OpenSaveDir,
     DisplayChanged,
     FreezeTimerFired,
+    FreezeGrabbed(Result<Vec<MonitorShot>, String>),
+    /// Overlay (HWND) vừa bắt đầu chọn vùng mới: các overlay khác bỏ vùng của mình.
+    FreezeSelecting(isize),
+    FreezeConfirm { rect: Rect, action: FreezeAction },
+    FreezeCancel,
+    FreezeCopied(Result<(), String>),
 }
 
 /// Id timer hẹn giờ "Chụp đóng băng sau 3 giây" trên cửa sổ chính (mod.rs bắn `FreezeTimerFired`).
@@ -70,6 +76,12 @@ pub struct App {
     /// Màn hình stack đang đứng; chốt lúc stack bắt đầu hiện để nó không nhảy theo chuột.
     stack_monitor: Option<String>,
     ui_hidden_for_capture: bool,
+    /// Ảnh Freeze vừa chụp, chờ `ShowFreezeOverlays` chia cho từng overlay.
+    frozen: Vec<MonitorShot>,
+    /// Ảnh của màn hình chứa vùng vừa xác nhận, chờ `FreezePersist`/`FreezeCopy`.
+    picked: Option<(Rect, RgbaImage)>,
+    /// Lúc bắt đầu chụp Freeze, để log thời gian tới lúc ảnh hiện (ngân sách 250 ms, SPEC 14.6).
+    freeze_t0: Option<std::time::Instant>,
 }
 
 impl App {
@@ -88,6 +100,9 @@ impl App {
             hotkeys: None,
             stack_monitor: None,
             ui_hidden_for_capture: false,
+            frozen: vec![],
+            picked: None,
+            freeze_t0: None,
         };
 
         // SPEC 6.4: loại frame/toolbar/stack khỏi ảnh chụp (Windows 10 bản 2004 trở lên).
@@ -201,6 +216,36 @@ impl App {
             }
             Action::OpenSaveDir => self.open_save_dir(),
             Action::FreezeTimerFired => self.model.freeze_timer_fired(),
+            Action::FreezeGrabbed(res) => {
+                let shots = res.unwrap_or_else(|e| {
+                    log::error!("freeze: {e}");
+                    vec![]
+                });
+                for (r, e) in shots.iter().filter_map(|(r, i)| i.as_ref().err().map(|e| (r, e))) {
+                    log::warn!("freeze: màn hình {r:?}: {e}");
+                }
+                let ok = shots.iter().any(|(_, i)| i.is_ok());
+                self.frozen = shots;
+                self.model.freeze_grabbed(ok)
+            }
+            Action::FreezeSelecting(h) => {
+                for o in self.overlays.iter().filter(|o| o.hwnd.0 as isize != h) {
+                    o.clear_frozen_selection();
+                }
+                vec![]
+            }
+            Action::FreezeConfirm { rect, action } => {
+                // Lấy ảnh trước khi HideOverlays giải phóng nó.
+                let (cx, cy) = rect.center();
+                self.picked = self
+                    .overlays
+                    .iter()
+                    .find(|o| o.mon.rect.contains_point(cx, cy))
+                    .and_then(|o| o.take_frozen().map(|img| (o.mon.rect, img)));
+                self.model.freeze_confirm(rect, action)
+            }
+            Action::FreezeCancel => self.model.freeze_cancel(),
+            Action::FreezeCopied(r) => self.model.freeze_copied(r),
             Action::DisplayChanged => {
                 let fx = self.model.set_monitors(util::monitors());
                 self.sync_overlays();
@@ -208,6 +253,9 @@ impl App {
             }
         };
         self.apply(fx);
+        // Ảnh Freeze không được dùng tới (phiên đã huỷ, lỗi) thì bỏ ngay, không giữ vài chục MB.
+        self.frozen.clear();
+        self.picked = None;
     }
 
     /// App đang rảnh: không chọn vùng, Cài đặt đã đóng (frame có thể đang hiện, nhất là ở chế độ Mờ).
@@ -300,8 +348,10 @@ impl App {
                         t.set_waiting(false);
                     }
                 }
-                // Freeze: nối ở Task 10 của docs/plans/2026-11-01-freeze.md.
-                _ => {}
+                Effect::FreezeGrab => self.start_freeze_grab(),
+                Effect::ShowFreezeOverlays => self.show_freeze_overlays(),
+                Effect::FreezePersist(rect) => self.freeze_output(rect, true),
+                Effect::FreezeCopy(rect) => self.freeze_output(rect, false),
             }
         }
     }
@@ -415,6 +465,66 @@ impl App {
                 fx
             }
         }
+    }
+
+    // ---------- Freeze (SPEC 14) ----------
+
+    fn start_freeze_grab(&mut self) {
+        self.freeze_t0 = Some(std::time::Instant::now());
+        std::thread::spawn(|| {
+            let t0 = std::time::Instant::now();
+            let r = capture::grab_monitors();
+            log::info!("freeze: chụp mọi màn hình mất {:?}", t0.elapsed());
+            emit(Action::FreezeGrabbed(r));
+        });
+    }
+
+    fn show_freeze_overlays(&mut self) {
+        self.sync_overlays();
+        let mut shots = std::mem::take(&mut self.frozen);
+        let (cx, cy) = cursor_pos();
+        let focus = self.overlays.iter().position(|o| o.mon.rect.contains_point(cx, cy)).unwrap_or(0);
+        // Overlay không lấy focus hiện trước, overlay dưới con trỏ sau cùng (nhận Enter, Esc).
+        let order = (0..self.overlays.len()).filter(|i| *i != focus).chain(std::iter::once(focus));
+        for i in order {
+            let Some(o) = self.overlays.get(i) else { continue };
+            // Ghép theo góc trên-trái: kích thước xcap báo có thể lệch vài px so với EnumDisplayMonitors.
+            let img = shots
+                .iter()
+                .position(|(r, _)| (r.x, r.y) == (o.mon.rect.x, o.mon.rect.y))
+                .and_then(|p| shots.swap_remove(p).1.ok());
+            if img.is_none() {
+                log::warn!("freeze: không có ảnh cho màn hình {}", o.mon.key);
+            }
+            o.show_frozen(i == focus, img);
+        }
+        if let Some(t0) = self.freeze_t0.take() {
+            log::info!("freeze: từ nhấn hotkey tới lúc ảnh hiện {:?}", t0.elapsed());
+        }
+    }
+
+    fn freeze_output(&mut self, rect: Rect, save: bool) {
+        let Some((mon, img)) = self.picked.take() else {
+            log::warn!("freeze: không có ảnh để crop");
+            return;
+        };
+        let opts = self.model.persist_options();
+        std::thread::spawn(move || {
+            let shot = chup_core::freeze::crop(&img, mon, rect);
+            drop(img);
+            let Some(shot) = shot else {
+                emit(Action::Toast(Toast::error("Vùng chọn nằm ngoài ảnh")));
+                return;
+            };
+            if save {
+                let t0 = std::time::Instant::now();
+                let r = capture::persist_shot(&shot, &opts);
+                log::info!("freeze: lưu ảnh mất {:?}", t0.elapsed());
+                emit(Action::Persisted(r));
+            } else {
+                emit(Action::FreezeCopied(chup_core::clipboard::copy_image(&shot, None)));
+            }
+        });
     }
 
     fn apply_hotkeys(&mut self) {

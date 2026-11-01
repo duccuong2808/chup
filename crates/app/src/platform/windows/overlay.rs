@@ -4,18 +4,20 @@
 //! - Khi kéo chỉ vẽ lại và đẩy phần thay đổi (vùng chọn cũ ∪ mới, nhãn kích thước).
 //! - Vùng chọn có alpha 1/255 thay vì 0: pixel alpha 0 của layered window không nhận chuột.
 
+mod freeze;
+
 use std::cell::RefCell;
 
 use chup_core::coords::{MonitorInfo, Rect};
 use windows::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, WPARAM},
     UI::{
-        Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, SetFocus, VK_ESCAPE},
+        Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, SetFocus, VK_ESCAPE, VK_RETURN},
         WindowsAndMessaging::{
             LoadCursorW, SetCursor, SetForegroundWindow, SetWindowPos, ShowWindow, HWND_TOPMOST, IDC_CROSS,
-            SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_HIDE, SW_SHOW, SW_SHOWNA, WM_KEYDOWN, WM_LBUTTONDOWN,
-            WM_LBUTTONUP, WM_MOUSEMOVE, WM_RBUTTONUP, WM_SETCURSOR, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
-            WS_POPUP,
+            SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_HIDE, SW_SHOW, SW_SHOWNA, WM_KEYDOWN, WM_LBUTTONDBLCLK,
+            WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_RBUTTONUP, WM_SETCURSOR, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
+            WS_EX_TOPMOST, WS_POPUP,
         },
     },
 };
@@ -23,7 +25,7 @@ use windows::Win32::{
 use super::{
     app::Action,
     gfx::{pill, Color, PillPainter, Surface},
-    util::{hiword, loword},
+    util::{cursor_pos, hiword, loword},
     win::{self, emit, Handler},
 };
 
@@ -47,6 +49,8 @@ struct State {
     label: Option<PillPainter>,
     label_at: Option<Rect>,
     label_text: String,
+    /// Có giá trị khi overlay đang ở chế độ Freeze (SPEC 14).
+    frozen: Option<freeze::Frozen>,
 }
 
 pub struct Overlay {
@@ -112,6 +116,7 @@ impl Overlay {
         let t_hint = t0.elapsed();
         {
             let mut st = self.st.borrow_mut();
+            st.frozen = None;
             st.start = None;
             st.sel = None;
             st.label_at = None;
@@ -123,14 +128,7 @@ impl Overlay {
             s.present(self.hwnd, (self.mon.rect.x, self.mon.rect.y), 255, None);
         }
         let t_present = t0.elapsed();
-        unsafe {
-            let _ = ShowWindow(self.hwnd, if focus { SW_SHOW } else { SW_SHOWNA });
-            let _ = SetWindowPos(self.hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-            if focus {
-                let _ = SetForegroundWindow(self.hwnd);
-                let _ = SetFocus(Some(self.hwnd));
-            }
-        }
+        self.raise(focus);
         log::debug!(
             "overlay {} {w}×{h}: cấp {:?}, gợi ý {:?}, tô {:?}, đẩy {:?}, tổng {:?}",
             self.mon.key,
@@ -140,6 +138,18 @@ impl Overlay {
             t_present - t_paint,
             t0.elapsed()
         );
+    }
+
+    /// Hiện cửa sổ trên cùng; `focus` = lấy focus để nhận phím.
+    fn raise(&self, focus: bool) {
+        unsafe {
+            let _ = ShowWindow(self.hwnd, if focus { SW_SHOW } else { SW_SHOWNA });
+            let _ = SetWindowPos(self.hwnd, Some(HWND_TOPMOST), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            if focus {
+                let _ = SetForegroundWindow(self.hwnd);
+                let _ = SetFocus(Some(self.hwnd));
+            }
+        }
     }
 
     pub fn hide(&self) {
@@ -152,6 +162,12 @@ impl Overlay {
         let mut st = self.st.borrow_mut();
         st.start = None;
         st.sel = None;
+        // Hết phiên Freeze: bỏ ảnh và DIB ngay (4K ~66 MB mỗi màn hình), không đợi trim.
+        if st.frozen.take().is_some() {
+            st.surface = None;
+            st.label_at = None;
+            st.label_text.clear();
+        }
     }
 
     /// Giải phóng DIB (khoảng 30 MB ở 4K) và bộ đệm chữ. Gọi khi app rảnh.
@@ -165,6 +181,28 @@ impl Overlay {
         *st = State { hint, ..State::default() };
     }
 
+    /// Vẽ nhãn "W × H" (physical px) cho `sel`, trả về chỗ đặt: dưới vùng chọn, sát đáy thì lên trên.
+    fn place_label(&self, st: &mut State, sel: Rect) -> Option<Rect> {
+        let (w, h) = (self.mon.rect.w as i32, self.mon.rect.h as i32);
+        let k = self.mon.scale as f32;
+        if st.label.is_none() {
+            st.label = PillPainter::new(12.0 * k, 6.0 * k, 2.0 * k, 4.0 * k, (self.s(160.0), self.s(30.0)));
+        }
+        let text = format!("{} × {}", sel.w, sel.h);
+        let mut size = st.label_at.map(|a| (a.w as i32, a.h as i32));
+        if text != st.label_text || size.is_none() {
+            if let Some(p) = st.label.as_mut() {
+                size = Some(p.paint(&text, Color::rgba(0, 0, 0, 0.75), Color::rgba(255, 255, 255, 1.0)));
+            }
+            st.label_text = text;
+        }
+        let (lw, lh) = size?;
+        let (gap, max_x) = (self.s(6.0), w - self.s(110.0));
+        let below = sel.bottom() + gap;
+        let ly = if below + lh > h { sel.y - gap - lh } else { below };
+        Some(Rect::new(sel.x.min(max_x).max(0), ly.max(2), lw as u32, lh as u32))
+    }
+
     fn on_drag(&self, x: i32, y: i32) {
         let (w, h) = (self.mon.rect.w as i32, self.mon.rect.h as i32);
         let (x, y) = (x.clamp(0, w), y.clamp(0, h));
@@ -176,25 +214,8 @@ impl Overlay {
             dirty = dirty.union(&at);
         }
 
-        // Nhãn "W × H" (physical px), dưới vùng chọn hoặc lên trên nếu sát đáy.
-        let k = self.mon.scale as f32;
-        if st.label.is_none() {
-            st.label = PillPainter::new(12.0 * k, 6.0 * k, 2.0 * k, 4.0 * k, (self.s(160.0), self.s(30.0)));
-        }
-        let text = format!("{} × {}", sel.w, sel.h);
-        let mut size = st.label_at.map(|a| (a.w as i32, a.h as i32));
-        if text != st.label_text {
-            if let Some(p) = st.label.as_mut() {
-                size = Some(p.paint(&text, Color::rgba(0, 0, 0, 0.75), Color::rgba(255, 255, 255, 1.0)));
-            }
-            st.label_text = text;
-        }
-        if let Some((lw, lh)) = size {
-            let (gap, max_x) = (self.s(6.0), w - self.s(110.0));
-            let below = sel.bottom() + gap;
-            let ly = if below + lh > h { sel.y - gap - lh } else { below };
-            let at = Rect::new(sel.x.min(max_x).max(0), ly.max(2), lw as u32, lh as u32);
-            st.label_at = Some(at);
+        st.label_at = self.place_label(&mut st, sel);
+        if let Some(at) = st.label_at {
             dirty = dirty.union(&at);
         }
         st.sel = Some(sel);
@@ -207,6 +228,9 @@ impl Overlay {
 
 /// Vẽ lại phần `dirty` của overlay: lớp tối, lỗ của vùng chọn, viền trắng, nhãn, gợi ý.
 fn paint(st: &mut State, dirty: Rect) {
+    if st.frozen.is_some() {
+        return freeze::paint_frozen(st, dirty);
+    }
     let State { surface, sel, hint, label, label_at, start, .. } = st;
     let Some(s) = surface.as_mut() else { return };
     s.fill(dirty, DIM.px());
@@ -230,6 +254,9 @@ fn paint(st: &mut State, dirty: Rect) {
 
 impl Handler for Overlay {
     fn handle(&self, hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
+        if self.st.borrow().frozen.is_some() {
+            return self.handle_frozen(hwnd, msg, wp, lp);
+        }
         match msg {
             WM_SETCURSOR => {
                 unsafe { SetCursor(LoadCursorW(None, IDC_CROSS).ok()) };

@@ -276,6 +276,8 @@ impl App {
                 Effect::ApplyHotkeys => self.apply_hotkeys(),
                 Effect::SyncAutostart => self.sync_autostart(),
                 Effect::ConfigChanged => self.refresh_settings(),
+                // Freeze: nối ở Task 10 của docs/plans/2026-11-01-freeze.md.
+                _ => {}
             }
         }
     }

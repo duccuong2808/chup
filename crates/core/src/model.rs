@@ -45,6 +45,24 @@ impl Toast {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FreezeAction {
+    Save,
+    Copy,
+}
+
+/// Phiên Freeze (SPEC 14.3). Vùng đang chọn là state của overlay, Model không giữ.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FreezePhase {
+    /// Đang chụp mọi màn hình, chưa hiện gì.
+    Grabbing,
+    /// Overlay đang hiện ảnh đóng băng.
+    Selecting,
+}
+
+/// Hẹn giờ "Chụp đóng băng sau 3 giây".
+pub const FREEZE_DELAY_MS: u32 = 3_000;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct CaptureJob {
     pub rect: Rect,
     /// Fallback SPEC 6.4: ẩn toolbar và stack trước khi chụp.
@@ -72,6 +90,18 @@ pub enum Effect {
     SyncAutostart,
     /// Config đổi: cửa sổ Cài đặt (nếu đang mở) cập nhật lại.
     ConfigChanged,
+    /// Chụp mọi màn hình (chưa hiện cửa sổ nào), xong thì gọi `freeze_grabbed`.
+    FreezeGrab,
+    /// Hiện overlay ở chế độ Freeze với ảnh vừa chụp.
+    ShowFreezeOverlays,
+    /// Bắt đầu, hoặc đếm lại, hẹn giờ `FREEZE_DELAY_MS`. Tray đổi icon.
+    StartFreezeTimer,
+    /// Tắt hẹn giờ, tray về icon thường.
+    CancelFreezeTimer,
+    /// Crop vùng (physical px toàn desktop) từ ảnh đóng băng rồi `persist_shot`.
+    FreezePersist(Rect),
+    /// Crop rồi chỉ copy vào clipboard: không tạo file, không vào stack.
+    FreezeCopy(Rect),
 }
 
 pub struct Paths {
@@ -95,6 +125,9 @@ pub struct Model {
     pub hotkey_errors: BTreeMap<String, String>,
     /// `false` nếu OS không loại được cửa sổ của Chup khỏi ảnh chụp.
     pub capture_exclusion_ok: bool,
+    pub freeze: Option<FreezePhase>,
+    /// Đang đếm ngược "Chụp đóng băng sau 3 giây".
+    pub freeze_timer: bool,
 }
 
 impl Model {
@@ -111,6 +144,8 @@ impl Model {
             stack: Stack::default(),
             hotkey_errors: BTreeMap::new(),
             capture_exclusion_ok: true,
+            freeze: None,
+            freeze_timer: false,
         }
     }
 
@@ -122,7 +157,7 @@ impl Model {
     // ---------- chọn vùng (SPEC 5.1) ----------
 
     pub fn start_selection(&mut self) -> Vec<Effect> {
-        if self.selecting {
+        if self.selecting || self.freeze.is_some() {
             return vec![];
         }
         let mut fx = vec![];
@@ -219,6 +254,9 @@ impl Model {
 
     /// Hotkey Chụp hoặc nút Chụp: chụp region hiện tại, không có thì vùng cuối.
     pub fn request_capture(&mut self) -> Vec<Effect> {
+        if self.freeze.is_some() {
+            return vec![];
+        }
         let Some(rect) = self.region.or(self.last_region) else { return vec![] };
         if self.monitor_of(&rect).is_none() {
             let mut fx = self.close_region();
@@ -262,6 +300,88 @@ impl Model {
                 fx.extend(out.warnings.into_iter().map(|w| Effect::Toast(Toast::error(w))));
                 fx
             }
+        }
+    }
+
+    // ---------- Freeze (SPEC 14) ----------
+
+    pub fn start_freeze(&mut self) -> Vec<Effect> {
+        if self.freeze.is_some() || self.selecting {
+            return vec![];
+        }
+        let mut fx = vec![];
+        if std::mem::take(&mut self.freeze_timer) {
+            fx.push(Effect::CancelFreezeTimer);
+        }
+        fx.extend(self.close_region());
+        self.freeze = Some(FreezePhase::Grabbing);
+        fx.push(Effect::FreezeGrab);
+        fx
+    }
+
+    pub fn start_freeze_delayed(&mut self) -> Vec<Effect> {
+        if self.freeze.is_some() || self.selecting {
+            return vec![];
+        }
+        self.freeze_timer = true;
+        vec![Effect::StartFreezeTimer]
+    }
+
+    pub fn freeze_timer_fired(&mut self) -> Vec<Effect> {
+        if !self.freeze_timer {
+            return vec![];
+        }
+        // start_freeze tự tắt hẹn giờ (CancelFreezeTimer đưa tray về icon thường).
+        let fx = self.start_freeze();
+        if fx.is_empty() {
+            // Đang chọn vùng Live: bỏ lượt này, nhưng vẫn trả tray về bình thường.
+            self.freeze_timer = false;
+            return vec![Effect::CancelFreezeTimer];
+        }
+        fx
+    }
+
+    /// `any_ok`: có ít nhất 1 màn hình chụp được.
+    pub fn freeze_grabbed(&mut self, any_ok: bool) -> Vec<Effect> {
+        if self.freeze != Some(FreezePhase::Grabbing) {
+            return vec![];
+        }
+        if any_ok {
+            self.freeze = Some(FreezePhase::Selecting);
+            vec![Effect::ShowFreezeOverlays]
+        } else {
+            self.freeze = None;
+            vec![Effect::Toast(Toast::error("Không chụp được màn hình"))]
+        }
+    }
+
+    /// Overlay xác nhận vùng (physical px toàn desktop).
+    pub fn freeze_confirm(&mut self, rect: Rect, action: FreezeAction) -> Vec<Effect> {
+        if self.freeze != Some(FreezePhase::Selecting) {
+            return vec![];
+        }
+        self.freeze = None;
+        let mut fx = vec![Effect::HideOverlays];
+        if !rect.is_empty() {
+            fx.push(match action {
+                FreezeAction::Save => Effect::FreezePersist(rect),
+                FreezeAction::Copy => Effect::FreezeCopy(rect),
+            });
+        }
+        fx
+    }
+
+    pub fn freeze_cancel(&mut self) -> Vec<Effect> {
+        match self.freeze.take() {
+            Some(FreezePhase::Selecting) => vec![Effect::HideOverlays],
+            _ => vec![],
+        }
+    }
+
+    pub fn freeze_copied(&self, result: Result<(), String>) -> Vec<Effect> {
+        match result {
+            Ok(()) => vec![Effect::Toast(Toast::info("Đã copy ảnh vào clipboard"))],
+            Err(e) => vec![Effect::Toast(Toast::error(e))],
         }
     }
 
@@ -312,6 +432,8 @@ impl Model {
         if self.selecting {
             fx.extend(self.cancel_selection());
         }
+        // Huỷ cả khi đang chụp: ảnh có thể không còn khớp với màn hình.
+        fx.extend(self.freeze_cancel());
         if let Some(r) = self.region {
             if self.monitor_of(&r).is_none() {
                 fx.extend(self.close_region());
@@ -476,6 +598,78 @@ mod tests {
             m.start_selection(),
             vec![Effect::HideFrame, Effect::HideToolbar, Effect::ShowOverlays]
         );
+    }
+
+    #[test]
+    fn freeze_flow_save() {
+        let mut m = model();
+        m.select_region(Rect::new(100, 100, 200, 100));
+        assert_eq!(m.start_freeze(), vec![Effect::HideFrame, Effect::HideToolbar, Effect::FreezeGrab]);
+        assert!(m.start_freeze().is_empty(), "đang freeze thì bỏ qua F1");
+        assert!(m.start_selection().is_empty(), "đang freeze thì bỏ qua Chọn vùng");
+        assert!(m.request_capture().is_empty(), "đang freeze thì bỏ qua Chụp");
+        assert_eq!(m.freeze_grabbed(true), vec![Effect::ShowFreezeOverlays]);
+        let r = Rect::new(10, 10, 50, 40);
+        assert_eq!(m.freeze_confirm(r, FreezeAction::Save), vec![Effect::HideOverlays, Effect::FreezePersist(r)]);
+        assert_eq!(m.freeze, None);
+        assert_eq!(m.last_region, Some(Rect::new(100, 100, 200, 100)), "Freeze không đổi vùng cuối");
+    }
+
+    #[test]
+    fn freeze_copy_cancel_and_failure() {
+        let mut m = model();
+        m.start_freeze();
+        m.freeze_grabbed(true);
+        let r = Rect::new(0, 0, 8, 8);
+        assert_eq!(m.freeze_confirm(r, FreezeAction::Copy), vec![Effect::HideOverlays, Effect::FreezeCopy(r)]);
+        assert!(m.freeze_confirm(r, FreezeAction::Copy).is_empty(), "phiên đã kết thúc");
+
+        m.start_freeze();
+        m.freeze_grabbed(true);
+        assert_eq!(m.freeze_cancel(), vec![Effect::HideOverlays]);
+
+        m.start_freeze();
+        assert_eq!(m.freeze_grabbed(false), vec![Effect::Toast(Toast::error("Không chụp được màn hình"))]);
+        assert_eq!(m.freeze, None);
+
+        // Huỷ lúc đang chụp: kết quả chụp về sau bị bỏ qua.
+        m.start_freeze();
+        assert!(m.freeze_cancel().is_empty());
+        assert!(m.freeze_grabbed(true).is_empty());
+
+        assert_eq!(m.freeze_copied(Ok(())), vec![Effect::Toast(Toast::info("Đã copy ảnh vào clipboard"))]);
+    }
+
+    #[test]
+    fn freeze_timer() {
+        let mut m = model();
+        assert_eq!(m.start_freeze_delayed(), vec![Effect::StartFreezeTimer]);
+        assert_eq!(m.start_freeze_delayed(), vec![Effect::StartFreezeTimer], "chọn lại = đếm lại");
+        assert_eq!(m.freeze_timer_fired(), vec![Effect::CancelFreezeTimer, Effect::FreezeGrab]);
+        assert!(m.freeze_timer_fired().is_empty(), "timer cũ bắn muộn thì bỏ qua");
+        m.freeze_cancel();
+
+        // F1 lúc đang đếm ngược: chụp ngay, huỷ hẹn giờ.
+        m.start_freeze_delayed();
+        assert_eq!(m.start_freeze(), vec![Effect::CancelFreezeTimer, Effect::FreezeGrab]);
+        assert!(!m.freeze_timer);
+        m.freeze_cancel();
+
+        // Hết giờ đúng lúc đang chọn vùng Live: bỏ lượt chụp, tray về bình thường.
+        m.start_freeze_delayed();
+        m.start_selection();
+        assert_eq!(m.freeze_timer_fired(), vec![Effect::CancelFreezeTimer]);
+        assert!(!m.freeze_timer);
+    }
+
+    #[test]
+    fn display_change_cancels_freeze() {
+        let mut m = model();
+        m.start_freeze();
+        m.freeze_grabbed(true);
+        let fx = m.set_monitors(vec![mon(0, 1920, 1.0)]);
+        assert!(fx.contains(&Effect::HideOverlays));
+        assert_eq!(m.freeze, None);
     }
 
     #[test]

@@ -5,6 +5,7 @@ pub mod capture;
 pub mod clipboard;
 pub mod config;
 pub mod coords;
+pub mod freeze;
 pub mod hotkey_name;
 pub mod icons;
 pub mod model;

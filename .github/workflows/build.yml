@@ -60,7 +60,10 @@ jobs:
         shell: pwsh
         run: echo "commit=$(git -C $env:VCPKG_INSTALLATION_ROOT rev-parse HEAD)" >> $env:GITHUB_OUTPUT
 
-      - uses: actions/cache@v6
+      # Tách restore/save: lưu cache ngay sau khi vcpkg cài xong, kể cả khi bước build sau đó lỗi
+      # (build Tesseract và các thư viện từ mã nguồn mất ~20 phút).
+      - uses: actions/cache/restore@v6
+        id: vcpkg-cache
         with:
           path: vcpkg-cache
           key: vcpkg-tesseract-x64-windows-static-${{ steps.vcpkg.outputs.commit }}
@@ -72,6 +75,12 @@ jobs:
           New-Item -ItemType Directory -Force vcpkg-cache | Out-Null
           & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install tesseract:x64-windows-static
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - uses: actions/cache/save@v6
+        if: steps.vcpkg-cache.outputs.cache-hit != 'true'
+        with:
+          path: vcpkg-cache
+          key: vcpkg-tesseract-x64-windows-static-${{ steps.vcpkg.outputs.commit }}
 
       - name: Build + test chup-ocr.exe
         shell: pwsh

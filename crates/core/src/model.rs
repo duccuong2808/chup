@@ -184,6 +184,8 @@ pub struct Model {
     /// `false` nếu OS không loại được cửa sổ của Chup khỏi ảnh chụp.
     pub capture_exclusion_ok: bool,
     pub freeze: Option<FreezePhase>,
+    /// Số thứ tự lần chụp Freeze gần nhất. Kết quả chụp mang số cũ (phiên đã huỷ, vd. vì đổi màn hình) thì bỏ.
+    pub freeze_gen: u32,
     /// Đang đếm ngược "Chụp đóng băng sau 3 giây".
     pub freeze_timer: bool,
     /// Phiên Freeze hiện tại là "Chụp text": thả chuột là OCR luôn, không có toolbar.
@@ -215,6 +217,7 @@ impl Model {
             hotkey_errors: BTreeMap::new(),
             capture_exclusion_ok: true,
             freeze: None,
+            freeze_gen: 0,
             freeze_timer: false,
             freeze_ocr: false,
             ocr_vi: OcrViState::NoPack,
@@ -417,6 +420,7 @@ impl Model {
         }
         fx.extend(self.close_region());
         self.freeze = Some(FreezePhase::Grabbing);
+        self.freeze_gen = self.freeze_gen.wrapping_add(1);
         fx.push(Effect::FreezeGrab);
         fx
     }
@@ -443,9 +447,9 @@ impl Model {
         fx
     }
 
-    /// `any_ok`: có ít nhất 1 màn hình chụp được.
-    pub fn freeze_grabbed(&mut self, any_ok: bool) -> Vec<Effect> {
-        if self.freeze != Some(FreezePhase::Grabbing) {
+    /// Kết quả chụp của lần `gen` (xem `freeze_gen`). `any_ok`: có ít nhất 1 màn hình chụp được.
+    pub fn freeze_grabbed(&mut self, gen: u32, any_ok: bool) -> Vec<Effect> {
+        if self.freeze != Some(FreezePhase::Grabbing) || gen != self.freeze_gen {
             return vec![];
         }
         if any_ok {
@@ -924,7 +928,7 @@ mod tests {
         assert!(m.start_freeze().is_empty(), "đang freeze thì bỏ qua F1");
         assert!(m.start_selection().is_empty(), "đang freeze thì bỏ qua Chọn vùng");
         assert!(m.request_capture().is_empty(), "đang freeze thì bỏ qua Chụp");
-        assert_eq!(m.freeze_grabbed(true), vec![Effect::ShowFreezeOverlays]);
+        assert_eq!(m.freeze_grabbed(m.freeze_gen, true), vec![Effect::ShowFreezeOverlays]);
         let r = Rect::new(10, 10, 50, 40);
         assert_eq!(m.freeze_confirm(r, FreezeAction::Save), vec![Effect::HideOverlays, Effect::FreezePersist(r)]);
         assert_eq!(m.freeze, None);
@@ -935,25 +939,40 @@ mod tests {
     fn freeze_copy_cancel_and_failure() {
         let mut m = model();
         m.start_freeze();
-        m.freeze_grabbed(true);
+        m.freeze_grabbed(m.freeze_gen, true);
         let r = Rect::new(0, 0, 8, 8);
         assert_eq!(m.freeze_confirm(r, FreezeAction::Copy), vec![Effect::HideOverlays, Effect::FreezeCopy(r)]);
         assert!(m.freeze_confirm(r, FreezeAction::Copy).is_empty(), "phiên đã kết thúc");
 
         m.start_freeze();
-        m.freeze_grabbed(true);
+        m.freeze_grabbed(m.freeze_gen, true);
         assert_eq!(m.freeze_cancel(), vec![Effect::HideOverlays]);
 
         m.start_freeze();
-        assert_eq!(m.freeze_grabbed(false), vec![Effect::Toast(Toast::error(t().capture_failed))]);
+        assert_eq!(m.freeze_grabbed(m.freeze_gen, false), vec![Effect::Toast(Toast::error(t().capture_failed))]);
         assert_eq!(m.freeze, None);
 
         // Huỷ lúc đang chụp: kết quả chụp về sau bị bỏ qua.
         m.start_freeze();
         assert!(m.freeze_cancel().is_empty());
-        assert!(m.freeze_grabbed(true).is_empty());
+        assert!(m.freeze_grabbed(m.freeze_gen, true).is_empty());
 
         assert_eq!(m.freeze_copied(Ok(())), vec![Effect::Toast(Toast::info(t().image_copied_clipboard))]);
+    }
+
+    #[test]
+    fn freeze_ignores_result_of_cancelled_grab() {
+        // F1, phiên bị huỷ khi còn đang chụp (vd. đổi màn hình), F1 lần nữa: ảnh của lần chụp đầu tới muộn
+        // không được nhận vào phiên mới (hình học màn hình có thể đã khác).
+        let mut m = model();
+        m.start_freeze();
+        let first = m.freeze_gen;
+        assert!(m.freeze_cancel().is_empty());
+        m.start_freeze();
+        assert_ne!(m.freeze_gen, first);
+        assert!(m.freeze_grabbed(first, true).is_empty());
+        assert_eq!(m.freeze, Some(FreezePhase::Grabbing));
+        assert_eq!(m.freeze_grabbed(m.freeze_gen, true), vec![Effect::ShowFreezeOverlays]);
     }
 
     #[test]
@@ -982,7 +1001,7 @@ mod tests {
     fn display_change_cancels_freeze() {
         let mut m = model();
         m.start_freeze();
-        m.freeze_grabbed(true);
+        m.freeze_grabbed(m.freeze_gen, true);
         let fx = m.set_monitors(vec![mon(0, 1920, 1.0)]);
         assert!(fx.contains(&Effect::HideOverlays));
         assert_eq!(m.freeze, None);
@@ -1250,7 +1269,7 @@ mod tests {
     fn freeze_ocr_confirm() {
         let mut m = model();
         m.start_freeze();
-        m.freeze_grabbed(true);
+        m.freeze_grabbed(m.freeze_gen, true);
         let r = Rect::new(1, 2, 30, 40);
         assert_eq!(m.freeze_confirm(r, FreezeAction::Ocr), vec![Effect::HideOverlays, Effect::FreezeOcr(r)]);
     }

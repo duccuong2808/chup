@@ -17,7 +17,7 @@ use windows::Win32::{
         Input::KeyboardAndMouse::{ReleaseCapture, SetCapture, TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT},
         WindowsAndMessaging::{
             KillTimer, SetTimer, SetWindowPos, ShowWindow, HWND_TOPMOST, MA_NOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE,
-            SWP_NOSIZE, SW_HIDE, SW_SHOWNOACTIVATE, WM_CAPTURECHANGED, WM_LBUTTONDOWN, WM_LBUTTONUP,
+            SWP_NOSIZE, SW_HIDE, SW_SHOWNOACTIVATE, WM_CAPTURECHANGED, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
             WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_TIMER, WS_EX_LAYERED, WS_EX_NOACTIVATE,
             WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
         },
@@ -43,6 +43,8 @@ const TAB_BOTTOM: f32 = 6.0;
 const HEADER_H: f32 = 24.0;
 
 const TIMER_LEAVE: usize = 1;
+/// wParam của WM_MOUSEMOVE: phím trái đang giữ.
+const MK_LBUTTON: usize = 0x0001;
 const TIMER_TOAST_BASE: usize = 100;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -407,6 +409,15 @@ impl StackWin {
         }
     }
 
+    /// Hit theo vị trí con trỏ thật (toạ độ màn hình) và bố cục hiện tại: dùng lúc nhấn chuột, phòng khi bố cục vừa đổi
+    /// (hover hiện header, cửa sổ lớn lên) sau khi Windows đã tính toạ độ của message.
+    fn hit_cursor(&self) -> Option<Hit> {
+        let mut r = windows::Win32::Foundation::RECT::default();
+        unsafe { windows::Win32::UI::WindowsAndMessaging::GetWindowRect(self.hwnd, &mut r) }.ok()?;
+        let (cx, cy) = cursor_pos();
+        self.hit(cx - r.left, cy - r.top)
+    }
+
     fn hit(&self, x: i32, y: i32) -> Option<Hit> {
         // Nút trên thẻ được thêm trước thẻ nên tìm thấy trước.
         self.st.borrow().hits.iter().find(|(_, r)| r.contains_point(x, y)).map(|(h, _)| *h)
@@ -463,6 +474,14 @@ impl Handler for StackWin {
                         let _ = TrackMouseEvent(&mut t);
                     }
                 }
+                // Còn nhớ lần nhấn mà phím trái đã nhả (mất WM_LBUTTONUP): bỏ, không để lần rê sau tự kéo file (chup-t8m).
+                if wp.0 & MK_LBUTTON == 0 && self.st.borrow().press.is_some() {
+                    log::debug!("stack: bỏ lần nhấn treo (phím trái đã nhả)");
+                    self.st.borrow_mut().press = None;
+                    unsafe {
+                        let _ = ReleaseCapture();
+                    }
+                }
                 // Kéo thẻ đủ xa thì bắt đầu kéo thả file.
                 let drag_card = {
                     let st = self.st.borrow();
@@ -506,8 +525,17 @@ impl Handler for StackWin {
                 self.relayout();
                 Some(LRESULT(0))
             }
-            WM_LBUTTONDOWN => {
-                let h = self.hit(loword(lp.0), hiword(lp.0));
+            // Class có CS_DBLCLKS: lần nhấn thứ hai nhanh và gần lần trước tới dưới dạng DBLCLK. Không xử lý thì lần
+            // nhấn đó mất, kéo thẻ không ăn (chup-t8m).
+            WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => {
+                // Nhấn ngay khi vừa rê vào (chưa kịp xử lý WM_MOUSEMOVE): bật trạng thái hover trước để bố cục (header)
+                // không đổi sau khi đã nhấn, rồi tính hit theo con trỏ thật.
+                let enter = !std::mem::replace(&mut self.st.borrow_mut().hovering, true);
+                if enter {
+                    self.relayout();
+                }
+                let h = self.hit_cursor().or_else(|| self.hit(loword(lp.0), hiword(lp.0)));
+                log::debug!("stack: nhấn {h:?} (vừa vào: {enter})");
                 if let Some(hit) = h {
                     self.st.borrow_mut().press = Some(Press { hit, at: cursor_pos() });
                     unsafe { SetCapture(hwnd) };

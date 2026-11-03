@@ -11,7 +11,7 @@ use windows::Win32::{
         Input::KeyboardAndMouse::{TrackMouseEvent, TME_LEAVE, TRACKMOUSEEVENT},
         WindowsAndMessaging::{
             SetWindowPos, ShowWindow, HWND_TOPMOST, MA_NOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_HIDE,
-            SW_SHOWNOACTIVATE, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
+            SW_SHOWNOACTIVATE, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE,
             WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
         },
     },
@@ -291,7 +291,8 @@ impl Handler for Toolbar {
                 self.render();
                 Some(LRESULT(0))
             }
-            WM_LBUTTONDOWN => {
+            // CS_DBLCLKS: lần bấm thứ hai nhanh tới dưới dạng DBLCLK, coi như một lần bấm (chup-t8m).
+            WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => {
                 self.st.borrow_mut().pressed = self.hit(loword(lp.0), hiword(lp.0));
                 self.render();
                 Some(LRESULT(0))

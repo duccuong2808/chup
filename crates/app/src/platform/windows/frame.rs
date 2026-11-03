@@ -13,7 +13,7 @@ use windows::Win32::{
             GetWindowLongPtrW, LoadCursorW, SetCursor, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE,
             HTCLIENT, HTTRANSPARENT, HWND_TOPMOST, IDC_ARROW, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE,
             IDC_SIZEWE, MA_NOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_HIDE, SW_SHOWNOACTIVATE,
-            WM_CAPTURECHANGED, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCHITTEST,
+            WM_CAPTURECHANGED, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCHITTEST,
             WM_SETCURSOR, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
             WS_POPUP,
         },
@@ -308,7 +308,8 @@ impl Handler for Frame {
                 unsafe { SetCursor(LoadCursorW(None, id).ok()) };
                 Some(LRESULT(1))
             }
-            WM_LBUTTONDOWN => {
+            // CS_DBLCLKS: nắm lại khung ngay sau khi vừa thả tới dưới dạng DBLCLK (chup-t8m).
+            WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => {
                 let (lx, ly) = (loword(lp.0), hiword(lp.0));
                 if let Some(part) = self.hit(lx, ly) {
                     let outer = self.st.borrow().outer;

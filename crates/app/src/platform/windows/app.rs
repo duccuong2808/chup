@@ -9,7 +9,7 @@ use chup_core::{
     capture::{self, MonitorShot, PersistOutcome},
     coords::{monitor_at, Rect},
     config::{Edge, StackMonitor},
-    model::{Effect, FrameMode, FreezeAction, Model, OcrJob, OcrSource, Toast, FREEZE_DELAY_MS},
+    model::{Effect, FrameMode, FreezeAction, FreezePhase, Model, OcrJob, OcrSource, Toast, FREEZE_DELAY_MS},
     ocr::pack,
 };
 use image::RgbaImage;
@@ -68,7 +68,8 @@ pub enum Action {
     FreezeTimerFired,
     /// Mục tray "Chụp đóng băng", sau khi chờ menu tray tắt hẳn.
     FreezeNow,
-    FreezeGrabbed(Result<Vec<MonitorShot>, String>),
+    /// Kết quả chụp Freeze của lần `Model::freeze_gen` mang theo.
+    FreezeGrabbed(u32, Result<Vec<MonitorShot>, String>),
     /// Overlay (HWND) vừa bắt đầu chọn vùng mới: các overlay khác bỏ vùng của mình.
     FreezeSelecting(isize),
     FreezeConfirm { rect: Rect, action: FreezeAction },
@@ -208,7 +209,7 @@ impl App {
         let mem_label = match &a {
             Action::StartSelection => Some("mở overlay chọn vùng"),
             Action::Persisted(_) => Some("chụp và lưu xong"),
-            Action::FreezeGrabbed(_) => Some("hiện ảnh Freeze"),
+            Action::FreezeGrabbed(..) => Some("hiện ảnh Freeze"),
             Action::FreezeConfirm { .. } => Some("Freeze xong"),
             Action::FreezeCancel => Some("Freeze huỷ"),
             Action::PreviewLoaded(..) => Some("mở Preview"),
@@ -329,17 +330,28 @@ impl App {
             },
             Action::FreezeTimerFired => self.model.freeze_timer_fired(),
             Action::FreezeNow => self.model.start_freeze(),
-            Action::FreezeGrabbed(res) => {
-                let shots = res.unwrap_or_else(|e| {
-                    log::error!("freeze: {e}");
-                    vec![]
-                });
-                for (r, e) in shots.iter().filter_map(|(r, i)| i.as_ref().err().map(|e| (r, e))) {
-                    log::warn!("freeze: màn hình {r:?}: {e}");
+            Action::FreezeGrabbed(gen, res) => {
+                let current = gen == self.model.freeze_gen;
+                // UI ẩn cho lần chụp này: hiện lại, trừ khi một lần chụp mới hơn đang chạy (nó sẽ tự hiện lại).
+                if current || self.model.freeze != Some(FreezePhase::Grabbing) {
+                    self.restore_ui_after_capture();
                 }
-                let ok = shots.iter().any(|(_, i)| i.is_ok());
-                self.frozen = shots;
-                self.model.freeze_grabbed(ok)
+                if current {
+                    let shots = res.unwrap_or_else(|e| {
+                        log::error!("freeze: {e}");
+                        vec![]
+                    });
+                    for (r, e) in shots.iter().filter_map(|(r, i)| i.as_ref().err().map(|e| (r, e))) {
+                        log::warn!("freeze: màn hình {r:?}: {e}");
+                    }
+                    let ok = shots.iter().any(|(_, i)| i.is_ok());
+                    self.frozen = shots;
+                    self.model.freeze_grabbed(gen, ok)
+                } else {
+                    // Phiên của lần chụp này đã bị huỷ (vd. đổi màn hình) và đã có phiên mới: bỏ ảnh cũ.
+                    log::info!("freeze: bỏ kết quả của lần chụp cũ ({gen}, hiện tại {})", self.model.freeze_gen);
+                    vec![]
+                }
             }
             Action::FreezeSelecting(h) => {
                 for o in self.overlays.iter().filter(|o| o.hwnd.0 as isize != h) {
@@ -835,15 +847,40 @@ impl App {
         // Trước khi chụp và trước khi overlay lấy focus: menu chuột phải còn mở nên còn trong danh sách.
         self.freeze_wins =
             self.model.config.auto_detect.enabled.then(|| Rc::new(autoselect::snapshot_windows()));
-        std::thread::spawn(|| {
+        // Như chụp thường (SPEC 6.4): Windows không loại được cửa sổ khỏi ảnh chụp, hoặc người dùng bật "Ẩn toolbar
+        // và stack trong lúc chụp", thì ẩn stack (cả toast) trước khi chụp. Toolbar, frame đã ẩn (HideToolbar,
+        // HideFrame). Ẩn cửa sổ NOACTIVATE không làm đóng menu đang mở.
+        let hide_ui = self.model.config.hide_ui_during_capture || !self.model.capture_exclusion_ok;
+        if hide_ui {
+            self.stack.set_hidden_for_capture(true);
+            self.ui_hidden_for_capture = true;
+        }
+        let gen = self.model.freeze_gen;
+        std::thread::spawn(move || {
+            if hide_ui {
+                // Chờ DWM vẽ lại màn hình sau khi ẩn cửa sổ.
+                std::thread::sleep(Duration::from_millis(80));
+            }
             let t0 = std::time::Instant::now();
             let r = capture::grab_monitors();
             log::info!("freeze: chụp mọi màn hình mất {:?}", t0.elapsed());
-            emit(Action::FreezeGrabbed(r));
+            emit(Action::FreezeGrabbed(gen, r));
         });
     }
 
     fn show_freeze_overlays(&mut self) {
+        // Màn hình đổi trong lúc chụp mà chưa kịp nhận WM_DISPLAYCHANGE (Chup đợi 300 ms): ảnh vừa chụp và overlay
+        // dựng theo danh sách cũ có thể lệch nhau. Cập nhật màn hình rồi chụp lại (phiên cũ huỷ, phiên mới cùng chế độ).
+        let mons = util::monitors();
+        if !mons.is_empty() && mons != self.model.monitors {
+            log::info!("freeze: màn hình đổi trong lúc chụp, chụp lại");
+            self.frozen.clear();
+            let ocr = self.model.freeze_ocr;
+            let mut fx = self.model.set_monitors(mons);
+            fx.extend(if ocr { self.model.start_freeze_ocr() } else { self.model.start_freeze() });
+            self.apply(fx);
+            return;
+        }
         self.sync_overlays();
         let mut shots = std::mem::take(&mut self.frozen);
         let (cx, cy) = cursor_pos();
@@ -851,6 +888,8 @@ impl App {
         // Overlay không lấy focus hiện trước, overlay dưới con trỏ sau cùng (nhận Enter, Esc).
         let order = (0..self.overlays.len()).filter(|i| *i != focus).chain(std::iter::once(focus));
         let mut shown = false;
+        let mut focus_shown = false;
+        let mut last_shown = None;
         for i in order {
             let Some(o) = self.overlays.get(i) else { continue };
             // Ghép theo góc trên-trái: kích thước xcap báo có thể lệch vài px so với EnumDisplayMonitors.
@@ -861,7 +900,20 @@ impl App {
             if img.is_none() {
                 log::warn!("freeze: không có ảnh cho màn hình {}", o.mon.key);
             }
-            shown |= o.show_frozen(i == focus, img, self.model.freeze_ocr, self.model.config.auto_detect.enabled);
+            let ok = o.show_frozen(i == focus, img, self.model.freeze_ocr, self.model.config.auto_detect.enabled);
+            shown |= ok;
+            if ok {
+                last_shown = Some(i);
+                focus_shown |= i == focus;
+            }
+        }
+        // Overlay dưới con trỏ không hiện được (thiếu bộ nhớ) mà overlay khác hiện: trao focus cho overlay khác,
+        // không thì không còn cửa sổ nào nhận Esc / Enter.
+        if let (false, Some(i)) = (focus_shown, last_shown) {
+            log::warn!("freeze: overlay dưới con trỏ không hiện được, focus sang màn hình khác");
+            if let Some(o) = self.overlays.get(i) {
+                o.take_focus();
+            }
         }
         if let Some(t0) = self.freeze_t0.take() {
             log::info!("freeze: từ nhấn hotkey tới lúc ảnh hiện {:?}", t0.elapsed());

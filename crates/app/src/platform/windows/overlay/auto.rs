@@ -239,12 +239,12 @@ pub(super) fn highlight(st: &State) -> Option<Rect> {
 }
 
 /// Vẽ viền nét đứt và nhãn của khung đang tô, trên cùng.
-pub(super) fn paint_auto_edges(st: &mut State) {
+pub(super) fn paint_auto_edges(st: &mut State, dirty: Rect) {
     let State { surface, auto, .. } = st;
     let (Some(s), Some(a)) = (surface.as_mut(), auto.as_mut()) else { return };
     let Some(f) = a.shown else { return };
     s.outline_dashed_outside(f.rect, a.edge, a.dash, a.accent, 0xFFFF_FFFF);
     if let (Some(p), Some(at)) = (a.label.as_mut(), a.label_at) {
-        s.blend_part(&mut p.surface, (at.w as i32, at.h as i32), at.x, at.y);
+        s.blend_part(&mut p.surface, (at.w as i32, at.h as i32), at.x, at.y, dirty);
     }
 }

@@ -608,7 +608,7 @@ pub trait OcrEngine {
 | Vùng nhỏ (khoảng 5 dòng) | ≤ 500 ms |
 | Vùng 1920×1080 dày chữ | ≤ 2 s |
 | RAM thêm khi model đang load | ≤ 150 MB, về mức Phase 1 sau khi giải phóng |
-| Dung lượng installer | Lite: như Phase 1 (~1 MB nén). Full: thêm engine + dữ liệu (~4–5 MB nén, đo ở CI). `chup.exe` ~1,5 MB |
+| Dung lượng installer | Đo ở CI (2897593): Lite 0,69 MB, Full 4,9 MB (engine + dữ liệu). `chup.exe` 1,4 MB |
 
 ### 15.8 Nghiệm thu
 

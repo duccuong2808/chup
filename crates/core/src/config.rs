@@ -85,6 +85,22 @@ impl Default for OcrConfig {
     }
 }
 
+/// Tự động chọn vùng (SPEC 16). Config cũ thiếu field: bật cả 2.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AutoDetectConfig {
+    /// Rê chuột trong overlay là tô khung cửa sổ / phần tử dưới con trỏ.
+    pub enabled: bool,
+    /// Nhận khung từ ảnh khi UI Automation không có phần tử con chứa con trỏ.
+    pub image_edges: bool,
+}
+
+impl Default for AutoDetectConfig {
+    fn default() -> Self {
+        Self { enabled: true, image_edges: true }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct StackConfig {
@@ -167,6 +183,8 @@ pub struct Config {
     pub preview: PreviewConfig,
     /// Phase 2.3 (OCR), cũng không tăng version.
     pub ocr: OcrConfig,
+    /// Phase 2.4 (tự động chọn vùng), cũng không tăng version.
+    pub auto_detect: AutoDetectConfig,
 }
 
 impl Default for Config {
@@ -183,6 +201,7 @@ impl Default for Config {
             hide_ui_during_capture: false,
             preview: PreviewConfig::default(),
             ocr: OcrConfig::default(),
+            auto_detect: AutoDetectConfig::default(),
         }
     }
 }
@@ -392,6 +411,18 @@ mod tests {
         let off = apply_patch(&cfg, &json!({ "ocr": { "autoPreview": false } })).unwrap();
         assert!(!off.ocr.auto_preview);
         assert_eq!(off.ocr.language, OcrLanguage::En, "patch một field giữ field kia");
+    }
+
+    #[test]
+    fn auto_detect_defaults_on_for_old_configs() {
+        let old: Config = serde_json::from_value(json!({ "version": 2 })).unwrap();
+        assert_eq!(old.auto_detect, AutoDetectConfig { enabled: true, image_edges: true });
+        let cfg = Config::with_save_dir(Path::new("/x"));
+        let off = apply_patch(&cfg, &json!({ "autoDetect": { "imageEdges": false } })).unwrap();
+        assert!(off.auto_detect.enabled, "patch một field giữ field kia");
+        assert!(!off.auto_detect.image_edges);
+        let s = serde_json::to_value(&off).unwrap();
+        assert_eq!(s["autoDetect"], json!({ "enabled": true, "imageEdges": false }));
     }
 
     #[test]

@@ -61,7 +61,8 @@ Workflow `.github/workflows/build.yml` chạy trên `windows-latest`:
 
 | Thao tác | Cách làm |
 |---|---|
-| Chọn vùng | `Ctrl+Alt+A`, hoặc click trái icon tray |
+| Chọn vùng | `Ctrl+Alt+A`, hoặc click trái icon tray. Menu tray (click phải) hiện phím tắt đang gán cạnh từng mục |
+| Tự động chọn vùng | Trong lúc chọn vùng (cả Freeze), rê chuột là tô sẵn khung cửa sổ / nút / ảnh dưới con trỏ, click để chọn khung đó. Lăn chuột hoặc `↑` `↓` đổi sang khung lớn hơn / nhỏ hơn; giữ `Shift` để tạm tắt; kéo vẫn chọn vùng tự do. Tắt trong Cài đặt |
 | Huỷ chọn vùng | `Esc`, hoặc click phải |
 | Chụp | Nút **Chụp** trên toolbar, hoặc `Ctrl+Alt+S` |
 | Chụp lại vùng cuối | `Ctrl+Alt+S` khi không có vùng chọn, hoặc menu tray |
@@ -245,6 +246,9 @@ tự đặt ảnh, nên không do Chup. Muốn kiểm tra clipboard thì phải 
 5. Preview: nhiều màn hình (mở trên màn của stack, kéo sang màn khác DPI), ảnh 4K, cảm giác mượt khi kéo mép ở 4K.
 6. OCR: bấm Huỷ giữa lúc đang tải gói (mạng VM tải 4,4 MB quá nhanh, không kịp bấm);
    máy x64 thật (VM là ARM64 chạy giả lập); user Windows có tên tiếng Việt (đường dẫn có dấu).
+7. **Tự động chọn vùng (Phase 2.4) chưa chạy thử trong app thật**: mới có unit test core, clippy và build
+   release. Spike UIA / khung từ ảnh đo trên Windows 11 x64 thật, xem
+   `docs/plans/2026-11-03-autoselect-spike.md`. Checklist test: thiết kế mục 7.
 
 **Vấn đề đang theo dõi:** kéo thumbnail đôi khi không bắt đầu kéo. Trên VM, nhấn chuột ngay khi
 vừa rê vào thumbnail thì không kéo được (0/4); dừng ≥ 0,15 s thì 9/9. Có 1 lần lỗi dù đã dừng
@@ -262,3 +266,5 @@ vừa rê vào thumbnail thì không kéo được (0/4); dừng ≥ 0,15 s thì
 - **Freeze, mục tray "Chụp đóng băng"** chờ ~350 ms cho menu tray tắt hẳn rồi mới chụp (F1 chụp ngay).
 - **Freeze, lúc đếm ngược hẹn giờ**: icon tray mờ đi kèm tooltip, thay vì một icon riêng.
 - **OCR, nút [T] lúc đang chạy**: hiện vòng "bận" đứng yên (không quay) trên nút; bấm lần nữa là huỷ.
+- **Overlay chọn vùng bị loại khỏi ảnh chụp** (Phase 2.4, để Live chụp ngầm màn hình nhận khung từ ảnh):
+  app chia sẻ màn hình (Teams, Zoom) không thấy overlay. SPEC 16.4 đã ghi.

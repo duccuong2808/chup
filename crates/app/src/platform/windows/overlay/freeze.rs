@@ -3,7 +3,10 @@
 //! Chế độ "Chụp text" (SPEC 15.2): không có toolbar, thả chuột là OCR luôn.
 //! Hình học nằm ở `chup_core::selection`, pixel ở `chup_core::freeze`.
 
+use std::sync::Arc;
+
 use chup_core::{
+    autoselect::is_click,
     coords::{place_toolbar, Rect},
     freeze,
     icons::Icon,
@@ -32,11 +35,12 @@ use super::{
         toolbar::{bar_width, paint_bar, BarButton},
         win::emit,
     },
-    cursor_pos, hiword, loword, Overlay, Sprite, State, VK_ESCAPE, VK_RETURN, WM_KEYDOWN, WM_LBUTTONDBLCLK,
+    auto, cursor_pos, hiword, loword, Overlay, Sprite, State, VK_ESCAPE, VK_RETURN, WM_KEYDOWN, WM_LBUTTONDBLCLK,
     WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_RBUTTONUP, WM_SETCURSOR,
 };
 
 const HINT_FROZEN: &str = "Ảnh đã đóng băng · Kéo để chọn vùng · Enter để lưu · Esc để huỷ";
+const HINT_FROZEN_AUTO: &str = "Ảnh đã đóng băng · Click chọn khung hoặc kéo chọn vùng · Enter để lưu · Esc để huỷ";
 const HINT_FAILED: &str = "Không chụp được màn hình này · Esc để huỷ";
 const HINT_OCR: &str = "Chụp text · Kéo để chọn vùng có chữ · Esc để huỷ";
 /// Handle vẽ 8 DIP, vùng bắt chuột 14 DIP cho dễ trúng.
@@ -70,7 +74,8 @@ enum Drag {
 
 pub(super) struct Frozen {
     /// `None`: màn hình này chụp hỏng, chỉ phủ tối kèm thông báo, không cho chọn.
-    img: Option<RgbaImage>,
+    /// `Arc`: worker tự chọn vùng đọc chung để nhận khung từ ảnh.
+    img: Option<Arc<RgbaImage>>,
     sel: Option<Rect>,
     drag: Drag,
     hint: Option<Sprite>,
@@ -186,13 +191,14 @@ fn extent(st: &State) -> Rect {
 impl Overlay {
     /// Hiện overlay ở chế độ Freeze. `img = None`: màn hình này chụp hỏng. `ocr_only`: "Chụp text".
     /// Trả về `false` nếu không hiện được (không cấp được DIB).
-    pub fn show_frozen(&self, focus: bool, img: Option<RgbaImage>, ocr_only: bool) -> bool {
+    pub fn show_frozen(&self, focus: bool, img: Option<RgbaImage>, ocr_only: bool, auto: bool) -> bool {
         let (w, h) = (self.mon.rect.w as i32, self.mon.rect.h as i32);
         let t0 = std::time::Instant::now();
         let k = self.mon.scale as f32;
         let text = match (img.is_some(), ocr_only) {
             (false, _) => HINT_FAILED,
             (true, true) => HINT_OCR,
+            (true, false) if auto => HINT_FROZEN_AUTO,
             (true, false) => HINT_FROZEN,
         };
         let white = Color::rgba(255, 255, 255, 1.0);
@@ -212,11 +218,21 @@ impl Overlay {
                 return false;
             }
             st.start = None;
+            st.dragging = false;
+            st.auto = None;
             st.sel = None;
             st.label_at = None;
             st.label_text.clear();
             st.frozen =
-                Some(Frozen { img, sel: None, drag: Drag::Idle, hint, bar, handle: self.s(HANDLE_DIP), ocr_only });
+                Some(Frozen {
+                    img: img.map(Arc::new),
+                    sel: None,
+                    drag: Drag::Idle,
+                    hint,
+                    bar,
+                    handle: self.s(HANDLE_DIP),
+                    ocr_only,
+                });
             self.frozen_mode.set(true);
             super::paint(&mut st, Rect::new(0, 0, w as u32, h as u32));
         }
@@ -235,8 +251,23 @@ impl Overlay {
     }
 
     /// Lấy ảnh đóng băng ra để crop (Lưu/Copy). Overlay vẫn hiện tới khi `hide`.
-    pub fn take_frozen(&self) -> Option<RgbaImage> {
+    pub fn take_frozen(&self) -> Option<Arc<RgbaImage>> {
         self.st.borrow_mut().frozen.as_mut()?.img.take()
+    }
+
+    /// Ảnh đóng băng của màn hình này (dùng chung), cho worker tự chọn vùng.
+    pub fn frozen_image(&self) -> Option<Arc<RgbaImage>> {
+        self.st.borrow().frozen.as_ref()?.img.clone()
+    }
+
+    /// Có tô khung tự động ở `p` không: có ảnh, không đang kéo, không trong vùng chọn / trên handle / toolbar.
+    pub(super) fn frozen_auto_allowed(&self, p: (i32, i32)) -> bool {
+        let st = self.st.borrow();
+        let Some(f) = st.frozen.as_ref() else { return false };
+        f.img.is_some()
+            && matches!(f.drag, Drag::Idle)
+            && f.bar_hit(p).is_none()
+            && f.sel.and_then(|s| selection::hit(s, p, self.s(HANDLE_HIT_DIP))).is_none()
     }
 
     /// Người dùng bắt đầu chọn ở màn hình khác: bỏ vùng chọn ở màn hình này.
@@ -339,8 +370,13 @@ impl Overlay {
     fn frozen_move(&self, p: (i32, i32)) {
         let b = self.bounds();
         let p = (p.0.clamp(0, b.right()), p.1.clamp(0, b.bottom()));
+        // Sau khi xử lý: Some(true) = rê tự do, xét tô khung; Some(false) = bắt đầu kéo, bỏ khung tô.
+        let mut hover = None;
         self.frozen_update(|f| match f.drag {
+            // Nhấn rồi di chưa quá 4 px: vẫn là click (chọn khung đang tô).
+            Drag::New(start) if f.sel.is_none() && is_click(start, p) => Change::None,
             Drag::New(start) => {
+                hover = Some(false);
                 let r = Rect::from_points(start, p);
                 f.sel = (!r.is_empty()).then_some(r);
                 Change::Sel
@@ -349,8 +385,11 @@ impl Overlay {
                 f.sel = Some(selection::apply(rect0, grip, from, p, b));
                 Change::Sel
             }
-            Drag::Idle if !f.bar_visible() => Change::None,
             Drag::Idle => {
+                hover = Some(true);
+                if !f.bar_visible() {
+                    return Change::None;
+                }
                 let h = f.bar_hit(p);
                 match f.bar.as_mut() {
                     Some(bar) if bar.hover != h => {
@@ -363,12 +402,18 @@ impl Overlay {
             }
             Drag::Button(_) => Change::None,
         });
+        match hover {
+            Some(true) => self.auto_hover(p, self.frozen_auto_allowed(p)),
+            Some(false) => self.auto_hover(p, false),
+            None => {}
+        }
     }
 
     /// Kết thúc lần kéo. `click = false` khi mất capture (Alt+Tab, Win, UAC…): không bấm nút nào.
     fn frozen_end(&self, p: (i32, i32), click: bool) {
         let mut clicked = None;
         let mut auto_ocr = false;
+        let picked = self.auto_frame();
         self.frozen_update(|f| match std::mem::replace(&mut f.drag, Drag::Idle) {
             Drag::Button(i) => {
                 if click && f.bar_hit(p) == Some(i) {
@@ -380,7 +425,11 @@ impl Overlay {
                 }
                 Change::Bar
             }
-            Drag::New(_) => {
+            Drag::New(start) => {
+                // Click (chưa di quá 4 px): lấy khung đang tô (SPEC 16.2 bước 4).
+                if f.sel.is_none() && click && is_click(start, p) {
+                    f.sel = picked;
+                }
                 // Giống Live: vùng nhỏ hơn 4×4 coi như chưa chọn.
                 if f.sel.is_some_and(|s| s.w < 4 || s.h < 4) {
                     f.sel = None;
@@ -395,6 +444,9 @@ impl Overlay {
             self.frozen_confirm(ACTIONS[i]);
         } else if auto_ocr {
             self.frozen_confirm(Some(FreezeAction::Ocr));
+        } else {
+            // Vừa có vùng chọn mới: chuột giờ nằm trong vùng, thôi tô khung.
+            self.auto_hover(p, self.frozen_auto_allowed(p));
         }
     }
 
@@ -480,11 +532,20 @@ impl Overlay {
 
 /// Vẽ phần `dirty` ở chế độ Freeze: ảnh (tối ngoài vùng), viền, handle, gợi ý, nhãn, toolbar.
 pub(super) fn paint_frozen(st: &mut State, dirty: Rect) {
+    let hl = auto::highlight(st);
     let State { surface, frozen, label, label_at, .. } = st;
     let (Some(s), Some(f)) = (surface.as_mut(), frozen.as_mut()) else { return };
     let sw = s.w as usize;
     match &f.img {
-        Some(img) => freeze::compose(img, s.pixels(), sw, dirty, f.sel),
+        Some(img) => {
+            freeze::compose(img, s.pixels(), sw, dirty, f.sel);
+            // Khung tự động: bên trong là ảnh gốc, không làm tối (vẽ trước viền, handle của vùng chọn).
+            if let Some(h) = hl {
+                if let Some(inside) = h.intersect(&dirty) {
+                    freeze::compose(img, s.pixels(), sw, inside, Some(h));
+                }
+            }
+        }
         None => s.fill(dirty, Color::rgba(0, 0, 0, 0.6).px()),
     }
     if let Some(sel) = f.sel {
@@ -513,5 +574,8 @@ pub(super) fn paint_frozen(st: &mut State, dirty: Rect) {
         if b.at.intersect(&dirty).is_some() {
             s.blend_from(&mut b.surface, b.at.x, b.at.y);
         }
+    }
+    if hl.is_some() {
+        auto::paint_auto_edges(st);
     }
 }

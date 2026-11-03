@@ -1,9 +1,10 @@
 //! Điều phối: nhận `Action` (từ cửa sổ, tray, hotkey, worker), gọi `Model`, áp `Effect` lên cửa sổ.
 //! Chụp và lưu file chạy ở worker thread; kết quả quay về bằng `emit`.
 
-use std::{rc::Rc, time::Duration};
+use std::{rc::Rc, sync::Arc, time::Duration};
 
 use chup_core::{
+    autoselect::{Frame as AutoFrame, WinFrame},
     capture::{self, MonitorShot, PersistOutcome},
     coords::{monitor_at, Rect},
     config::{Edge, StackMonitor},
@@ -16,6 +17,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 use super::{
+    autoselect,
     frame::Frame,
     hotkeys::{Hotkeys, Kind},
     ocr::{self, Worker},
@@ -69,6 +71,12 @@ pub enum Action {
     FreezeConfirm { rect: Rect, action: FreezeAction },
     FreezeCancel,
     FreezeCopied(Result<(), String>),
+    /// Overlay: chuột ở điểm `p` (desktop) trên cửa sổ `win`; hỏi worker chuỗi khung (SPEC 16).
+    AutoHover { p: (i32, i32), win: WinFrame, mon: Rect },
+    /// Worker: chuỗi khung thô cho điểm `p` của phiên `gen`.
+    AutoFrames { gen: u32, p: (i32, i32), window: isize, chain: Vec<AutoFrame> },
+    /// Cuộn chuột / ↑↓ (dương = lên khung cha); `0` = nhấn / nhả Shift, chỉ vẽ lại.
+    AutoLevel(i32),
     /// Ảnh cho Preview đã giải mã xong (worker).
     PreviewLoaded(std::path::PathBuf, Result<RgbaImage, String>),
     PreviewCopy(std::path::PathBuf),
@@ -114,7 +122,16 @@ pub struct App {
     /// Ảnh Freeze vừa chụp, chờ `ShowFreezeOverlays` chia cho từng overlay.
     frozen: Vec<MonitorShot>,
     /// Ảnh của màn hình chứa vùng vừa xác nhận, chờ `FreezePersist`/`FreezeCopy`.
-    picked: Option<(Rect, RgbaImage)>,
+    picked: Option<(Rect, Arc<RgbaImage>)>,
+    /// Worker tự động chọn vùng (SPEC 16).
+    auto: autoselect::Worker,
+    /// Thế hệ phiên tự chọn vùng hiện tại; `auto_on` = đang có phiên (overlay đang hiện).
+    auto_gen: u32,
+    auto_on: bool,
+    /// Danh sách cửa sổ chụp lúc bắt đầu Freeze (trước khi overlay lấy focus làm menu đóng).
+    freeze_wins: Option<Rc<Vec<WinFrame>>>,
+    /// Overlay đã được loại khỏi ảnh chụp: Live mới chụp ngầm để nhận khung từ ảnh.
+    overlay_excluded: bool,
     /// Lúc bắt đầu chụp Freeze, để log thời gian tới lúc ảnh hiện (ngân sách 250 ms, SPEC 14.6).
     freeze_t0: Option<std::time::Instant>,
     ocr: Worker,
@@ -148,6 +165,11 @@ impl App {
             ocr: Worker::start(ocr_root.clone()),
             ocr_root,
             ocr_image: None,
+            auto: autoselect::Worker::start(),
+            auto_gen: 0,
+            auto_on: false,
+            freeze_wins: None,
+            overlay_excluded: false,
         };
         pack::cleanup_old(&app.ocr_root);
         let st = ocr::vi_state(&app.ocr_root);
@@ -310,6 +332,31 @@ impl App {
             }
             Action::FreezeCancel => self.model.freeze_cancel(),
             Action::FreezeCopied(r) => self.model.freeze_copied(r),
+            Action::AutoHover { p, win, mon } => {
+                if self.auto_on {
+                    self.auto.query(self.auto_gen, p, win, mon);
+                    // Chuột vừa sang màn hình này: overlay màn hình kia không nhận WM_MOUSEMOVE nữa, tự xoá khung.
+                    for o in self.overlays.iter().filter(|o| o.mon.rect != mon) {
+                        o.auto_clear();
+                    }
+                }
+                vec![]
+            }
+            Action::AutoFrames { gen, p, window, chain } => {
+                if self.auto_on && gen == self.auto_gen {
+                    if let Some(o) = self.overlays.iter().find(|o| o.mon.rect.contains_point(p.0, p.1)) {
+                        o.auto_result(p, window, &chain);
+                    }
+                }
+                vec![]
+            }
+            Action::AutoLevel(steps) => {
+                let (cx, cy) = cursor_pos();
+                if let Some(o) = self.overlays.iter().find(|o| o.mon.rect.contains_point(cx, cy)) {
+                    o.auto_level(steps);
+                }
+                vec![]
+            }
             Action::PreviewLoaded(path, res) => self.on_preview_loaded(path, res),
             Action::PreviewCopy(path) => {
                 std::thread::spawn(move || {
@@ -430,7 +477,10 @@ impl App {
         for e in fx {
             match e {
                 Effect::ShowOverlays => self.show_overlays(),
-                Effect::HideOverlays => self.overlays.iter().for_each(|o| o.hide()),
+                Effect::HideOverlays => {
+                    self.auto_end();
+                    self.overlays.iter().for_each(|o| o.hide());
+                }
                 Effect::ShowFrame => {
                     if let Some(outer) = self.model.frame_outer() {
                         let faded = self.model.mode == FrameMode::Faded;
@@ -526,6 +576,39 @@ impl App {
                 Err(e) => log::error!("Không tạo được overlay: {e}"),
             }
         }
+        // Loại overlay khỏi ảnh chụp: Live chụp ngầm màn hình để nhận khung từ ảnh (SPEC 16, thiết kế mục 4).
+        // Hệ quả: app chia sẻ màn hình không thấy overlay.
+        self.overlay_excluded = !self.overlays.is_empty()
+            && self
+                .overlays
+                .iter()
+                .all(|o| unsafe { SetWindowDisplayAffinity(o.hwnd, WDA_EXCLUDEFROMCAPTURE) }.is_ok());
+        log::info!("overlay: {} màn hình, loại khỏi ảnh chụp: {}", self.overlays.len(), self.overlay_excluded);
+    }
+
+    /// Bắt đầu phiên tự chọn vùng cho các overlay vừa hiện. `wins`: danh sách cửa sổ chụp trước đó.
+    fn auto_begin(&mut self, wins: Rc<Vec<WinFrame>>, frozen: Vec<(Rect, Arc<RgbaImage>)>) {
+        let cfg = &self.model.config.auto_detect;
+        let image_edges = cfg.image_edges;
+        let live_capture = image_edges && frozen.is_empty() && self.overlay_excluded;
+        self.auto_gen = self.auto_gen.wrapping_add(1);
+        self.auto_on = true;
+        self.auto.begin(self.auto_gen, frozen, image_edges, live_capture);
+        for o in &self.overlays {
+            o.auto_begin(wins.clone());
+        }
+        // Hỏi ngay ở vị trí con trỏ: tô khung cửa sổ liền, và để Chromium / Electron kịp bật cây accessibility.
+        let (cx, cy) = cursor_pos();
+        if let Some(o) = self.overlays.iter().find(|o| o.mon.rect.contains_point(cx, cy)) {
+            o.auto_refresh();
+        }
+    }
+
+    fn auto_end(&mut self) {
+        if std::mem::take(&mut self.auto_on) {
+            self.auto.end(self.auto_gen);
+        }
+        self.freeze_wins = None;
     }
 
     fn show_overlays(&mut self) {
@@ -536,17 +619,22 @@ impl App {
             self.apply(fx.into_iter().filter(|e| *e != Effect::HideOverlays).collect());
             self.model.selecting = true;
         }
+        let auto = self.model.config.auto_detect.enabled;
         self.sync_overlays();
         let (cx, cy) = cursor_pos();
         let focus = self.overlays.iter().position(|o| o.mon.rect.contains_point(cx, cy)).unwrap_or(0);
         // Hiện overlay không lấy focus trước, overlay dưới con trỏ sau cùng (nhận phím Esc).
         for (i, o) in self.overlays.iter().enumerate() {
             if i != focus {
-                o.show(false);
+                o.show(false, auto);
             }
         }
         if let Some(o) = self.overlays.get(focus) {
-            o.show(true);
+            o.show(true, auto);
+        }
+        if self.model.config.auto_detect.enabled {
+            let wins = Rc::new(autoselect::snapshot_windows());
+            self.auto_begin(wins, vec![]);
         }
     }
 
@@ -699,6 +787,9 @@ impl App {
 
     fn start_freeze_grab(&mut self) {
         self.freeze_t0 = Some(std::time::Instant::now());
+        // Trước khi chụp và trước khi overlay lấy focus: menu chuột phải còn mở nên còn trong danh sách.
+        self.freeze_wins =
+            self.model.config.auto_detect.enabled.then(|| Rc::new(autoselect::snapshot_windows()));
         std::thread::spawn(|| {
             let t0 = std::time::Instant::now();
             let r = capture::grab_monitors();
@@ -725,10 +816,14 @@ impl App {
             if img.is_none() {
                 log::warn!("freeze: không có ảnh cho màn hình {}", o.mon.key);
             }
-            shown |= o.show_frozen(i == focus, img, self.model.freeze_ocr);
+            shown |= o.show_frozen(i == focus, img, self.model.freeze_ocr, self.model.config.auto_detect.enabled);
         }
         if let Some(t0) = self.freeze_t0.take() {
             log::info!("freeze: từ nhấn hotkey tới lúc ảnh hiện {:?}", t0.elapsed());
+        }
+        if let (true, Some(wins)) = (shown, self.freeze_wins.take()) {
+            let frozen = self.overlays.iter().filter_map(|o| o.frozen_image().map(|i| (o.mon.rect, i))).collect();
+            self.auto_begin(wins, frozen);
         }
         if !shown {
             // Không overlay nào hiện được: không còn chỗ nhận Esc, phải tự kết thúc phiên.
@@ -802,6 +897,15 @@ impl App {
         self.model.hotkey_errors = h.apply(&self.model.config.hotkeys);
         if let Some(t) = &self.tray {
             t.set_hotkey_errors(self.model.hotkey_errors.len());
+            let hk = &self.model.config.hotkeys;
+            let errs = &self.model.hotkey_errors;
+            let show = |name: &str, key: &str| if errs.contains_key(name) { String::new() } else { key.trim().to_string() };
+            let keys = [
+                show("selectRegion", &hk.select_region),
+                show("capture", &hk.capture),
+                show("freeze", &hk.freeze),
+            ];
+            t.set_shortcuts([&keys[0], &keys[1], &keys[2]]);
         }
         self.refresh_settings();
     }

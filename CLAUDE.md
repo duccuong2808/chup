@@ -11,7 +11,9 @@ Rust thuần, **không WebView**: giao diện Win32 + Direct2D/DirectWrite. Lõi
   tải từ GitHub cộng đồng (repo này private, không phát file OCR).
 - Preview chọn chữ trên ảnh kiểu Live Text (SPEC 15.2, 17.2; thiết kế `docs/plans/2026-11-01-live-text-design.md`,
   beads `chup-4fx`) xong, đã test trên VM. Chọn theo ký tự; tự nhận diện khi mở Preview (mặc định bật).
-- Việc tiếp theo: tự động chọn vùng (SPEC mục 16).
+- 2.4 Tự động chọn vùng (SPEC mục 16; spike `docs/plans/2026-11-03-autoselect-spike.md`, thiết kế
+  `docs/plans/2026-11-03-autoselect-design.md`, epic beads `chup-pwn`): code xong trên nhánh `phase2-autoselect`,
+  **chưa chạy thử trong app thật**. Công cụ spike ở `tools/` (ngoài workspace).
 
 ## Lệnh
 

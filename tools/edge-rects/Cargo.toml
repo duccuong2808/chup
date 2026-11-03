@@ -1,0 +1,15 @@
+[package]
+name = "edge-rects"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Spike SPEC 16.6 nguồn 3 (beads chup-pwn.1): nhận diện khung chữ nhật từ ảnh chụp màn hình"
+
+# Không thuộc workspace của Chup. Rust thuần, chạy được trên mọi OS.
+[workspace]
+
+[dependencies]
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
+
+[profile.release]
+debug = false

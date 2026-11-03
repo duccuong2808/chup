@@ -86,6 +86,8 @@ const ID_HK_OCR: u16 = 117;
 const ID_OCR_LANG: u16 = 118;
 const ID_OCR_PACK: u16 = 119;
 const ID_OCR_AUTO: u16 = 120;
+const ID_AUTO_ON: u16 = 121;
+const ID_AUTO_IMG: u16 = 122;
 const TIMER_PATTERN: usize = 1;
 
 const RECORDING_TEXT: &str = "Nhấn tổ hợp phím…";
@@ -176,6 +178,10 @@ struct Handles {
     ocr_status: HWND,
     ocr_pack: HWND,
     ocr_auto: HWND,
+    sec_auto: HWND,
+    auto_on: HWND,
+    auto_img: HWND,
+    hint_auto: HWND,
     sec_after: HWND,
     copy: HWND,
     lbl_after: HWND,
@@ -355,6 +361,31 @@ impl Settings {
             ocr_status: self.add(st, "", s, none, 0, Kind::Hint),
             ocr_pack: self.add(w!("BUTTON"), "", button, none, ID_OCR_PACK, Kind::Control),
             ocr_auto: self.add(w!("BUTTON"), "Tự nhận diện chữ khi mở Preview", check, none, ID_OCR_AUTO, Kind::Control),
+            sec_auto: self.add(st, "TỰ ĐỘNG CHỌN VÙNG", s, none, 0, Kind::Section),
+            auto_on: self.add(
+                w!("BUTTON"),
+                "Rê chuột là tô sẵn khung cửa sổ, nút, ảnh…",
+                check,
+                none,
+                ID_AUTO_ON,
+                Kind::Control,
+            ),
+            auto_img: self.add(
+                w!("BUTTON"),
+                "Đoán khung từ hình ảnh khi app không tự báo",
+                check,
+                none,
+                ID_AUTO_IMG,
+                Kind::Control,
+            ),
+            hint_auto: self.add(
+                st,
+                "Click để chọn khung đang tô. Lăn chuột hoặc ↑↓ để đổi cỡ khung, giữ Shift để tạm tắt.",
+                s,
+                none,
+                0,
+                Kind::Hint,
+            ),
             sec_after: self.add(st, "SAU KHI CHỤP", s, none, 0, Kind::Section),
             copy: self.add(w!("BUTTON"), "Copy ảnh vào clipboard", check, none, ID_COPY, Kind::Control),
             lbl_after: self.add(st, "Vùng chọn ở chế độ thường", s, none, 0, Kind::Label),
@@ -516,7 +547,14 @@ impl Settings {
         mv(h.ocr_pack, x0, y, 150.0, 28.0);
         y += 38.0;
         mv(h.ocr_auto, x0, y, col, 22.0);
-        let left_bottom = y + 22.0;
+        y += 40.0;
+        section(h.sec_auto, x0, &mut y);
+        mv(h.auto_on, x0, y, col, 22.0);
+        y += 26.0;
+        mv(h.auto_img, x0, y, col, 22.0);
+        y += 28.0;
+        mv(h.hint_auto, x0, y, col, 34.0);
+        let left_bottom = y + 34.0;
 
         // Cột phải.
         let mut y = 58.0;
@@ -618,6 +656,11 @@ impl Settings {
         set_combo(h.pv_size, ((c.preview.size as i32 - 20) / 20).clamp(0, 3));
         set_combo(h.ocr_lang, if c.ocr.language == OcrLanguage::Vi { 1 } else { 0 });
         set_checked(h.ocr_auto, c.ocr.auto_preview);
+        set_checked(h.auto_on, c.auto_detect.enabled);
+        set_checked(h.auto_img, c.auto_detect.image_edges);
+        unsafe {
+            let _ = EnableWindow(h.auto_img, c.auto_detect.enabled);
+        }
         let (status, button, enabled) = match v.ocr_vi {
             OcrViState::Ready => ("Gói dữ liệu tiếng Việt: đã cài.".to_string(), "Xoá gói".to_string(), true),
             OcrViState::NoPack => (
@@ -883,6 +926,10 @@ impl Handler for Settings {
                         emit(if ready { Action::OcrRemove } else { Action::OcrDownload });
                     }
                     (ID_OCR_AUTO, BN_CLICKED) => self.patch(json!({ "ocr": { "autoPreview": checked(h.ocr_auto) } })),
+                    (ID_AUTO_ON, BN_CLICKED) => self.patch(json!({ "autoDetect": { "enabled": checked(h.auto_on) } })),
+                    (ID_AUTO_IMG, BN_CLICKED) => {
+                        self.patch(json!({ "autoDetect": { "imageEdges": checked(h.auto_img) } }))
+                    }
                     (ID_HIDEUI, BN_CLICKED) => self.patch(json!({ "hideUiDuringCapture": checked(h.hideui) })),
                     (ID_AFTER, CBN_SELCHANGE) => {
                         let v = if combo_sel(h.after) == 1 { "keep" } else { "close" };

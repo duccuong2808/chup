@@ -164,6 +164,15 @@ Freeze (đo 2026-11-01, cùng VM ARM64 chạy x64 qua giả lập, 1 màn hình 
 - Lưu vùng 717×844: 40–93 ms.
 - RAM (private): 25 MB trước, 81 MB trong phiên (ảnh + DIB cỡ màn hình), về 25 MB ngay khi đóng.
 
+Rảnh, đo lại 2026-11-03 trên máy x64 thật (Intel Core Ultra 7 255H, Windows 11, 125%), bản có Preview, OCR,
+tự chọn vùng, đa ngôn ngữ (chup-3p3): vừa mở private working set 1,9 MB, commit 2,5 MB, 6 luồng; sau 15 s tự trả RAM
+còn **0,1–0,2 MB**, 3 luồng; CPU **0%** (2 phút không tăng ms nào, cả khởi động tốn 47 ms). Lúc rảnh không có timer
+định kỳ, chỉ luồng OCR thức dậy 5 phút/lần.
+
+Đo lúc đang dùng: `chup.log` ghi dòng `mem <mốc>: ws …, commit …, đỉnh ws …` ở các mốc (mở overlay, chụp và lưu
+xong, hiện / xong / huỷ Freeze, mở / đóng Preview, OCR xong, trước / sau khi trả RAM). `chup-ocr.exe` là process riêng
+(xem mục OCR ở trên), không tính vào đây.
+
 Cách giữ RAM thấp:
 - Bộ nhớ đồ hoạ chỉ cấp khi cửa sổ đang hiện: DIB overlay (cỡ màn hình, ~29 MB ở 4K) và DIB
   frame giải phóng khi ẩn / khi thôi kéo.

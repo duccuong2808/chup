@@ -159,6 +159,7 @@ thẻ nền trắng trên nền xám. Cửa sổ cỡ cố định theo trang ca
 | Chụp ảnh | Tự động chọn vùng (SPEC 16); sau khi chụp (copy clipboard, giữ/đóng vùng chọn); ẩn toolbar/stack lúc chụp |
 | Copy chữ (OCR) | Ngôn ngữ, trạng thái + nút tải/xoá gói tiếng Việt, tự nhận diện khi mở Preview |
 | Stack và Preview | Cạnh và màn hình của stack; các mục Preview (SPEC 17.4) |
+| Giới thiệu | Tên, phiên bản (+ commit nếu CI build), mô tả; nút Trang dự án, Mở thư mục log; nguồn engine/dữ liệu OCR tiếng Việt, nút Giấy phép (`NOTICE-ocr.txt`) |
 
 Các mục:
 - **Folder lưu ảnh**: nút chọn folder (dialog), kèm đường dẫn hiện tại.
@@ -487,8 +488,8 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-ocr-design.md`.
 
 - Lấy text (tiếng Việt có dấu và tiếng Anh) từ một shot, hoặc trực tiếp từ vùng chọn, rồi copy vào clipboard.
 - **Offline hoàn toàn**: không gửi ảnh lên cloud.
-- **Installer không phình**: gói OCR tiếng Việt không nằm trong installer. Người dùng chọn tải nó **khi cài**
-  (ô "OCR tiếng Việt", mặc định bỏ trống), hoặc tải sau trong app.
+- **Hai bộ cài** (chup-0oa, 2026-11-03): **Full** có sẵn OCR tiếng Việt (engine + dữ liệu, không cần mạng);
+  **Lite** chỉ có `chup.exe`, OCR tiếng Việt tải **khi cài** (ô "OCR tiếng Việt", mặc định bỏ trống) hoặc sau trong app.
 
 ### 15.2 UX
 
@@ -504,8 +505,8 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-ocr-design.md`.
   - Chọn vùng xong là OCR luôn, không hiện toolbar.
 - **Không tìm thấy chữ**: hiện toast "Không tìm thấy chữ", clipboard giữ nguyên.
 - **Đang OCR**: hiện spinner trên Preview hoặc toolbar, có thể huỷ.
-- **Bộ cài**: trang chọn thành phần có ô **"OCR tiếng Việt"** (mô tả ghi rõ tải thêm ~4,4 MB), mặc định bỏ trống. Tích thì bộ cài
-  chạy `chup.exe --install-ocr` (cửa sổ tải có tiến trình). Tải lỗi vẫn cài xong app.
+- **Bộ cài Lite**: trang chọn thành phần có ô **"OCR tiếng Việt"** (mô tả ghi rõ tải thêm ~11 MB), mặc định bỏ trống. Tích thì
+  bộ cài chạy `chup.exe --install-ocr` (cửa sổ tải có tiến trình). Tải lỗi vẫn cài xong app. Bộ cài Full không có ô này.
 - **Lần đầu dùng tiếng Việt, chưa có gói** (hoặc nút "Tải gói" trong Cài đặt):
   - Hỏi người dùng có tải gói OCR không, ghi rõ dung lượng. Tải xong thì OCR luôn ảnh vừa yêu cầu.
   - Tải có thanh tiến trình, verify checksum.
@@ -546,17 +547,18 @@ pub trait OcrEngine {
 
 - **"Tiếng Anh"**: `Windows.Media.Ocr` (WinRT qua crate `windows`) chạy trong `chup.exe`.
 - **"Tiếng Việt + Anh"**: exe phụ **`chup-ocr.exe`** (crate `crates/ocr-helper`, ngoài workspace) link tĩnh Tesseract 5,
-  do CI của Chup build và **nằm trong bộ cài** cạnh `chup.exe`. Chup chạy nó như process con, gửi ảnh xám qua pipe
+  do CI của Chup build. Chup chạy nó như process con, gửi ảnh xám qua pipe
   (khung tin ở crate `crates/ocr-proto`), nhận lại các dòng. Process gắn Job Object `KILL_ON_JOB_CLOSE`.
-- **Gói tiếng Việt** = `vie.traineddata` + `eng.traineddata` (~4,4 MB) tải **từ GitHub cộng đồng**
-  (`tesseract-ocr/tessdata_fast`, ghim commit; repo Chup không phát hành file OCR). `chup.exe` ghi cứng tên, kích thước,
-  SHA-256 từng file. Cài vào `%LOCALAPPDATA%\app.chup.desktop\ocr\vi-<N>\` qua thư mục tạm rồi rename; lỗi thì xoá
-  phần dở dang. Tải bằng WinHTTP. Logic cài ở `core::ocr::pack` (test được).
-- **Engine nhúng** (chup-7bc, thiết kế `docs/plans/2026-11-03-ocr-embed-design.md`): `chup.exe` của CI nhúng sẵn
-  `chup-ocr.exe` + `NOTICE-ocr.txt`. Không có `chup-ocr.exe` cạnh `chup.exe` (chạy exe rời), hoặc bản cạnh đó khác PROTO
-  (chỉ thay `chup.exe`), thì app giải nén bản nhúng vào `%LOCALAPPDATA%\app.chup.desktop\ocr\helper-<hash>\` (lúc cần,
-  qua thư mục tạm, kiểm SHA-256) rồi chạy nó. Không cần tải exe: repo private nên không có nguồn công khai để tải.
-- **`chup.exe --install-ocr`**: cửa sổ tải (tiến trình, Huỷ), exit code 0 xong / 1 lỗi / 2 huỷ. Bộ cài và app dùng chung.
+- **Hai gói tải về**, ghim trong `crates/core/src/ocr/manifest.json` (tên, kích thước, SHA-256 từng file; CI đọc cùng file),
+  thiết kế `docs/plans/2026-11-03-ocr-full-lite-design.md`:
+  - **Dữ liệu** `vie` + `eng.traineddata` (~4,4 MB) từ `tesseract-ocr/tessdata_fast` (ghim commit), vào `ocr\vi-<N>\`.
+  - **Engine** `chup-ocr.exe` + `NOTICE-ocr.txt` (~6,6 MB) từ Release `ocr-engine-v<N>` của repo Chup (public), vào
+    `ocr\engine-v<N>\`. Chỉ tải khi không có `chup-ocr.exe` cạnh `chup.exe` (bộ cài Lite, chạy exe rời).
+  - Thư mục gốc `%LOCALAPPDATA%\app.chup.desktop\ocr\`. Cài qua thư mục tạm rồi rename; lỗi thì xoá phần dở dang.
+    Tải bằng WinHTTP (theo redirect của GitHub Release). Logic cài ở `core::ocr::pack` (test được).
+- **Chọn engine khi chạy**: `chup-ocr.exe` cạnh `chup.exe` (bộ cài Full) trước; không có, hoặc khác PROTO, thì bản đã tải.
+- **`chup.exe --install-ocr`**: tải những gì còn thiếu, cửa sổ tải (tiến trình, Huỷ), exit code 0 xong / 1 lỗi / 2 huỷ.
+  Bộ cài Lite và app dùng chung.
 - **Lazy-load**: exe phụ chỉ chạy khi cần, giữ sống giữa các lần OCR, **tắt sau 5 phút không dùng** để trả RAM.
   Huỷ job đang chạy = kill process. Crash hoặc quá 15 s = kill, báo lỗi.
 - **Luồng chạy**: 1 worker thread giữ cả 2 engine. Hàng đợi chỉ giữ 1 job; job mới tới thì thay job đang chờ.
@@ -604,7 +606,7 @@ pub trait OcrEngine {
 | Vùng nhỏ (khoảng 5 dòng) | ≤ 500 ms |
 | Vùng 1920×1080 dày chữ | ≤ 2 s |
 | RAM thêm khi model đang load | ≤ 150 MB, về mức Phase 1 sau khi giải phóng |
-| Dung lượng installer | Không tăng so với Phase 1 (chỉ thêm `chup-ocr.exe` ~1,5–2 MB nén; dữ liệu tiếng Việt ~4,4 MB tải riêng). `chup.exe` nặng thêm ~6,4 MB do nhúng engine |
+| Dung lượng installer | Lite: như Phase 1 (~1 MB nén). Full: thêm engine + dữ liệu (~4–5 MB nén, đo ở CI). `chup.exe` ~1,5 MB |
 
 ### 15.8 Nghiệm thu
 

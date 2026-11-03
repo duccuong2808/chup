@@ -61,6 +61,8 @@ pub enum Action {
     PauseHotkeys,
     ResumeHotkeys,
     OpenSaveDir,
+    /// Mở file, thư mục hoặc URL bằng app mặc định (trang Giới thiệu).
+    Open(std::path::PathBuf),
     DisplayChanged,
     FreezeTimerFired,
     /// Mục tray "Chụp đóng băng", sau khi chờ menu tray tắt hẳn.
@@ -171,8 +173,7 @@ impl App {
             freeze_wins: None,
             overlay_excluded: false,
         };
-        let keep = ocr::embedded_dir_name();
-        pack::cleanup_old(&app.ocr_root, keep.as_deref().as_slice());
+        pack::cleanup_old(&app.ocr_root);
         let st = ocr::vi_state(&app.ocr_root);
         app.model.set_ocr_vi(st);
 
@@ -301,6 +302,10 @@ impl App {
                 vec![Effect::ConfigChanged]
             }
             Action::OpenSaveDir => self.open_save_dir(),
+            Action::Open(target) => match util::shell_open(&target) {
+                Ok(()) => vec![],
+                Err(e) => vec![Effect::Toast(Toast::error(e))],
+            },
             Action::FreezeTimerFired => self.model.freeze_timer_fired(),
             Action::FreezeNow => self.model.start_freeze(),
             Action::FreezeGrabbed(res) => {
@@ -391,8 +396,10 @@ impl App {
             Action::OcrRemove => {
                 self.ocr.stop_helper();
                 let mut fx = self.model.ocr_abort();
-                fx.push(match pack::remove(&self.ocr_root) {
-                    Ok(()) => Effect::Toast(Toast::info("Đã xoá gói OCR tiếng Việt")),
+                // Xoá những gì đã tải (dữ liệu, engine); engine cạnh chup.exe của bộ cài Full thì giữ.
+                let r = pack::data().remove(&self.ocr_root).and(pack::engine().remove(&self.ocr_root));
+                fx.push(match r {
+                    Ok(()) => Effect::Toast(Toast::info("Đã xoá OCR tiếng Việt")),
                     Err(e) => Effect::Toast(Toast::error(e)),
                 });
                 fx.extend(self.model.set_ocr_vi(ocr::vi_state(&self.ocr_root)));
@@ -403,7 +410,7 @@ impl App {
                     let had_pending = self.model.ocr_has_pending();
                     let mut fx = self.model.ocr_pack_installed(ocr::vi_state(&self.ocr_root));
                     if !had_pending {
-                        fx.push(Effect::Toast(Toast::info("Đã tải gói OCR tiếng Việt")));
+                        fx.push(Effect::Toast(Toast::info("Đã tải OCR tiếng Việt")));
                     }
                     fx
                 } else {
@@ -930,6 +937,9 @@ impl App {
             ),
             exclusion_ok: self.model.capture_exclusion_ok,
             ocr_vi: self.model.ocr_vi,
+            ocr_download: ocr::download_size(&self.ocr_root),
+            ocr_engine: ocr::engine_info(&self.ocr_root),
+            ocr_root: self.ocr_root.clone(),
         }
     }
 

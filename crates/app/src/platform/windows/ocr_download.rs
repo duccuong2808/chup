@@ -1,4 +1,5 @@
-//! Tải gói OCR tiếng Việt (dữ liệu tessdata_fast từ GitHub cộng đồng, `core::ocr::pack`).
+//! Tải những gì OCR tiếng Việt còn thiếu (`core::ocr::pack`): dữ liệu tessdata_fast (GitHub cộng đồng) và, nếu không có
+//! `chup-ocr.exe` cạnh `chup.exe` (bộ cài Lite, chạy exe rời), engine từ Release `ocr-engine-vN` của repo Chup.
 //!
 //! Một đường tải duy nhất cho cả bộ cài (`chup.exe --install-ocr`) và app (nút Cài đặt, câu hỏi khi bấm [T]):
 //! TaskDialog có thanh tiến trình và nút Huỷ; lỗi thì hỏi Thử lại. Các hộp thoại ở đây là modal, nên app gọi
@@ -14,7 +15,7 @@ use std::{
 
 use chup_core::{
     config,
-    ocr::pack::{self, Fetch, InstallError},
+    ocr::pack::{self, Fetch, InstallError, Pack},
 };
 use windows::{
     core::{w, HRESULT, PCWSTR},
@@ -40,7 +41,7 @@ use windows::{
     },
 };
 
-use super::util::wide;
+use super::{ocr, util::wide};
 
 const TITLE: PCWSTR = w!("Chup – OCR tiếng Việt");
 
@@ -65,13 +66,14 @@ pub fn run(ocr_root: &Path, ask: bool) -> Option<Outcome> {
     if RUNNING.swap(true, Ordering::AcqRel) {
         return None;
     }
-    let out = if ask && !confirm() { Outcome::Declined } else { install_with_retry(ocr_root) };
+    let out = if ask && !confirm(ocr_root) { Outcome::Declined } else { install_with_retry(ocr_root) };
     RUNNING.store(false, Ordering::Release);
     log::info!("ocr: tải gói tiếng Việt: {out:?}");
     Some(out)
 }
 
-/// `chup.exe --install-ocr` (bộ cài gọi): tải gói, xong thì chọn OCR tiếng Việt. Exit code 0 xong / 1 lỗi / 2 huỷ.
+/// `chup.exe --install-ocr` (bộ cài Lite gọi): tải những gì còn thiếu, xong thì chọn OCR tiếng Việt.
+/// Exit code 0 xong / 1 lỗi / 2 huỷ.
 pub fn install_mode(ocr_root: &Path, config_file: &Path, default_save_dir: &Path) -> i32 {
     match install_with_retry(ocr_root) {
         Outcome::Installed => {
@@ -87,10 +89,10 @@ pub fn install_mode(ocr_root: &Path, config_file: &Path, default_save_dir: &Path
     }
 }
 
-fn confirm() -> bool {
+fn confirm(ocr_root: &Path) -> bool {
     let text = wide(&format!(
-        "OCR tiếng Việt cần tải gói dữ liệu ({}) từ GitHub (tesseract-ocr/tessdata_fast).\n\nTải về bây giờ?",
-        pack::size_label()
+        "OCR tiếng Việt cần tải thêm {} từ GitHub.\n\nTải về bây giờ?",
+        pack::size_label(ocr::download_size(ocr_root))
     ));
     let r = unsafe {
         MessageBoxW(None, PCWSTR(text.as_ptr()), TITLE, MB_YESNO | MB_ICONQUESTION | MB_TOPMOST | MB_SETFOREGROUND)
@@ -121,6 +123,7 @@ fn install_with_retry(ocr_root: &Path) -> Outcome {
 
 struct Progress {
     done: AtomicU64,
+    total: u64,
     cancel: AtomicBool,
     result: Mutex<Option<Result<(), InstallError>>>,
 }
@@ -147,7 +150,7 @@ unsafe extern "system" fn callback(
         },
         TDN_TIMER => {
             let done = p.done.load(Ordering::Relaxed);
-            let total = pack::total_size().max(1);
+            let total = p.total.max(1);
             let text = wide(&format!("Đã tải {} / {} MB", mb(done), mb(total)));
             unsafe {
                 SendMessageW(hwnd, TDM_SET_PROGRESS_BAR_POS.0 as u32, Some(WPARAM((done * RANGE / total) as usize)), None);
@@ -173,17 +176,20 @@ fn download_dialog(ocr_root: &Path) -> Result<(), InstallError> {
     if FETCHING.swap(true, Ordering::AcqRel) {
         return Err(InstallError::Busy);
     }
-    let progress = Arc::new(Progress { done: AtomicU64::new(0), cancel: AtomicBool::new(false), result: Mutex::new(None) });
+    let packs = ocr::missing_packs(ocr_root);
+    let total = packs.iter().map(|p| p.total_size()).sum();
+    let progress =
+        Arc::new(Progress { done: AtomicU64::new(0), total, cancel: AtomicBool::new(false), result: Mutex::new(None) });
     let mut worker = Some({
         let p = progress.clone();
         let root = ocr_root.to_path_buf();
         std::thread::spawn(move || {
-            let r = pack::install(&mut WinHttp, &root, &mut |d, _| p.done.store(d, Ordering::Relaxed), &p.cancel);
+            let r = install_all(&packs, &root, &p);
             *p.result.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
             FETCHING.store(false, Ordering::Release);
         })
     });
-    let instruction = wide("Đang tải gói OCR tiếng Việt");
+    let instruction = wide("Đang tải OCR tiếng Việt");
     let content = wide("Đang kết nối…");
     let cfg = TASKDIALOGCONFIG {
         cbSize: std::mem::size_of::<TASKDIALOGCONFIG>() as u32,
@@ -215,6 +221,17 @@ fn download_dialog(ocr_root: &Path) -> Result<(), InstallError> {
         // Nó dừng ở đoạn kế tiếp và tự xoá thư mục tạm; `FETCHING` chặn lần tải mới cho tới lúc đó.
         None => Err(InstallError::Cancelled),
     }
+}
+
+/// Cài lần lượt các gói, tiến trình cộng dồn.
+fn install_all(packs: &[&'static Pack], root: &Path, p: &Progress) -> Result<(), InstallError> {
+    let mut before = 0;
+    for pack in packs {
+        log::info!("ocr: tải gói {} ({})", pack.dir, pack.source);
+        pack.install(&mut WinHttp, root, &mut |d| p.done.store(before + d, Ordering::Relaxed), &p.cancel)?;
+        before += pack.total_size();
+    }
+    Ok(())
 }
 
 // ---------- WinHTTP ----------

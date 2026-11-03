@@ -1,0 +1,21 @@
+{
+  "_comment": "Các gói OCR tiếng Việt Chup tải về (core::ocr::pack). CI đọc cùng file này để đóng gói bản Full. Đổi file thì đổi cả tên thư mục (dir) để gói cũ tự bị dọn.",
+  "data": {
+    "dir": "vi-1",
+    "source": "tesseract-ocr/tessdata_fast @ 87416418 (2024-08-01)",
+    "baseUrl": "https://raw.githubusercontent.com/tesseract-ocr/tessdata_fast/87416418657359cb625c412a48b6e1d6d41c29bd/",
+    "files": [
+      { "name": "vie.traineddata", "size": 531275, "sha256": "79df64caf7bcfb2a27df5042ecb6121e196eada34da774956995747636d5bfa1" },
+      { "name": "eng.traineddata", "size": 4113088, "sha256": "7d4322bd2a7749724879683fc3912cb542f19906c83bcc1a52132556427170b2" }
+    ]
+  },
+  "engine": {
+    "dir": "engine-v1",
+    "source": "duccuong2808/chup Release ocr-engine-v1 (chup-ocr 0.2.0, Tesseract 5.5.3, proto 2)",
+    "baseUrl": "https://github.com/duccuong2808/chup/releases/download/ocr-engine-v1/",
+    "files": [
+      { "name": "chup-ocr.exe", "size": 6669824, "sha256": "0a88a61f56d56b7b1da5cb2fcc55f2499ff29de1daed432923304cedfe1be3b8" },
+      { "name": "NOTICE-ocr.txt", "size": 291106, "sha256": "93837a7d5ee13c071f49f7fae2a5550b195e4a2fcd55f3ac655b387221aaf72d" }
+    ]
+  }
+}

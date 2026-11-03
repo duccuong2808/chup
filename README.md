@@ -21,21 +21,25 @@ và kéo thả thẳng được sang app khác. Đặc tả đầy đủ ở [SP
 
 ```powershell
 cargo build --release -p chup        # target\release\chup.exe
-# chup-ocr.exe (OCR tiếng Việt): cần vcpkg `tesseract:x64-windows-static` và biến VCPKG_ROOT
+# chup-ocr.exe (OCR tiếng Việt, chỉ cần khi sửa engine): vcpkg `tesseract:x64-windows-static` và biến VCPKG_ROOT
 cargo build --release --manifest-path crates\ocr-helper\Cargo.toml
-# Nhúng chup-ocr.exe vào chup.exe (CI làm vậy): đặt CHUP_OCR_DIR = thư mục có chup-ocr.exe + NOTICE-ocr.txt (đường dẫn tuyệt đối)
-$env:CHUP_OCR_DIR = "<thư mục>"; cargo build --release -p chup
-makensis /DVERSION=0.2.0 /DEXE=target\release\chup.exe /DOCR_DIR=<thư mục có chup-ocr.exe + NOTICE-ocr.txt> installer\chup.nsi
+# Bộ cài Lite (chỉ chup.exe)
+makensis /DLITE /DVERSION=0.2.0 /DEXE=target\release\chup.exe installer\chup.nsi
+# Bộ cài Full: lấy đúng engine + dữ liệu ghim trong crates\core\src\ocr\manifest.json (kiểm SHA-256)
+installer\fetch-ocr.ps1 -Pack engine -Out ocr-dist
+installer\fetch-ocr.ps1 -Pack data -Out ocr-data          # in ra tên thư mục gói, vd. vi-1
+makensis /DVERSION=0.2.0 /DEXE=target\release\chup.exe /DOCR_DIR=ocr-dist /DDATA_DIR=ocr-data /DDATA_PACK=vi-1 installer\chup.nsi
 ```
 
 - Installer cài cho user hiện tại vào `%LOCALAPPDATA%\Chup`, không cần quyền admin.
   Chạy với `/S` để cài im lặng.
-- Mục **"OCR tiếng Việt"** trong installer (mặc định bỏ trống) tải dữ liệu `vie`/`eng` (~4,4 MB) từ
-  [tesseract-ocr/tessdata_fast](https://github.com/tesseract-ocr/tessdata_fast) bằng `chup.exe --install-ocr`.
-  Không tích thì tải sau trong Cài đặt. Engine `chup-ocr.exe` luôn nằm trong installer.
-- `chup.exe` của CI còn **nhúng sẵn `chup-ocr.exe`**: chạy `chup.exe` rời (không qua installer) hoặc chỉ thay mỗi
-  `chup.exe` mới vẫn OCR tiếng Việt được, không phải cài lại. Lần đầu cần, app giải nén engine vào
-  `%LOCALAPPDATA%\app.chup.desktop\ocr\helper-<hash>\` (thiết kế: `docs/plans/2026-11-03-ocr-embed-design.md`).
+- Hai bộ cài (thiết kế `docs/plans/2026-11-03-ocr-full-lite-design.md`):
+  - **Full** (`Chup_<ver>_x64-setup.exe`): có sẵn OCR tiếng Việt, không cần mạng.
+  - **Lite** (`Chup_<ver>_x64-setup-lite.exe`): chỉ `chup.exe`. Mục **"OCR tiếng Việt"** (mặc định bỏ trống) tải
+    engine `chup-ocr.exe` (Release [`ocr-engine-v1`](https://github.com/duccuong2808/chup/releases/tag/ocr-engine-v1))
+    và dữ liệu `vie`/`eng` từ [tesseract-ocr/tessdata_fast](https://github.com/tesseract-ocr/tessdata_fast), ~11 MB,
+    bằng `chup.exe --install-ocr`. Không tích thì tải sau trong Cài đặt.
+  - Chạy `chup.exe` rời (không qua bộ cài) giống bản Lite: thiếu gì thì tải nấy.
 - Chup chạy nền ở khay hệ thống, **không mở cửa sổ nào khi khởi động**.
   - Nhấn `Ctrl+Alt+A` hoặc click trái icon tray để chọn vùng.
   - Click phải icon tray để mở menu (Cài đặt, Thoát…).
@@ -57,10 +61,21 @@ Workflow `.github/workflows/build.yml` chạy trên `windows-latest`:
 
 - Mỗi lần push / PR: job `check` (`cargo test`, `cargo clippy -D warnings`), job `ocr-helper`
   (vcpkg `tesseract:x64-windows-static`, build + test `chup-ocr.exe` với ảnh của spike, gom license),
-  rồi job `build` (`cargo build --release` nhúng `chup-ocr.exe` + NSIS kèm `chup-ocr.exe`). Kết quả là artifact
-  `chup-windows-<sha>` gồm installer, `chup.exe`, `chup-ocr.exe` (tab Actions → chọn run → Artifacts).
+  rồi job `build` (`cargo build --release`, lấy engine + dữ liệu theo manifest, NSIS Full và Lite). Kết quả là
+  artifact `chup-windows-<sha>` gồm 2 installer và `chup.exe` (tab Actions → chọn run → Artifacts).
 - Push tag `v*` (vd: `git tag v0.2.0 && git push origin v0.2.0`): tạo thêm GitHub Release dạng
   draft kèm installer. Nhớ đổi `version` trong `Cargo.toml` (workspace) cho khớp tag trước.
+
+### Phát hành engine OCR
+
+Engine `chup-ocr.exe` không build lại mỗi lần phát hành Chup: app và bộ cài Full dùng đúng file ghim trong
+`crates/core/src/ocr/manifest.json`. Chỉ khi sửa `crates/ocr-helper` hoặc `crates/ocr-proto`:
+
+1. Push, lấy artifact `chup-ocr` của job `ocr-helper` (`chup-ocr.exe` + `NOTICE-ocr.txt`).
+2. Tạo Release `ocr-engine-v<N+1>` (không đánh dấu latest; tag không bắt đầu bằng `v` nên không kích hoạt workflow)
+   và đính kèm 2 file đó.
+3. Sửa mục `engine` trong manifest: `dir` = `engine-v<N+1>`, `baseUrl`, `size` + `sha256` từng file.
+   Đổi PROTO thì bắt buộc làm, vì `chup.exe` mới không nói chuyện được với engine cũ.
 
 ## Dùng nhanh
 
@@ -256,9 +271,10 @@ tự đặt ảnh, nên không do Chup. Muốn kiểm tra clipboard thì phải 
    `docs/plans/2026-11-03-autoselect-spike.md`. Checklist test: thiết kế mục 7.
 8. **Cài đặt chia trang** (chup-ck1): mới chụp màn hình 5 trang trên Windows 11 x64 thật (125%), đổi trang không còn
    sót control. Chưa thử tay: Tab/phím mũi tên, ghi phím tắt, danh sách xổ của combobox, đổi DPI khi kéo sang màn khác.
-9. **Engine OCR nhúng** (chup-7bc): unit test giải nén (byte giả) và build có nhúng (exe giả) trên Windows: trang OCR
-   hết báo thiếu engine. Chưa chạy với `chup-ocr.exe` thật của CI, chưa biết Symantec Endpoint có chặn exe giải nén
-   vào `%LOCALAPPDATA%` không.
+9. **Bộ cài Full / Lite** (chup-0oa): `chup.exe --install-ocr` trên Windows 11 x64 thật tải engine từ Release
+   `ocr-engine-v1` (WinHTTP theo redirect 302 của GitHub), đúng SHA-256, `chup-ocr.exe --version` chạy được từ
+   `%LOCALAPPDATA%` (Symantec không chặn). Chưa chạy: 2 bộ cài NSIS (máy dev không có makensis, CI build), Lite cài
+   có tick OCR, Full chạy không mạng.
 
 **Vấn đề đang theo dõi:** kéo thumbnail đôi khi không bắt đầu kéo. Trên VM, nhấn chuột ngay khi
 vừa rê vào thumbnail thì không kéo được (0/4); dừng ≥ 0,15 s thì 9/9. Có 1 lần lỗi dù đã dừng

@@ -82,10 +82,8 @@ pub struct OcrJob {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum OcrViState {
     Ready,
-    /// Chưa tải dữ liệu tessdata.
+    /// Còn thiếu dữ liệu tessdata hoặc engine `chup-ocr.exe` (bộ cài Lite, chạy exe rời): cần tải.
     NoPack,
-    /// Thiếu `chup-ocr.exe` cạnh `chup.exe` (chạy exe rời, không qua bộ cài).
-    NoHelper,
 }
 
 /// Phiên Freeze (SPEC 14.3). Vùng đang chọn là state của overlay, Model không giữ.
@@ -541,11 +539,6 @@ impl Model {
                 OcrViState::NoPack => {
                     self.ocr_pending = Some(source);
                     return vec![Effect::AskOcrDownload];
-                }
-                OcrViState::NoHelper => {
-                    return vec![Effect::Toast(Toast::error(
-                        "Thiếu chup-ocr.exe nên chưa OCR tiếng Việt được. Hãy cài Chup bằng bộ cài.",
-                    ))]
                 }
             }
         }
@@ -1135,15 +1128,6 @@ mod tests {
     }
 
     #[test]
-    fn ocr_vietnamese_without_helper_explains() {
-        let mut m = model();
-        m.config.ocr.language = OcrLanguage::Vi;
-        m.ocr_vi = OcrViState::NoHelper;
-        let fx = m.ocr_request(OcrSource::Image { scale: 1.0 });
-        assert!(matches!(&fx[..], [Effect::Toast(t)] if t.message.contains("chup-ocr.exe")));
-    }
-
-    #[test]
     fn preview_background_ocr_sends_text_without_spinner() {
         let mut m = model();
         let p = PathBuf::from("/pics/a.png");
@@ -1201,8 +1185,6 @@ mod tests {
         let mut m = model();
         m.config.ocr.language = OcrLanguage::Vi;
         assert!(m.preview_shown(PathBuf::from("/a.png")).is_empty(), "thiếu gói: không hỏi");
-        m.ocr_vi = OcrViState::NoHelper;
-        assert!(m.preview_shown(PathBuf::from("/a.png")).is_empty());
         let mut m = model();
         m.config.ocr.auto_preview = false;
         assert!(m.preview_shown(PathBuf::from("/a.png")).is_empty(), "tắt tự nhận diện");

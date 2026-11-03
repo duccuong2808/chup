@@ -1,5 +1,8 @@
 # Thiết kế: nhúng `chup-ocr.exe` vào `chup.exe` (chup-7bc)
 
+> **Đã thay (2026-11-03)** bởi `2026-11-03-ocr-full-lite-design.md`: repo chuyển public, engine tải từ GitHub Release,
+> `chup.exe` không nhúng engine nữa. Giữ file này để biết lý do lịch sử.
+
 Ngày 2026-11-03. Bổ sung cho `2026-11-01-ocr-design.md`.
 
 ## Vấn đề

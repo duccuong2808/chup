@@ -63,6 +63,7 @@ use windows::{
 
 use super::{
     app::Action,
+    ocr::EngineInfo,
     util::wide,
     win::{self, emit, hinstance, Handler},
 };
@@ -75,7 +76,14 @@ pub struct SettingsView {
     pub preview: String,
     pub exclusion_ok: bool,
     pub ocr_vi: OcrViState,
+    /// Byte còn phải tải để OCR tiếng Việt chạy được (0 = đủ).
+    pub ocr_download: u64,
+    pub ocr_engine: EngineInfo,
+    pub ocr_root: PathBuf,
 }
+
+/// Trang dự án (trang Giới thiệu).
+const PROJECT_URL: &str = "https://github.com/duccuong2808/chup";
 
 const ID_PICK: u16 = 101;
 const ID_OPEN: u16 = 102;
@@ -100,6 +108,9 @@ const ID_OCR_AUTO: u16 = 120;
 const ID_AUTO_ON: u16 = 121;
 const ID_AUTO_IMG: u16 = 122;
 const ID_NAV: u16 = 123;
+const ID_ABOUT_WEB: u16 = 124;
+const ID_ABOUT_LOG: u16 = 125;
+const ID_ABOUT_NOTICE: u16 = 126;
 const TIMER_PATTERN: usize = 1;
 
 const RECORDING_TEXT: &str = "Nhấn tổ hợp phím…";
@@ -136,14 +147,16 @@ enum Page {
     Capture,
     Ocr,
     StackPreview,
+    About,
 }
 
-const PAGES: [(Page, &str); 5] = [
+const PAGES: [(Page, &str); 6] = [
     (Page::General, "Chung"),
     (Page::Hotkeys, "Phím tắt"),
     (Page::Capture, "Chụp ảnh"),
     (Page::Ocr, "Copy chữ (OCR)"),
     (Page::StackPreview, "Stack và Preview"),
+    (Page::About, "Giới thiệu"),
 ];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -285,6 +298,15 @@ struct Handles {
     lbl_pv_size: HWND,
     hint_pv_size: HWND,
     pv_size: HWND,
+    // Giới thiệu
+    about_name: HWND,
+    about_ver: HWND,
+    about_desc: HWND,
+    about_web: HWND,
+    about_log: HWND,
+    sec_about_ocr: HWND,
+    about_engine: HWND,
+    about_notice: HWND,
 }
 
 thread_local! {
@@ -344,6 +366,42 @@ fn current_mods() -> Mods {
         shift: down(VK_SHIFT.0),
         win: down(VK_LWIN.0) || down(VK_RWIN.0),
     }
+}
+
+/// "Phiên bản 0.2.0 · commit 2f451f1" (commit chỉ có ở bản CI build).
+fn version_text() -> String {
+    let commit = env!("CHUP_COMMIT");
+    if commit.is_empty() {
+        format!("Phiên bản {} (bản build tay)", env!("CARGO_PKG_VERSION"))
+    } else {
+        format!("Phiên bản {} · commit {commit}", env!("CARGO_PKG_VERSION"))
+    }
+}
+
+/// File giấy phép đi cùng engine đang dùng, nếu có.
+fn notice_path(e: &EngineInfo) -> Option<PathBuf> {
+    match e {
+        EngineInfo::Installed(p) | EngineInfo::Downloaded(p) => {
+            Some(p.with_file_name(pack::ENGINE_NOTICE)).filter(|n| n.is_file())
+        }
+        EngineInfo::Missing => None,
+    }
+}
+
+/// Nguồn engine và dữ liệu OCR tiếng Việt, cho trang Giới thiệu.
+fn engine_text(v: &SettingsView) -> String {
+    let engine = match &v.ocr_engine {
+        EngineInfo::Installed(_) => "Engine: chup-ocr.exe cài cùng Chup (bộ cài Full).".to_string(),
+        EngineInfo::Downloaded(_) => format!("Engine: đã tải từ {}.", pack::engine().source),
+        EngineInfo::Missing => "Engine: chưa có (tải ở trang Copy chữ).".to_string(),
+    };
+    let d = pack::data();
+    let data = if d.is_installed(&v.ocr_root) {
+        format!("Dữ liệu: {}.", d.source)
+    } else {
+        "Dữ liệu: chưa tải.".to_string()
+    };
+    format!("Tesseract, giấy phép Apache-2.0. {engine}\n{data}")
 }
 
 /// Chiều cao (px) chữ của control khi xuống dòng trong bề rộng `width` px. Chữ rỗng thì 0.
@@ -626,6 +684,24 @@ impl Settings {
         h.hint_pv_size = self.add(st, "Kéo mép hoặc lăn chuột để đổi.", s, none, 0, Kind::Hint);
         h.pv_size = self.add(cb, "", combo, none, ID_PV_SIZE, Kind::Control);
 
+        self.building.set(Some(Page::About));
+        h.about_name = self.add(st, "Chup", s, none, 0, Kind::Title);
+        h.about_ver = self.add(st, &version_text(), s, none, 0, Kind::Label);
+        h.about_desc = self.add(
+            st,
+            "Chụp màn hình theo vùng cho Windows: stack ảnh kéo thả, chụp đóng băng, Preview, copy chữ từ ảnh.",
+            s,
+            none,
+            0,
+            Kind::Hint,
+        );
+        h.about_web = self.add(bt, "Trang dự án", button, none, ID_ABOUT_WEB, Kind::Control);
+        h.about_log = self.add(bt, "Mở thư mục log", button, none, ID_ABOUT_LOG, Kind::Control);
+        h.sec_about_ocr = self.add(st, "OCR tiếng Việt", s, none, 0, Kind::Section);
+        h.about_engine = self.add(st, "", s, none, 0, Kind::Hint);
+        h.about_notice =
+            self.add(bt, "Giấy phép Tesseract và thư viện", button, none, ID_ABOUT_NOTICE, Kind::Control);
+
         // Dòng trạng thái (lỗi chọn folder…) ở đáy, chung cho mọi trang.
         self.building.set(None);
         h.status = self.add(st, "", s, none, 0, Kind::Hint);
@@ -639,7 +715,7 @@ impl Settings {
         for (c, items) in [
             (h.after, &["Đóng vùng chọn", "Giữ vùng chọn để chụp tiếp"][..]),
             (h.edge, &["Phải", "Trái"][..]),
-            (h.ocr_lang, &["Tiếng Anh (có sẵn trong Windows)", "Tiếng Việt + Anh (cần tải gói dữ liệu)"][..]),
+            (h.ocr_lang, &["Tiếng Anh (có sẵn trong Windows)", "Tiếng Việt + Anh"][..]),
             (h.mon, &["Màn hình chính", "Màn hình đang có con trỏ"][..]),
             (h.pv_op, &["100%", "90%", "80%", "70%", "60%", "50%", "40%", "30%", "20%"][..]),
             (h.pv_pos, &["Chỗ và cỡ lần trước", "Cạnh stack", "Giữa màn hình"][..]),
@@ -845,6 +921,24 @@ impl Settings {
                     l.row(h.lbl_pv_size, Some(h.hint_pv_size), h.pv_size, COMBO_W, 24.0, true);
                     l.end_card();
                 }
+                Page::About => {
+                    l.card(None);
+                    l.full(h.about_name, 36.0);
+                    l.caption(h.about_ver);
+                    l.y += 2.0;
+                    l.text(h.about_desc, 0.0);
+                    let (ix, _) = l.inner();
+                    l.mv(h.about_web, ix, l.y, 124.0, 28.0);
+                    l.mv(h.about_log, ix + 132.0, l.y, 140.0, 28.0);
+                    l.y += 28.0 + ROW_GAP;
+                    l.end_card();
+                    l.card(Some(h.sec_about_ocr));
+                    l.text(h.about_engine, 0.0);
+                    let (ix, _) = l.inner();
+                    l.mv(h.about_notice, ix, l.y, 230.0, 28.0);
+                    l.y += 28.0 + ROW_GAP;
+                    l.end_card();
+                }
             }
             max_bottom = max_bottom.max(l.y + reserve);
             if page == current {
@@ -946,23 +1040,29 @@ impl Settings {
         unsafe {
             let _ = EnableWindow(h.auto_img, c.auto_detect.enabled);
         }
+        let engine_missing = matches!(v.ocr_engine, EngineInfo::Missing);
+        let downloaded = matches!(v.ocr_engine, EngineInfo::Downloaded(_)) || pack::data().is_installed(&v.ocr_root);
         let (status, button, enabled) = match v.ocr_vi {
-            OcrViState::Ready => ("Gói dữ liệu tiếng Việt: đã cài.".to_string(), "Xoá gói".to_string(), true),
+            OcrViState::Ready => ("OCR tiếng Việt: đã sẵn sàng.".to_string(), "Xoá bản đã tải".to_string(), downloaded),
             OcrViState::NoPack => (
-                "Gói dữ liệu tiếng Việt: chưa cài. Tải từ GitHub (tesseract-ocr/tessdata_fast).".to_string(),
-                format!("Tải gói ({})", pack::size_label()),
+                if engine_missing {
+                    "OCR tiếng Việt: chưa tải. Tải từ GitHub: engine (repo Chup) và dữ liệu (tesseract-ocr/tessdata_fast)."
+                } else {
+                    "OCR tiếng Việt: chưa tải dữ liệu. Tải từ GitHub (tesseract-ocr/tessdata_fast)."
+                }
+                .to_string(),
+                format!("Tải về ({})", pack::size_label(v.ocr_download)),
                 true,
-            ),
-            OcrViState::NoHelper => (
-                "Bản Chup này không kèm engine OCR tiếng Việt (chup-ocr.exe). Hãy cài Chup bằng bộ cài.".to_string(),
-                format!("Tải gói ({})", pack::size_label()),
-                false,
             ),
         };
         set_text(h.ocr_status, &status);
         set_text(h.ocr_pack, &button);
         unsafe {
             let _ = EnableWindow(h.ocr_pack, enabled);
+        }
+        set_text(h.about_engine, &engine_text(&v));
+        unsafe {
+            let _ = EnableWindow(h.about_notice, notice_path(&v.ocr_engine).is_some());
         }
         set_checked(h.autostart, c.launch_at_startup);
         set_checked(h.hideui, c.hide_ui_during_capture || !v.exclusion_ok);
@@ -1280,6 +1380,19 @@ impl Handler for Settings {
                     }
                     (ID_PICK, BN_CLICKED) => self.pick_folder(),
                     (ID_OPEN, BN_CLICKED) => emit(Action::OpenSaveDir),
+                    (ID_ABOUT_WEB, BN_CLICKED) => emit(Action::Open(PathBuf::from(PROJECT_URL))),
+                    (ID_ABOUT_LOG | ID_ABOUT_NOTICE, BN_CLICKED) => {
+                        let target = self.st.borrow().view.as_ref().and_then(|v| {
+                            if id == ID_ABOUT_LOG {
+                                v.ocr_root.parent().map(PathBuf::from)
+                            } else {
+                                notice_path(&v.ocr_engine)
+                            }
+                        });
+                        if let Some(t) = target {
+                            emit(Action::Open(t));
+                        }
+                    }
                     (ID_PATTERN, EN_CHANGE) if !self.updating.get() => unsafe {
                         SetTimer(Some(hwnd), TIMER_PATTERN, 400, None);
                     },

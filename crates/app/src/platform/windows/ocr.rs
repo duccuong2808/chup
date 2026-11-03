@@ -1,7 +1,7 @@
 //! Worker OCR (SPEC 15.4): 1 thread giữ 2 engine.
 //! - Tiếng Anh: `Windows.Media.Ocr` (WinRT) ngay trong process.
 //! - Tiếng Việt + Anh: exe phụ `chup-ocr.exe` (Tesseract), nói chuyện qua pipe (`chup-ocr-proto`). Exe phụ lấy ở
-//!   cạnh `chup.exe` (bộ cài đặt vào), không có hoặc là bản cũ thì dùng bản nhúng trong `chup.exe` (`ocr::helper`).
+//!   cạnh `chup.exe` (bộ cài Full), không có hoặc là bản cũ thì dùng bản đã tải (gói `engine`, `ocr::pack`).
 //!
 //! Exe phụ được giữ sống giữa các lần OCR và bị kill sau `IDLE` không dùng (trả RAM). Huỷ / thay job tiếng Việt,
 //! hoặc job quá thời gian, là kill process; lần sau chạy lại. Process gắn Job Object `KILL_ON_JOB_CLOSE` nên Chup chết
@@ -19,7 +19,7 @@ use std::{
 use chup_core::{
     config::OcrLanguage,
     model::OcrViState,
-    ocr::{self, helper, pack, Line, LineWord, TextLayout},
+    ocr::{self, pack, Line, LineWord, TextLayout},
 };
 use chup_ocr_proto::{read_json, write_frame, Hello, Request, Response, PROTO};
 use image::{GrayImage, RgbaImage};
@@ -49,32 +49,65 @@ const IDLE: Duration = Duration::from_secs(5 * 60);
 const JOB_TIMEOUT: Duration = Duration::from_secs(15);
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-// `EMBEDDED: Option<helper::Embedded>`, sinh bởi build.rs (có khi CI đặt `CHUP_OCR_DIR`).
-include!(concat!(env!("OUT_DIR"), "/ocr_embed.rs"));
-
 /// Thư mục chứa gói dữ liệu OCR (`%LOCALAPPDATA%\app.chup.desktop\ocr`).
 pub fn ocr_root(cache_dir: &Path) -> PathBuf {
     cache_dir.join("ocr")
 }
 
-/// `chup-ocr.exe` cạnh `chup.exe` (bộ cài đặt vào), nếu có.
+/// `chup-ocr.exe` cạnh `chup.exe` (bộ cài Full đặt vào), nếu có.
 fn installed_helper() -> Option<PathBuf> {
-    Some(std::env::current_exe().ok()?.parent()?.join(helper::EXE_NAME)).filter(|p| p.is_file())
+    Some(std::env::current_exe().ok()?.parent()?.join(pack::ENGINE_EXE)).filter(|p| p.is_file())
 }
 
-/// Thư mục engine nhúng cần giữ lại khi dọn thư mục OCR (`pack::cleanup_old`).
-pub fn embedded_dir_name() -> Option<String> {
-    EMBEDDED.map(|e| e.dir_name())
+/// `chup-ocr.exe` đã tải (gói `engine`), nếu có đủ.
+fn downloaded_helper(ocr_root: &Path) -> Option<PathBuf> {
+    let e = pack::engine();
+    e.is_installed(ocr_root).then(|| e.dir(ocr_root).join(pack::ENGINE_EXE))
 }
 
-/// OCR tiếng Việt dùng được chưa (kiểm tra file, rẻ). Có bản nhúng thì coi như có engine: giải nén lúc cần.
-pub fn vi_state(ocr_root: &Path) -> OcrViState {
-    if installed_helper().is_none() && EMBEDDED.is_none() {
-        OcrViState::NoHelper
-    } else if !pack::is_installed(ocr_root) {
-        OcrViState::NoPack
+/// Engine đang dùng được, cho trang Giới thiệu.
+#[derive(Clone)]
+pub enum EngineInfo {
+    /// Cạnh `chup.exe` (bộ cài Full).
+    Installed(PathBuf),
+    /// Đã tải về.
+    Downloaded(PathBuf),
+    Missing,
+}
+
+pub fn engine_info(ocr_root: &Path) -> EngineInfo {
+    if let Some(p) = installed_helper() {
+        EngineInfo::Installed(p)
+    } else if let Some(p) = downloaded_helper(ocr_root) {
+        EngineInfo::Downloaded(p)
     } else {
+        EngineInfo::Missing
+    }
+}
+
+/// Các gói còn thiếu để OCR tiếng Việt chạy được: engine (khi không có bản cạnh `chup.exe`) và dữ liệu.
+pub fn missing_packs(ocr_root: &Path) -> Vec<&'static pack::Pack> {
+    let mut v = Vec::new();
+    if installed_helper().is_none() && downloaded_helper(ocr_root).is_none() {
+        v.push(pack::engine());
+    }
+    if !pack::data().is_installed(ocr_root) {
+        v.push(pack::data());
+    }
+    v
+}
+
+/// Tổng byte cần tải (0 = đủ cả).
+pub fn download_size(ocr_root: &Path) -> u64 {
+    missing_packs(ocr_root).iter().map(|p| p.total_size()).sum()
+}
+
+/// OCR tiếng Việt dùng được chưa (kiểm tra file, rẻ).
+pub fn vi_state(ocr_root: &Path) -> OcrViState {
+    if missing_packs(ocr_root).is_empty() {
         OcrViState::Ready
+    } else {
+        OcrViState::NoPack
     }
 }
 
@@ -349,29 +382,21 @@ fn watchdog(shared: &SharedRef, id: u32, timeout: Duration) {
 }
 
 /// Chạy exe phụ: bản cạnh `chup.exe` trước; không có, hoặc là bản cũ (khác PROTO, do chỉ thay `chup.exe`),
-/// thì giải nén và chạy bản nhúng.
+/// thì chạy bản đã tải.
 fn start_tess(shared: &SharedRef, ocr_root: &Path) -> Result<Tess, OcrError> {
-    let installed = installed_helper();
-    let mut last = None;
-    if let Some(exe) = &installed {
-        match spawn_tess(shared, ocr_root, exe) {
-            Err(StartError::Proto(e)) if EMBEDDED.is_some() => {
-                log::warn!("ocr: {}, dùng bản nhúng trong chup.exe", e.log);
-                last = Some(e);
-            }
+    let downloaded = downloaded_helper(ocr_root);
+    if let Some(exe) = installed_helper() {
+        match spawn_tess(shared, ocr_root, &exe) {
+            Err(StartError::Proto(e)) if downloaded.is_some() => log::warn!("ocr: {}, dùng bản đã tải", e.log),
             r => return r.map_err(StartError::into_ocr),
         }
     }
-    let Some(emb) = EMBEDDED else {
-        return Err(last.unwrap_or_else(|| err(REINSTALL, "không thấy chup-ocr.exe")));
-    };
-    let exe = emb.ensure(ocr_root).map_err(|e| {
-        err("Không giải nén được engine OCR tiếng Việt. Phần mềm diệt virus có thể đã chặn, hãy thử lại.", e)
-    })?;
+    let exe = downloaded.ok_or_else(|| err(DOWNLOAD_AGAIN, "không thấy chup-ocr.exe"))?;
     spawn_tess(shared, ocr_root, &exe).map_err(StartError::into_ocr)
 }
 
-const REINSTALL: &str = "Hãy cài lại Chup bằng bộ cài.";
+const REINSTALL: &str = "Engine OCR tiếng Việt không khớp phiên bản Chup. Hãy cài lại Chup.";
+const DOWNLOAD_AGAIN: &str = "Thiếu engine OCR tiếng Việt. Hãy tải lại trong Cài đặt > Copy chữ (OCR).";
 
 enum StartError {
     /// Exe phụ khác PROTO: thử bản khác được.
@@ -391,7 +416,7 @@ fn spawn_tess(shared: &SharedRef, ocr_root: &Path, exe: &Path) -> Result<Tess, S
     // Tesseract mở traineddata bằng fopen (ANSI): đường dẫn có dấu (tên user tiếng Việt) sẽ hỏng. Chạy với thư mục
     // hiện tại là thư mục gói (CreateProcessW đặt bằng Unicode) và truyền đường dẫn tương đối ".".
     let mut child = Command::new(exe)
-        .current_dir(pack::dir(ocr_root))
+        .current_dir(pack::data().dir(ocr_root))
         .arg("--tessdata")
         .arg(".")
         .arg("--langs")
@@ -401,7 +426,12 @@ fn spawn_tess(shared: &SharedRef, ocr_root: &Path, exe: &Path) -> Result<Tess, S
         .stderr(Stdio::null())
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
-        .map_err(|e| StartError::Other(err(REINSTALL, format!("chạy {}: {e}", exe.display()))))?;
+        .map_err(|e| {
+            StartError::Other(err(
+                "Không chạy được engine OCR tiếng Việt. Phần mềm diệt virus có thể đã chặn chup-ocr.exe.",
+                format!("chạy {}: {e}", exe.display()),
+            ))
+        })?;
     if let Some(job) = kill_on_close_job() {
         if let Err(e) = unsafe { AssignProcessToJobObject(job, HANDLE(child.as_raw_handle())) } {
             log::warn!("ocr: AssignProcessToJobObject: {e}");

@@ -84,13 +84,13 @@ Engine `chup-ocr.exe` không build lại mỗi lần phát hành Chup: app và b
 | Chọn vùng | `Ctrl+Alt+A`, hoặc click trái icon tray. Menu tray (click phải) hiện phím tắt đang gán cạnh từng mục |
 | Tự động chọn vùng | Trong lúc chọn vùng (cả Freeze), rê chuột là tô sẵn khung cửa sổ / nút / ảnh dưới con trỏ, click để chọn khung đó. Lăn chuột hoặc `↑` `↓` đổi sang khung lớn hơn / nhỏ hơn; giữ `Shift` để tạm tắt; kéo vẫn chọn vùng tự do. Tắt trong Cài đặt |
 | Huỷ chọn vùng | `Esc`, hoặc click phải |
-| Chụp | Nút **Chụp** trên toolbar, hoặc `Ctrl+Alt+S` |
-| Chụp lại vùng cuối | `Ctrl+Alt+S` khi không có vùng chọn, hoặc menu tray |
+| Chụp | Nút **Chụp** trên toolbar, hoặc `Ctrl+Alt+X` |
+| Chụp lại vùng cuối | `Ctrl+Alt+X` khi không có vùng chọn, hoặc menu tray |
 | Chế độ mờ | Nút **Mờ**: viền nhạt, chuột đi xuyên qua, vẫn chụp được bằng phím tắt |
 | Di chuyển / đổi kích thước vùng | Kéo phần lề quanh viền / kéo 8 ô vuông nhỏ |
 | Dùng ảnh trong stack | Kéo thumbnail thả vào app khác; click để mở Preview; hover để copy / mở folder / bỏ khỏi stack |
 | Thu gọn stack | Hover stack → nút `›`; click tab nhỏ ở mép màn hình để mở lại |
-| Chụp đóng băng (menu, tooltip) | `F1`, hoặc menu tray "Chụp đóng băng" / "… sau 3 giây". Màn hình đóng băng ngay; kéo chọn vùng, chỉnh bằng 8 ô vuông, kéo trong vùng để di chuyển |
+| Chụp đóng băng (menu, tooltip) | `F1`, hoặc menu tray "Chụp đóng băng" / "… sau 3 giây". Màn hình đóng băng ngay; kéo chọn vùng, chỉnh bằng 8 ô vuông, kéo trong vùng để di chuyển. F1 được giữ ở mọi app; cần F1 cho app khác thì tắt ở menu tray (Tuỳ chọn) hoặc Cài đặt > Phím tắt |
 | Preview | Kéo để di chuyển, kéo mép/góc để đổi cỡ, lăn chuột để zoom, `Ctrl` + lăn chuột đổi opacity. Hover: ghim (luôn nằm trên), copy, folder, đóng. `Esc` đóng. Lần sau mở đúng chỗ và cỡ cũ (đổi trong Cài đặt) |
 | Lưu / Copy / huỷ (Freeze) | `Enter`, double-click trong vùng hoặc nút **Lưu** / nút **Copy** (chỉ clipboard, không lưu file) / `Esc` hoặc click phải |
 | Copy chữ trong ảnh (OCR) | Nút **[T]** trên Preview, trên toolbar vùng chọn, hoặc nút **Chữ** khi Freeze; hotkey "Chụp text" (gán trong Cài đặt): chọn vùng là copy chữ luôn. Không lưu file. Tiếng Việt cần tải gói (Cài đặt) |
@@ -178,7 +178,7 @@ Cách giữ RAM thấp:
 - `WDA_EXCLUDEFROMCAPTURE` có tác dụng với cách chụp của `xcap`.
 - Stack: hover hiện nút và nhãn W × H; kéo thả thumbnail ra Desktop; click thẻ mở ảnh;
   thu gọn và mở lại; toast lỗi khi file bị xoá bên ngoài (thẻ tự bỏ khỏi stack).
-- Chế độ Mờ: click xuyên qua, gõ phím và cuộn ở app bên dưới bình thường; `Ctrl+Alt+S` chụp
+- Chế độ Mờ: click xuyên qua, gõ phím và cuộn ở app bên dưới bình thường; `Ctrl+Alt+S` (nay là `Ctrl+Alt+X`) chụp
   đúng vùng (ảnh là nội dung sau khi cuộn, không dính viền) và app bên dưới vẫn giữ focus.
 - Chụp 7 lần liên tiếp: stack còn 5 ảnh mới nhất, ổ đĩa có đủ 7 file.
 - Kéo thả thumbnail (chỉ đưa `CF_HDROP`, hiệu ứng copy): Explorer (copy file, file gốc còn
@@ -246,7 +246,7 @@ Cách giữ RAM thấp:
 
 - Clipboard (khi chụp và nút Copy, ảnh 2193×1350): có đủ `PNG` (đúng byte của file), CF_DIBV5,
   và `Bitmap`/`DIB` do Windows tự suy ra. Chuẩn bị ~16–20 ms, giữ clipboard ~9–10 ms.
-- Nút mở folder (Explorer chọn sẵn file), nút bỏ khỏi stack, Xoá hết, `Ctrl+Alt+S` chụp lại vùng cuối.
+- Nút mở folder (Explorer chọn sẵn file), nút bỏ khỏi stack, Xoá hết, `Ctrl+Alt+S` (nay là `Ctrl+Alt+X`) chụp lại vùng cuối.
 - Menu tray (Mở folder ảnh, Cài đặt…); bật/tắt chạy cùng Windows (khoá `HKCU\…\Run`);
   đổi folder lưu qua hộp chọn folder, ảnh sau đó lưu đúng folder mới.
 

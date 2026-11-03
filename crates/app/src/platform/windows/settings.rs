@@ -111,6 +111,7 @@ const ID_NAV: u16 = 123;
 const ID_ABOUT_WEB: u16 = 124;
 const ID_ABOUT_LOG: u16 = 125;
 const ID_ABOUT_NOTICE: u16 = 126;
+const ID_HK_FREEZE_ON: u16 = 127;
 const TIMER_PATTERN: usize = 1;
 
 const RECORDING_TEXT: &str = "Nhấn tổ hợp phím…";
@@ -258,6 +259,7 @@ struct Handles {
     lbl_hk3: HWND,
     hk3: HWND,
     err3: HWND,
+    hk3_on: HWND,
     lbl_hk4: HWND,
     hk4: HWND,
     err4: HWND,
@@ -633,6 +635,14 @@ impl Settings {
         h.lbl_hk3 = self.add(st, "Chụp đóng băng (menu, tooltip)", s, none, 0, Kind::Label);
         h.hk3 = self.add(ed, "", edit, WS_EX_CLIENTEDGE, ID_HK_FREEZE, Kind::Control);
         h.err3 = self.add(st, "", s, none, 0, Kind::Error);
+        h.hk3_on = self.add(
+            bt,
+            "Bật phím chụp đóng băng (tắt để app khác dùng được phím này)",
+            check,
+            none,
+            ID_HK_FREEZE_ON,
+            Kind::Control,
+        );
         h.lbl_hk4 = self.add(st, "Chụp text (chọn vùng rồi copy chữ)", s, none, 0, Kind::Label);
         h.hk4 = self.add(ed, "", edit, WS_EX_CLIENTEDGE, ID_HK_OCR, Kind::Control);
         h.err4 = self.add(st, "", s, none, 0, Kind::Error);
@@ -877,6 +887,9 @@ impl Settings {
                         } else {
                             reserve += 46.0;
                         }
+                        if edit == h.hk3 {
+                            l.check(h.hk3_on, 20.0);
+                        }
                     }
                     l.end_card();
                 }
@@ -1020,6 +1033,10 @@ impl Settings {
             &format!("Phần trong {{ }} là ngày giờ: yyyy MM dd HH mm ss SSS. Ví dụ: {}", v.preview),
         );
         set_checked(h.copy, c.copy_to_clipboard);
+        set_checked(h.hk3_on, c.hotkeys.freeze_enabled);
+        unsafe {
+            let _ = EnableWindow(h.hk3_on, !c.hotkeys.freeze.is_empty());
+        }
         set_combo(h.after, if c.after_capture_normal == AfterCapture::Keep { 1 } else { 0 });
         set_combo(h.edge, if c.stack.edge == Edge::Left { 1 } else { 0 });
         set_combo(h.mon, if c.stack.monitor == StackMonitor::Cursor { 1 } else { 0 });
@@ -1397,6 +1414,9 @@ impl Handler for Settings {
                         SetTimer(Some(hwnd), TIMER_PATTERN, 400, None);
                     },
                     (ID_COPY, BN_CLICKED) => self.patch(json!({ "copyToClipboard": checked(h.copy) })),
+                    (ID_HK_FREEZE_ON, BN_CLICKED) => {
+                        self.patch(json!({ "hotkeys": { "freezeEnabled": checked(h.hk3_on) } }))
+                    }
                     (ID_AUTOSTART, BN_CLICKED) => self.patch(json!({ "launchAtStartup": checked(h.autostart) })),
                     (ID_PV_TOP, BN_CLICKED) => self.patch(json!({ "preview": { "alwaysOnTop": checked(h.pv_top) } })),
                     (ID_PV_POS, CBN_SELCHANGE) => {

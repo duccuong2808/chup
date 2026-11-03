@@ -7,7 +7,10 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-pub const CONFIG_VERSION: u32 = 2;
+pub const CONFIG_VERSION: u32 = 3;
+/// Mặc định cũ (v1, v2) của hotkey "Chụp". Hay bị app khác giữ, v3 đổi sang [`DEFAULT_CAPTURE`].
+const OLD_DEFAULT_CAPTURE: &str = "Ctrl+Alt+S";
+pub const DEFAULT_CAPTURE: &str = "Ctrl+Alt+X";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -38,6 +41,8 @@ pub struct Hotkeys {
     pub capture: String,
     /// Chụp đóng băng (SPEC 14). Không dùng Alt: Alt làm đóng menu đang mở trước khi kịp chụp.
     pub freeze: String,
+    /// Bật/tắt hotkey Freeze mà không mất phím đã gán (Cài đặt, menu tray). Tắt thì phím (F1) trả lại cho app khác.
+    pub freeze_enabled: bool,
     /// "Chụp text" (SPEC 15.2): mở overlay Freeze, chọn vùng xong là OCR luôn. Mặc định chưa gán.
     pub ocr: String,
 }
@@ -46,8 +51,9 @@ impl Default for Hotkeys {
     fn default() -> Self {
         Self {
             select_region: "Ctrl+Alt+A".into(),
-            capture: "Ctrl+Alt+S".into(),
+            capture: DEFAULT_CAPTURE.into(),
             freeze: "F1".into(),
+            freeze_enabled: true,
             ocr: String::new(),
         }
     }
@@ -229,6 +235,13 @@ impl Config {
                 self.hotkeys.freeze.clear();
             }
         }
+        if self.version < 3 && self.hotkeys.capture.eq_ignore_ascii_case(OLD_DEFAULT_CAPTURE) {
+            // v3: mặc định cũ của "Chụp" hay bị app khác giữ. Đổi sang mặc định mới nếu phím đó chưa dùng cho việc khác.
+            let h = &self.hotkeys;
+            if ![&h.select_region, &h.freeze, &h.ocr].iter().any(|k| k.eq_ignore_ascii_case(DEFAULT_CAPTURE)) {
+                self.hotkeys.capture = DEFAULT_CAPTURE.into();
+            }
+        }
         self.version = CONFIG_VERSION;
         self.preview.clamp();
         self
@@ -343,8 +356,9 @@ mod tests {
         let p = dir.join("config.json");
         fs::write(&p, r#"{ "version": 1, "hotkeys": { "selectRegion": "Ctrl+Alt+A", "capture": "Ctrl+Alt+S" } }"#).unwrap();
         let cfg = load(&p, Path::new("/pics")).config;
-        assert_eq!(cfg.version, 2);
+        assert_eq!(cfg.version, CONFIG_VERSION);
         assert_eq!(cfg.hotkeys.freeze, "F1");
+        assert!(cfg.hotkeys.freeze_enabled);
         // v1 đã dùng F1 cho hotkey khác: không cướp, để Freeze trống.
         fs::write(&p, r#"{ "version": 1, "hotkeys": { "capture": "f1" } }"#).unwrap();
         assert_eq!(load(&p, Path::new("/pics")).config.hotkeys.freeze, "");
@@ -355,9 +369,42 @@ mod tests {
     }
 
     #[test]
+    fn v3_moves_old_capture_default_only() {
+        let dir = std::env::temp_dir().join(format!("chup-cfg-{}", ulid::Ulid::generate()));
+        fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("config.json");
+        let load_capture = |json: &str| {
+            fs::write(&p, json).unwrap();
+            load(&p, Path::new("/pics")).config.hotkeys.capture
+        };
+        assert_eq!(Config::default().hotkeys.capture, "Ctrl+Alt+X");
+        assert_eq!(load_capture(r#"{ "version": 2, "hotkeys": { "capture": "Ctrl+Alt+S" } }"#), "Ctrl+Alt+X");
+        // Người dùng tự chọn phím khác: giữ.
+        assert_eq!(load_capture(r#"{ "version": 2, "hotkeys": { "capture": "Ctrl+Shift+F9" } }"#), "Ctrl+Shift+F9");
+        // Ctrl+Alt+X đã gán cho việc khác: giữ phím cũ, không tạo trùng.
+        assert_eq!(
+            load_capture(r#"{ "version": 2, "hotkeys": { "capture": "Ctrl+Alt+S", "ocr": "Ctrl+Alt+X" } }"#),
+            "Ctrl+Alt+S"
+        );
+        // Đã là v3: người dùng chủ động chọn lại Ctrl+Alt+S thì giữ.
+        assert_eq!(load_capture(r#"{ "version": 3, "hotkeys": { "capture": "Ctrl+Alt+S" } }"#), "Ctrl+Alt+S");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn freeze_toggle_defaults_on_and_patches() {
+        let old: Config = serde_json::from_value(json!({ "version": 2, "hotkeys": { "freeze": "F1" } })).unwrap();
+        assert!(old.hotkeys.freeze_enabled, "config cũ thiếu field: bật");
+        let cfg = Config::with_save_dir(Path::new("/x"));
+        let off = apply_patch(&cfg, &json!({ "hotkeys": { "freezeEnabled": false } })).unwrap();
+        assert!(!off.hotkeys.freeze_enabled);
+        assert_eq!(off.hotkeys.freeze, "F1", "tắt không làm mất phím");
+    }
+
+    #[test]
     fn patch_rejects_freeze_duplicating_other_hotkey() {
         let cfg = Config::with_save_dir(Path::new("/x"));
-        assert!(apply_patch(&cfg, &json!({ "hotkeys": { "freeze": "Ctrl+Alt+S" } })).is_err());
+        assert!(apply_patch(&cfg, &json!({ "hotkeys": { "freeze": "Ctrl+Alt+X" } })).is_err());
         assert!(apply_patch(&cfg, &json!({ "hotkeys": { "freeze": "", "capture": "" } })).is_ok());
     }
 

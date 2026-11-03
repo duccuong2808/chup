@@ -82,7 +82,7 @@
    - Overlay ẩn đi.
    - Frame hiện quanh region, Toolbar hiện cạnh frame.
    - Frame ở **Normal mode**.
-5. Bấm **[Chụp]** trên toolbar hoặc nhấn hotkey **Chụp** (`Ctrl+Alt+S`):
+5. Bấm **[Chụp]** trên toolbar hoặc nhấn hotkey **Chụp** (`Ctrl+Alt+X`; trước v3 là `Ctrl+Alt+S`, hay bị app khác giữ):
    - Chụp nội dung **tại thời điểm bấm**.
    - Lưu PNG vào folder đã cấu hình.
    - Copy ảnh vào clipboard nếu bật cấu hình.
@@ -136,12 +136,10 @@
 ### 5.5 Tray
 
 - **Click trái**: Chọn vùng.
-- **Click phải** mở menu:
-  - Chọn vùng
-  - Chụp lại vùng cuối
-  - Chụp đóng băng, Chụp đóng băng sau 3 giây (Phase 2, mục 14.5)
-  - Mở folder ảnh
-  - Cài đặt…
+- **Click phải** mở menu, chia hai phần có tiêu đề mờ (chup-289), phím tắt đang gán hiện ở cột phải:
+  - **Chụp**: Chọn vùng · Chụp lại vùng cuối · Chụp đóng băng, Chụp đóng băng sau 3 giây (Phase 2, mục 14.5) ·
+    Mở folder ảnh
+  - **Tuỳ chọn**: ☑ Phím tắt chụp đóng băng (F1) (bật/tắt hotkey Freeze, giống ô trong Cài đặt) · Cài đặt…
   - Thoát
 - **Tooltip**: hiển thị "Chup". Nếu có hotkey đăng ký lỗi thì kèm cảnh báo.
 
@@ -155,7 +153,7 @@ thẻ nền trắng trên nền xám. Cửa sổ cỡ cố định theo trang ca
 | Trang | Nội dung |
 |---|---|
 | Chung | Folder lưu ảnh, tên file; khởi động cùng Windows |
-| Phím tắt | 4 ô ghi phím (chọn vùng, chụp vùng hiện tại/cuối, Freeze, chụp text), báo lỗi ngay dưới ô |
+| Phím tắt | 4 ô ghi phím (chọn vùng, chụp vùng hiện tại/cuối, Freeze, chụp text), báo lỗi ngay dưới ô; ô bật/tắt phím Freeze |
 | Chụp ảnh | Tự động chọn vùng (SPEC 16); sau khi chụp (copy clipboard, giữ/đóng vùng chọn); ẩn toolbar/stack lúc chụp |
 | Copy chữ (OCR) | Ngôn ngữ, trạng thái + nút tải/xoá gói tiếng Việt, tự nhận diện khi mở Preview |
 | Stack và Preview | Cạnh và màn hình của stack; các mục Preview (SPEC 17.4) |
@@ -291,7 +289,7 @@ File: `%APPDATA%\app.chup.desktop\config.json` (giữ nguyên đường dẫn c�
   "saveDir": "C:\\Users\\<user>\\Pictures\\Chup",
   "fileNamePattern": "chup-{yyyyMMdd-HHmmss-SSS}",
   "copyToClipboard": true,
-  "hotkeys": { "selectRegion": "Ctrl+Alt+A", "capture": "Ctrl+Alt+S", "freeze": "F1" },
+  "hotkeys": { "selectRegion": "Ctrl+Alt+A", "capture": "Ctrl+Alt+X", "freeze": "F1", "freezeEnabled": true },
   "stack": { "edge": "right", "monitor": "primary" },
   "afterCaptureNormal": "close",
   "launchAtStartup": false
@@ -303,6 +301,9 @@ File: `%APPDATA%\app.chup.desktop\config.json` (giữ nguyên đường dẫn c�
   `hotkeys.ocr` ("Chụp text", mặc định rỗng); vẫn version 2. Sau đó thêm `ocr.autoPreview` (tự nhận diện chữ khi
   mở Preview, mặc định `true`, config cũ thiếu field cũng là `true`).
 - Version 2 (Phase 2.1) thêm `hotkeys.freeze`. Migrate từ v1: điền `"F1"`; nếu F1 đã được dùng cho hotkey khác thì để trống (tắt).
+- Version 3 (2026-11-03, chup-289): mặc định `hotkeys.capture` đổi từ `Ctrl+Alt+S` (hay bị app khác giữ) sang `Ctrl+Alt+X`.
+  Migrate: còn đúng `Ctrl+Alt+S` thì đổi sang `Ctrl+Alt+X`, trừ khi phím đó đã gán cho hotkey khác. Thêm
+  `hotkeys.freezeEnabled` (mặc định `true`): tắt thì không đăng ký hotkey Freeze (F1 trả lại cho app khác) mà vẫn nhớ phím.
 - Chuỗi rỗng = tắt hotkey đó. Hai hotkey không được trùng nhau.
 
 Config hỏng hoặc parse lỗi: backup thành `config.bak.json`, rồi dùng mặc định.
@@ -392,7 +393,7 @@ Mục tiêu; đo thực tế ở bước 1.4 rồi chỉnh lại.
 | # | Quyết định | Lý do |
 |---|---|---|
 | Q1 | Tên app: **Chup** | Người dùng chốt |
-| Q2 | Hotkey: `Ctrl+Alt+A` (chọn vùng), `Ctrl+Alt+S` (chụp), `F1` (Freeze, Phase 2). OCR "Chụp text" chưa gán | Tránh `PrtScn` vì Windows 11 mặc định gán cho Snipping Tool. Freeze không dùng `Alt`, xem mục 14.4 |
+| Q2 | Hotkey: `Ctrl+Alt+A` (chọn vùng), `Ctrl+Alt+X` (chụp; trước v3 là `Ctrl+Alt+S`), `F1` (Freeze, Phase 2, bật/tắt được). OCR "Chụp text" chưa gán | Tránh `PrtScn` vì Windows 11 mặc định gán cho Snipping Tool. Freeze không dùng `Alt`, xem mục 14.4 |
 | Q3 | Normal mode: chụp xong thì **đóng** frame | Muốn chụp lặp lại thì chuyển sang Faded |
 | Q4 | Stack **không tự ẩn**, có nút thu gọn | Tự ẩn dễ làm mất ảnh đúng lúc đang định kéo |
 | Q5 | Click thumbnail: mở cửa sổ Preview của Chup (mục 17). Trước 2.2: mở bằng app mặc định của OS | Người dùng chốt (2026-11-01): cần nhìn ảnh vừa chụp cạnh chỗ đang làm, chỉnh được chỗ, cỡ, opacity, và có OCR trên đó |
@@ -458,9 +459,10 @@ Chụp được những thứ biến mất khi chuột hoặc focus thay đổi:
 
 ### 14.5 Tray bổ sung
 
-Thêm 2 mục vào menu tray:
+Thêm vào menu tray:
 - Chụp đóng băng
 - Chụp đóng băng sau 3 giây
+- (phần Tuỳ chọn) Phím tắt chụp đóng băng: bật/tắt hotkey Freeze. F1 giữ ở mọi app nên ai cần F1 cho app khác thì tắt.
 
 ### 14.6 Ngân sách
 

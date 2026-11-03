@@ -249,6 +249,12 @@ impl App {
                     vec![]
                 }
                 "freeze_delayed" => self.model.start_freeze_delayed(),
+                "freeze_toggle" => {
+                    // CheckMenuItem tự đảo dấu tick khi bấm; config là nguồn sự thật nên đảo theo config rồi vẽ lại.
+                    let on = !self.model.config.hotkeys.freeze_enabled;
+                    emit(Action::ConfigPatch(serde_json::json!({ "hotkeys": { "freezeEnabled": on } })));
+                    vec![]
+                }
                 "open_folder" => self.open_save_dir(),
                 "settings" => {
                     self.open_settings();
@@ -911,9 +917,10 @@ impl App {
             let keys = [
                 show("selectRegion", &hk.select_region),
                 show("capture", &hk.capture),
-                show("freeze", &hk.freeze),
+                if hk.freeze_enabled { show("freeze", &hk.freeze) } else { String::new() },
             ];
             t.set_shortcuts([&keys[0], &keys[1], &keys[2]]);
+            t.set_freeze_toggle(hk.freeze_enabled, &hk.freeze);
         }
         self.refresh_settings();
     }

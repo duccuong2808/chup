@@ -300,7 +300,7 @@ impl StackWin {
                 Item::Header => {
                     let b = 24.0 * k;
                     let collapse = rectf(x, y, b, b);
-                    let clear_w = btn_font.as_ref().map(|f| f.measure("Xoá hết", 1000.0).0).unwrap_or(40.0) + 16.0 * k;
+                    let clear_w = btn_font.as_ref().map(|f| f.measure(chup_core::i18n::t().stack_clear_all, 1000.0).0).unwrap_or(40.0) + 16.0 * k;
                     let clear = rectf(x + cw - clear_w, y, clear_w, b);
                     for (r, hit) in [(collapse, Hit::Collapse), (clear, Hit::Clear)] {
                         c.shadow(r, 6.0 * k, 2.0 * k, 1.0 * k, theme.shadow);
@@ -312,7 +312,7 @@ impl StackWin {
                     let chevron = if edge_right { Icon::ChevronRight } else { Icon::ChevronLeft };
                     c.icon(chevron, collapse.left + 5.0 * k, collapse.top + 5.0 * k, 14.0 * k, theme.text);
                     if let Some(f) = btn_font.as_ref() {
-                        c.text("Xoá hết", f, clear, theme.text);
+                        c.text(chup_core::i18n::t().stack_clear_all, f, clear, theme.text);
                     }
                 }
                 Item::Toast(i, _) => {
@@ -432,7 +432,7 @@ impl StackWin {
             drag::Options::default(),
         );
         if let Err(e) = res {
-            emit(Action::Toast(Toast::error(format!("Không kéo được ảnh: {e}"))));
+            emit(Action::Toast(Toast::error(chup_core::i18n::fill(chup_core::i18n::t().err_drag, &[&e]))));
         }
     }
 }

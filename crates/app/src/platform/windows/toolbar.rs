@@ -142,8 +142,8 @@ impl Toolbar {
         let font = Font::new(13.0 * k, false, Align::Leading, false);
         let faded = st.faded;
         let items = [
-            BarButton { icon: Icon::Camera, label: "Chụp", primary: true, active: false },
-            BarButton { icon: Icon::Fade, label: "Mờ", primary: false, active: faded },
+            BarButton { icon: Icon::Camera, label: chup_core::i18n::t().btn_capture, primary: true, active: false },
+            BarButton { icon: Icon::Fade, label: chup_core::i18n::t().btn_fade, primary: false, active: faded },
             BarButton { icon: Icon::Text, label: "", primary: false, active: false },
             BarButton { icon: Icon::Close, label: "", primary: false, active: false },
         ];

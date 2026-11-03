@@ -13,6 +13,7 @@ use std::{
 
 use chup_core::{
     config::{AfterCapture, Config, Edge, OcrLanguage, PreviewPosition, StackMonitor},
+    i18n::{fill, t, Strings, UiLanguage},
     hotkey_name::{self, Mods, Recorded},
     model::OcrViState,
     ocr::pack,
@@ -45,10 +46,10 @@ use windows::{
                 CreateWindowExW, DestroyWindow, GetClientRect, GetDlgCtrlID, GetWindowLongPtrW, GetWindowTextLengthW,
                 GetWindowTextW, KillTimer, SendMessageW, SetForegroundWindow, SetTimer,
                 SetWindowPos, SetWindowTextW, ShowWindow, BM_GETCHECK, BM_SETCHECK, BN_CLICKED, BS_AUTOCHECKBOX,
-                BS_PUSHBUTTON, CBN_SELCHANGE, CBS_DROPDOWNLIST, CB_ADDSTRING, CB_GETCURSEL, CB_SETCURSEL, CW_USEDEFAULT,
+                BS_PUSHBUTTON, CBN_SELCHANGE, CBS_DROPDOWNLIST, CB_ADDSTRING, CB_GETCURSEL, CB_RESETCONTENT, CB_SETCURSEL, CW_USEDEFAULT,
                 DLGC_WANTALLKEYS, EN_CHANGE, ES_AUTOHSCROLL, ES_READONLY, GWLP_USERDATA, GWL_EXSTYLE, GWL_STYLE, HMENU,
                 LBN_SELCHANGE, LBS_HASSTRINGS, LBS_NOINTEGRALHEIGHT, LBS_NOTIFY, LBS_OWNERDRAWFIXED, LB_ADDSTRING,
-                LB_GETCURSEL, LB_SETCURSEL, LB_SETITEMHEIGHT, NONCLIENTMETRICSW, SPI_GETNONCLIENTMETRICS, SWP_NOACTIVATE,
+                LB_GETCURSEL, LB_RESETCONTENT, LB_SETCURSEL, LB_SETITEMHEIGHT, NONCLIENTMETRICSW, SPI_GETNONCLIENTMETRICS, SWP_NOACTIVATE,
                 SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOW, SW_SHOWNORMAL,
                 SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, WINDOW_EX_STYLE, WINDOW_STYLE, WM_CHAR, WM_CLOSE, WM_COMMAND,
                 WM_CTLCOLORBTN, WM_CTLCOLORLISTBOX, WM_CTLCOLORSTATIC, WM_DPICHANGED, WM_DRAWITEM, WM_ERASEBKGND,
@@ -112,9 +113,9 @@ const ID_ABOUT_WEB: u16 = 124;
 const ID_ABOUT_LOG: u16 = 125;
 const ID_ABOUT_NOTICE: u16 = 126;
 const ID_HK_FREEZE_ON: u16 = 127;
+const ID_UI_LANG: u16 = 128;
 const TIMER_PATTERN: usize = 1;
 
-const RECORDING_TEXT: &str = "Nhấn tổ hợp phím…";
 
 // Màu (COLORREF là 0x00BBGGRR), theo Cài đặt của Windows 11.
 const BG: u32 = 0xF3F3F3;
@@ -151,14 +152,21 @@ enum Page {
     About,
 }
 
-const PAGES: [(Page, &str); 6] = [
-    (Page::General, "Chung"),
-    (Page::Hotkeys, "Phím tắt"),
-    (Page::Capture, "Chụp ảnh"),
-    (Page::Ocr, "Copy chữ (OCR)"),
-    (Page::StackPreview, "Stack và Preview"),
-    (Page::About, "Giới thiệu"),
+/// Chữ lấy theo ngôn ngữ giao diện hiện hành.
+type Text = fn(&Strings) -> &'static str;
+
+const PAGES: [(Page, Text); 6] = [
+    (Page::General, |t| t.page_general),
+    (Page::Hotkeys, |t| t.page_hotkeys),
+    (Page::Capture, |t| t.page_capture),
+    (Page::Ocr, |t| t.page_ocr),
+    (Page::StackPreview, |t| t.page_stack_preview),
+    (Page::About, |t| t.page_about),
 ];
+
+/// Tên ngôn ngữ trong ô chọn ngôn ngữ giao diện: viết bằng chính ngôn ngữ đó, không dịch.
+const UI_LANGS: [(UiLanguage, Option<&str>); 3] =
+    [(UiLanguage::System, None), (UiLanguage::Vi, Some("Tiếng Việt")), (UiLanguage::En, Some("English"))];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
@@ -175,6 +183,8 @@ struct Ctl {
     kind: Kind,
     /// `None`: hiện ở mọi trang (danh sách trang, tiêu đề, dòng trạng thái).
     page: Option<Page>,
+    /// Chữ cố định của control (gán lại khi đổi ngôn ngữ). Chữ động (`|_| ""`) do `refresh` đặt.
+    text: Text,
 }
 
 impl Ctl {
@@ -248,6 +258,8 @@ struct Handles {
     hint_pattern: HWND,
     sec_sys: HWND,
     autostart: HWND,
+    lbl_ui_lang: HWND,
+    ui_lang: HWND,
     // Phím tắt
     hint_hk: HWND,
     lbl_hk1: HWND,
@@ -372,11 +384,12 @@ fn current_mods() -> Mods {
 
 /// "Phiên bản 0.2.0 · commit 2f451f1" (commit chỉ có ở bản CI build).
 fn version_text() -> String {
-    let commit = env!("CHUP_COMMIT");
+    let (t, commit) = (t(), env!("CHUP_COMMIT"));
+    let v = fill(t.st_about_version, &[&env!("CARGO_PKG_VERSION")]);
     if commit.is_empty() {
-        format!("Phiên bản {} (bản build tay)", env!("CARGO_PKG_VERSION"))
+        format!("{v} ({})", t.st_about_local_build)
     } else {
-        format!("Phiên bản {} · commit {commit}", env!("CARGO_PKG_VERSION"))
+        format!("{v} · commit {commit}")
     }
 }
 
@@ -392,18 +405,19 @@ fn notice_path(e: &EngineInfo) -> Option<PathBuf> {
 
 /// Nguồn engine và dữ liệu OCR tiếng Việt, cho trang Giới thiệu.
 fn engine_text(v: &SettingsView) -> String {
+    let t = t();
     let engine = match &v.ocr_engine {
-        EngineInfo::Installed(_) => "Engine: chup-ocr.exe cài cùng Chup (bộ cài Full).".to_string(),
-        EngineInfo::Downloaded(_) => format!("Engine: đã tải từ {}.", pack::engine().source),
-        EngineInfo::Missing => "Engine: chưa có (tải ở trang Copy chữ).".to_string(),
+        EngineInfo::Installed(_) => t.st_about_engine_installed.to_string(),
+        EngineInfo::Downloaded(_) => fill(t.st_about_engine_downloaded, &[&pack::engine().source]),
+        EngineInfo::Missing => t.st_about_engine_missing.to_string(),
     };
     let d = pack::data();
     let data = if d.is_installed(&v.ocr_root) {
-        format!("Dữ liệu: {}.", d.source)
+        fill(t.st_about_data, &[&d.source])
     } else {
-        "Dữ liệu: chưa tải.".to_string()
+        t.st_about_data_missing.to_string()
     };
-    format!("Tesseract, giấy phép Apache-2.0. {engine}\n{data}")
+    format!("{} {engine}\n{data}", t.st_about_tesseract)
 }
 
 /// Chiều cao (px) chữ của control khi xuống dòng trong bề rộng `width` px. Chữ rỗng thì 0.
@@ -529,7 +543,7 @@ impl Settings {
             win::create(
                 win::CreateParams {
                     class: cls,
-                    title: "Chup — Cài đặt",
+                    title: t().app_settings_title,
                     style: WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX | WS_CLIPCHILDREN,
                     ex_style: WS_EX_CONTROLPARENT,
                     x: CW_USEDEFAULT,
@@ -559,8 +573,8 @@ impl Settings {
         Ok(me)
     }
 
-    fn add(&self, class: PCWSTR, text: &str, style: WINDOW_STYLE, ex: WINDOW_EX_STYLE, id: u16, kind: Kind) -> HWND {
-        let t = wide(text);
+    fn add(&self, class: PCWSTR, text: Text, style: WINDOW_STYLE, ex: WINDOW_EX_STYLE, id: u16, kind: Kind) -> HWND {
+        let t = wide(text(chup_core::i18n::t()));
         let page = self.building.get();
         // Control của trang khác tạo ẩn sẵn; `layout` lo hiện/ẩn theo trang.
         let visible = if page.is_none_or(|p| p == self.page.get()) { WS_VISIBLE } else { WINDOW_STYLE(0) };
@@ -581,7 +595,7 @@ impl Settings {
             )
             .unwrap_or_default()
         };
-        self.st.borrow_mut().ctls.push(Ctl { hwnd: h, kind, page });
+        self.st.borrow_mut().ctls.push(Ctl { hwnd: h, kind, page, text });
         h
     }
 
@@ -602,151 +616,176 @@ impl Settings {
 
         // Chung cho mọi trang. Danh sách trang tạo đầu tiên: đứng đầu thứ tự Tab.
         self.building.set(None);
-        h.nav = self.add(w!("LISTBOX"), "", list, none, ID_NAV, Kind::Control);
-        h.title = self.add(st, "", s, none, 0, Kind::Title);
+        h.nav = self.add(w!("LISTBOX"), |_| "", list, none, ID_NAV, Kind::Control);
+        h.title = self.add(st, |_| "", s, none, 0, Kind::Title);
 
         self.building.set(Some(Page::General));
-        h.sec_save = self.add(st, "Lưu ảnh", s, none, 0, Kind::Section);
-        h.lbl_dir = self.add(st, "Folder lưu ảnh", s, none, 0, Kind::Label);
-        h.dir = self.add(ed, "", WINDOW_STYLE((ES_READONLY | ES_AUTOHSCROLL) as u32), WS_EX_CLIENTEDGE, 0, Kind::Control);
-        h.pick = self.add(bt, "Chọn folder…", button, none, ID_PICK, Kind::Control);
-        h.open = self.add(bt, "Mở folder", button, none, ID_OPEN, Kind::Control);
-        h.lbl_pattern = self.add(st, "Tên file", s, none, 0, Kind::Label);
-        h.pattern = self.add(ed, "", edit, WS_EX_CLIENTEDGE, ID_PATTERN, Kind::Control);
-        h.hint_pattern = self.add(st, "", s, none, 0, Kind::Hint);
-        h.sec_sys = self.add(st, "Hệ thống", s, none, 0, Kind::Section);
-        h.autostart = self.add(bt, "Khởi động cùng Windows", check, none, ID_AUTOSTART, Kind::Control);
+        h.sec_save = self.add(st, |t| t.st_sec_save, s, none, 0, Kind::Section);
+        h.lbl_dir = self.add(st, |t| t.st_save_dir, s, none, 0, Kind::Label);
+        h.dir = self.add(ed, |_| "", WINDOW_STYLE((ES_READONLY | ES_AUTOHSCROLL) as u32), WS_EX_CLIENTEDGE, 0, Kind::Control);
+        h.pick = self.add(bt, |t| t.st_pick_folder, button, none, ID_PICK, Kind::Control);
+        h.open = self.add(bt, |t| t.st_open_folder, button, none, ID_OPEN, Kind::Control);
+        h.lbl_pattern = self.add(st, |t| t.st_file_name, s, none, 0, Kind::Label);
+        h.pattern = self.add(ed, |_| "", edit, WS_EX_CLIENTEDGE, ID_PATTERN, Kind::Control);
+        h.hint_pattern = self.add(st, |_| "", s, none, 0, Kind::Hint);
+        h.sec_sys = self.add(st, |t| t.st_sec_system, s, none, 0, Kind::Section);
+        h.autostart = self.add(bt, |t| t.st_autostart, check, none, ID_AUTOSTART, Kind::Control);
+        h.lbl_ui_lang = self.add(st, |t| t.st_ui_language, s, none, 0, Kind::Label);
+        h.ui_lang = self.add(cb, |_| "", combo, none, ID_UI_LANG, Kind::Control);
 
         self.building.set(Some(Page::Hotkeys));
         h.hint_hk = self.add(
             st,
-            "Bấm vào ô rồi nhấn tổ hợp phím. Delete để tắt phím tắt, Esc để huỷ.",
+            |t| t.st_hotkeys_hint,
             s,
             none,
             0,
             Kind::Hint,
         );
-        h.lbl_hk1 = self.add(st, "Chọn vùng", s, none, 0, Kind::Label);
-        h.hk1 = self.add(ed, "", edit, WS_EX_CLIENTEDGE, ID_HK_SELECT, Kind::Control);
-        h.err1 = self.add(st, "", s, none, 0, Kind::Error);
-        h.lbl_hk2 = self.add(st, "Chụp vùng hiện tại / vùng cuối", s, none, 0, Kind::Label);
-        h.hk2 = self.add(ed, "", edit, WS_EX_CLIENTEDGE, ID_HK_CAPTURE, Kind::Control);
-        h.err2 = self.add(st, "", s, none, 0, Kind::Error);
-        h.lbl_hk3 = self.add(st, "Chụp đóng băng (menu, tooltip)", s, none, 0, Kind::Label);
-        h.hk3 = self.add(ed, "", edit, WS_EX_CLIENTEDGE, ID_HK_FREEZE, Kind::Control);
-        h.err3 = self.add(st, "", s, none, 0, Kind::Error);
+        h.lbl_hk1 = self.add(st, |t| t.st_hk_select, s, none, 0, Kind::Label);
+        h.hk1 = self.add(ed, |_| "", edit, WS_EX_CLIENTEDGE, ID_HK_SELECT, Kind::Control);
+        h.err1 = self.add(st, |_| "", s, none, 0, Kind::Error);
+        h.lbl_hk2 = self.add(st, |t| t.st_hk_capture, s, none, 0, Kind::Label);
+        h.hk2 = self.add(ed, |_| "", edit, WS_EX_CLIENTEDGE, ID_HK_CAPTURE, Kind::Control);
+        h.err2 = self.add(st, |_| "", s, none, 0, Kind::Error);
+        h.lbl_hk3 = self.add(st, |t| t.st_hk_freeze, s, none, 0, Kind::Label);
+        h.hk3 = self.add(ed, |_| "", edit, WS_EX_CLIENTEDGE, ID_HK_FREEZE, Kind::Control);
+        h.err3 = self.add(st, |_| "", s, none, 0, Kind::Error);
         h.hk3_on = self.add(
             bt,
-            "Bật phím chụp đóng băng (tắt để app khác dùng được phím này)",
+            |t| t.st_hk_freeze_on,
             check,
             none,
             ID_HK_FREEZE_ON,
             Kind::Control,
         );
-        h.lbl_hk4 = self.add(st, "Chụp text (chọn vùng rồi copy chữ)", s, none, 0, Kind::Label);
-        h.hk4 = self.add(ed, "", edit, WS_EX_CLIENTEDGE, ID_HK_OCR, Kind::Control);
-        h.err4 = self.add(st, "", s, none, 0, Kind::Error);
+        h.lbl_hk4 = self.add(st, |t| t.st_hk_ocr, s, none, 0, Kind::Label);
+        h.hk4 = self.add(ed, |_| "", edit, WS_EX_CLIENTEDGE, ID_HK_OCR, Kind::Control);
+        h.err4 = self.add(st, |_| "", s, none, 0, Kind::Error);
 
         self.building.set(Some(Page::Capture));
-        h.sec_auto = self.add(st, "Tự động chọn vùng", s, none, 0, Kind::Section);
-        h.auto_on = self.add(bt, "Rê chuột là tô sẵn khung cửa sổ, nút, ảnh…", check, none, ID_AUTO_ON, Kind::Control);
-        h.auto_img = self.add(bt, "Đoán khung từ hình ảnh khi app không tự báo", check, none, ID_AUTO_IMG, Kind::Control);
+        h.sec_auto = self.add(st, |t| t.st_sec_auto, s, none, 0, Kind::Section);
+        h.auto_on = self.add(bt, |t| t.st_auto_on, check, none, ID_AUTO_ON, Kind::Control);
+        h.auto_img = self.add(bt, |t| t.st_auto_img, check, none, ID_AUTO_IMG, Kind::Control);
         h.hint_auto = self.add(
             st,
-            "Click để chọn khung đang tô. Lăn chuột hoặc ↑↓ để đổi cỡ khung, giữ Shift để tạm tắt.",
+            |t| t.st_auto_hint,
             s,
             none,
             0,
             Kind::Hint,
         );
-        h.sec_after = self.add(st, "Sau khi chụp", s, none, 0, Kind::Section);
-        h.copy = self.add(bt, "Copy ảnh vào clipboard", check, none, ID_COPY, Kind::Control);
-        h.lbl_after = self.add(st, "Vùng chọn ở chế độ thường", s, none, 0, Kind::Label);
-        h.hint_after = self.add(st, "Ở chế độ Mờ, vùng chọn luôn được giữ.", s, none, 0, Kind::Hint);
-        h.after = self.add(cb, "", combo, none, ID_AFTER, Kind::Control);
-        h.sec_during = self.add(st, "Trong lúc chụp", s, none, 0, Kind::Section);
-        h.hideui = self.add(bt, "Ẩn toolbar và stack trong lúc chụp", check, none, ID_HIDEUI, Kind::Control);
-        h.note = self.add(st, "", s, none, 0, Kind::Hint);
+        h.sec_after = self.add(st, |t| t.st_sec_after, s, none, 0, Kind::Section);
+        h.copy = self.add(bt, |t| t.st_copy, check, none, ID_COPY, Kind::Control);
+        h.lbl_after = self.add(st, |t| t.st_after_normal, s, none, 0, Kind::Label);
+        h.hint_after = self.add(st, |t| t.st_after_hint, s, none, 0, Kind::Hint);
+        h.after = self.add(cb, |_| "", combo, none, ID_AFTER, Kind::Control);
+        h.sec_during = self.add(st, |t| t.st_sec_during, s, none, 0, Kind::Section);
+        h.hideui = self.add(bt, |t| t.st_hide_ui, check, none, ID_HIDEUI, Kind::Control);
+        h.note = self.add(st, |_| "", s, none, 0, Kind::Hint);
 
         self.building.set(Some(Page::Ocr));
-        h.sec_ocr = self.add(st, "Nhận diện chữ trong ảnh", s, none, 0, Kind::Section);
-        h.lbl_ocr_lang = self.add(st, "Ngôn ngữ", s, none, 0, Kind::Label);
-        h.ocr_lang = self.add(cb, "", combo, none, ID_OCR_LANG, Kind::Control);
-        h.ocr_status = self.add(st, "", s, none, 0, Kind::Hint);
-        h.ocr_pack = self.add(bt, "", button, none, ID_OCR_PACK, Kind::Control);
-        h.ocr_auto = self.add(bt, "Tự nhận diện chữ khi mở Preview", check, none, ID_OCR_AUTO, Kind::Control);
-        h.hint_ocr_auto = self.add(st, "Để bôi đen và copy chữ ngay trên ảnh Preview.", s, none, 0, Kind::Hint);
+        h.sec_ocr = self.add(st, |t| t.st_sec_ocr, s, none, 0, Kind::Section);
+        h.lbl_ocr_lang = self.add(st, |t| t.st_ocr_language, s, none, 0, Kind::Label);
+        h.ocr_lang = self.add(cb, |_| "", combo, none, ID_OCR_LANG, Kind::Control);
+        h.ocr_status = self.add(st, |_| "", s, none, 0, Kind::Hint);
+        h.ocr_pack = self.add(bt, |_| "", button, none, ID_OCR_PACK, Kind::Control);
+        h.ocr_auto = self.add(bt, |t| t.st_ocr_auto, check, none, ID_OCR_AUTO, Kind::Control);
+        h.hint_ocr_auto = self.add(st, |t| t.st_ocr_auto_hint, s, none, 0, Kind::Hint);
 
         self.building.set(Some(Page::StackPreview));
-        h.sec_stack = self.add(st, "Stack ảnh", s, none, 0, Kind::Section);
-        h.lbl_edge = self.add(st, "Cạnh màn hình", s, none, 0, Kind::Label);
-        h.edge = self.add(cb, "", combo, none, ID_EDGE, Kind::Control);
-        h.lbl_mon = self.add(st, "Màn hình", s, none, 0, Kind::Label);
-        h.mon = self.add(cb, "", combo, none, ID_MONITOR, Kind::Control);
-        h.sec_pv = self.add(st, "Preview (bấm vào thumbnail)", s, none, 0, Kind::Section);
-        h.pv_top = self.add(bt, "Luôn nằm trên cửa sổ khác", check, none, ID_PV_TOP, Kind::Control);
-        h.lbl_pv_op = self.add(st, "Opacity", s, none, 0, Kind::Label);
-        h.hint_pv_op = self.add(st, "Ctrl + lăn chuột để chỉnh tạm.", s, none, 0, Kind::Hint);
-        h.pv_op = self.add(cb, "", combo, none, ID_PV_OPACITY, Kind::Control);
-        h.lbl_pv_pos = self.add(st, "Chỗ mở", s, none, 0, Kind::Label);
-        h.pv_pos = self.add(cb, "", combo, none, ID_PV_POS, Kind::Control);
-        h.lbl_pv_size = self.add(st, "Cỡ khi mở", s, none, 0, Kind::Label);
-        h.hint_pv_size = self.add(st, "Kéo mép hoặc lăn chuột để đổi.", s, none, 0, Kind::Hint);
-        h.pv_size = self.add(cb, "", combo, none, ID_PV_SIZE, Kind::Control);
+        h.sec_stack = self.add(st, |t| t.st_sec_stack, s, none, 0, Kind::Section);
+        h.lbl_edge = self.add(st, |t| t.st_edge, s, none, 0, Kind::Label);
+        h.edge = self.add(cb, |_| "", combo, none, ID_EDGE, Kind::Control);
+        h.lbl_mon = self.add(st, |t| t.st_monitor, s, none, 0, Kind::Label);
+        h.mon = self.add(cb, |_| "", combo, none, ID_MONITOR, Kind::Control);
+        h.sec_pv = self.add(st, |t| t.st_sec_preview, s, none, 0, Kind::Section);
+        h.pv_top = self.add(bt, |t| t.st_pv_top, check, none, ID_PV_TOP, Kind::Control);
+        h.lbl_pv_op = self.add(st, |t| t.st_pv_opacity, s, none, 0, Kind::Label);
+        h.hint_pv_op = self.add(st, |t| t.st_pv_opacity_hint, s, none, 0, Kind::Hint);
+        h.pv_op = self.add(cb, |_| "", combo, none, ID_PV_OPACITY, Kind::Control);
+        h.lbl_pv_pos = self.add(st, |t| t.st_pv_position, s, none, 0, Kind::Label);
+        h.pv_pos = self.add(cb, |_| "", combo, none, ID_PV_POS, Kind::Control);
+        h.lbl_pv_size = self.add(st, |t| t.st_pv_size, s, none, 0, Kind::Label);
+        h.hint_pv_size = self.add(st, |t| t.st_pv_size_hint, s, none, 0, Kind::Hint);
+        h.pv_size = self.add(cb, |_| "", combo, none, ID_PV_SIZE, Kind::Control);
 
         self.building.set(Some(Page::About));
-        h.about_name = self.add(st, "Chup", s, none, 0, Kind::Title);
-        h.about_ver = self.add(st, &version_text(), s, none, 0, Kind::Label);
+        h.about_name = self.add(st, |_| "Chup", s, none, 0, Kind::Title);
+        h.about_ver = self.add(st, |_| "", s, none, 0, Kind::Label);
         h.about_desc = self.add(
             st,
-            "Chụp màn hình theo vùng cho Windows: stack ảnh kéo thả, chụp đóng băng, Preview, copy chữ từ ảnh.",
+            |t| t.st_about_desc,
             s,
             none,
             0,
             Kind::Hint,
         );
-        h.about_web = self.add(bt, "Trang dự án", button, none, ID_ABOUT_WEB, Kind::Control);
-        h.about_log = self.add(bt, "Mở thư mục log", button, none, ID_ABOUT_LOG, Kind::Control);
-        h.sec_about_ocr = self.add(st, "OCR tiếng Việt", s, none, 0, Kind::Section);
-        h.about_engine = self.add(st, "", s, none, 0, Kind::Hint);
+        h.about_web = self.add(bt, |t| t.st_about_web, button, none, ID_ABOUT_WEB, Kind::Control);
+        h.about_log = self.add(bt, |t| t.st_about_log, button, none, ID_ABOUT_LOG, Kind::Control);
+        h.sec_about_ocr = self.add(st, |t| t.st_about_sec_ocr, s, none, 0, Kind::Section);
+        h.about_engine = self.add(st, |_| "", s, none, 0, Kind::Hint);
         h.about_notice =
-            self.add(bt, "Giấy phép Tesseract và thư viện", button, none, ID_ABOUT_NOTICE, Kind::Control);
+            self.add(bt, |t| t.st_about_notice, button, none, ID_ABOUT_NOTICE, Kind::Control);
 
         // Dòng trạng thái (lỗi chọn folder…) ở đáy, chung cho mọi trang.
         self.building.set(None);
-        h.status = self.add(st, "", s, none, 0, Kind::Hint);
+        h.status = self.add(st, |_| "", s, none, 0, Kind::Hint);
 
-        for (_, name) in PAGES {
-            let t = wide(name);
-            unsafe { SendMessageW(h.nav, LB_ADDSTRING, None, Some(LPARAM(t.as_ptr() as isize))) };
-        }
-        let page_idx = PAGES.iter().position(|(p, _)| *p == self.page.get()).unwrap_or(0);
-        unsafe { SendMessageW(h.nav, LB_SETCURSEL, Some(WPARAM(page_idx)), None) };
-        for (c, items) in [
-            (h.after, &["Đóng vùng chọn", "Giữ vùng chọn để chụp tiếp"][..]),
-            (h.edge, &["Phải", "Trái"][..]),
-            (h.ocr_lang, &["Tiếng Anh (có sẵn trong Windows)", "Tiếng Việt + Anh"][..]),
-            (h.mon, &["Màn hình chính", "Màn hình đang có con trỏ"][..]),
-            (h.pv_op, &["100%", "90%", "80%", "70%", "60%", "50%", "40%", "30%", "20%"][..]),
-            (h.pv_pos, &["Chỗ và cỡ lần trước", "Cạnh stack", "Giữa màn hình"][..]),
-            (
-                h.pv_size,
-                &["Tối đa 30% màn hình", "Tối đa 50% màn hình", "Tối đa 70% màn hình", "Tối đa 90% màn hình"][..],
-            ),
-        ] {
-            for it in items {
-                let t = wide(it);
-                unsafe { SendMessageW(c, CB_ADDSTRING, None, Some(LPARAM(t.as_ptr() as isize))) };
-            }
-        }
         for hk in [h.hk1, h.hk2, h.hk3, h.hk4] {
             unsafe {
                 let _ = SetWindowSubclass(hk, Some(hotkey_proc), 1, self.hwnd.0 as usize);
             }
         }
         *self.h.borrow_mut() = h;
+        self.fill_lists();
         self.set_page_title();
         self.apply_dpi();
+    }
+
+    /// Mục của danh sách trang và các combobox (theo ngôn ngữ hiện hành). Chọn mục nào thì `refresh` đặt.
+    fn fill_lists(&self) {
+        let h = *self.h.borrow();
+        let t = t();
+        let page_idx = PAGES.iter().position(|(p, _)| *p == self.page.get()).unwrap_or(0);
+        let pages: Vec<String> = PAGES.iter().map(|(_, name)| name(t).to_string()).collect();
+        let pct = |n: u32| fill(t.st_pv_size_max, &[&n]);
+        let ui_langs: Vec<String> =
+            UI_LANGS.iter().map(|(_, name)| name.unwrap_or(t.st_ui_language_system).to_string()).collect();
+        let lists: [(HWND, bool, Vec<String>); 9] = [
+            (h.nav, true, pages),
+            (h.after, false, vec![t.st_after_close.into(), t.st_after_keep.into()]),
+            (h.edge, false, vec![t.st_edge_right.into(), t.st_edge_left.into()]),
+            (h.ocr_lang, false, vec![t.st_ocr_en.into(), t.st_ocr_vi.into()]),
+            (h.mon, false, vec![t.st_monitor_primary.into(), t.st_monitor_cursor.into()]),
+            (h.pv_op, false, (2..=10).rev().map(|n| format!("{}%", n * 10)).collect()),
+            (h.pv_pos, false, vec![t.st_pv_pos_last.into(), t.st_pv_pos_stack.into(), t.st_pv_pos_center.into()]),
+            (h.pv_size, false, vec![pct(30), pct(50), pct(70), pct(90)]),
+            (h.ui_lang, false, ui_langs),
+        ];
+        for (c, is_list, items) in lists {
+            let (reset, add) = if is_list { (LB_RESETCONTENT, LB_ADDSTRING) } else { (CB_RESETCONTENT, CB_ADDSTRING) };
+            unsafe { SendMessageW(c, reset, None, None) };
+            for it in items {
+                let w = wide(&it);
+                unsafe { SendMessageW(c, add, None, Some(LPARAM(w.as_ptr() as isize))) };
+            }
+        }
+        unsafe { SendMessageW(h.nav, LB_SETCURSEL, Some(WPARAM(page_idx)), None) };
+    }
+
+    /// Ngôn ngữ giao diện đổi: gán lại chữ cố định của mọi control, danh sách, tiêu đề. App gọi `refresh` ngay sau
+    /// để đặt lại chữ động, mục đang chọn và sắp xếp lại (chữ dài ngắn khác nhau).
+    pub fn retext(&self) {
+        self.updating.set(true);
+        let ctls: Vec<(HWND, Text)> = self.st.borrow().ctls.iter().map(|c| (c.hwnd, c.text)).collect();
+        for (c, text) in ctls {
+            set_text(c, text(t()));
+        }
+        set_text(self.hwnd, t().app_settings_title);
+        self.fill_lists();
+        self.set_page_title();
+        self.updating.set(false);
     }
 
     fn set_icon(&self) {
@@ -819,7 +858,7 @@ impl Settings {
     }
 
     fn set_page_title(&self) {
-        let name = PAGES.iter().find(|(p, _)| *p == self.page.get()).map(|(_, n)| *n).unwrap_or_default();
+        let name = PAGES.iter().find(|(p, _)| *p == self.page.get()).map(|(_, n)| n(t())).unwrap_or_default();
         set_text(self.h.borrow().title, name);
     }
 
@@ -869,6 +908,7 @@ impl Settings {
                     l.text(h.hint_pattern, 0.0);
                     l.end_card();
                     l.card(Some(h.sec_sys));
+                    l.row(h.lbl_ui_lang, None, h.ui_lang, COMBO_W, 24.0, true);
                     l.check(h.autostart, 0.0);
                     l.end_card();
                 }
@@ -1024,16 +1064,16 @@ impl Settings {
         self.updating.set(true);
         let h = *self.h.borrow();
         let c = &v.config;
+        let t = t();
         set_text(h.dir, &c.save_dir.display().to_string());
         if unsafe { GetFocus() } != h.pattern {
             set_text(h.pattern, &c.file_name_pattern);
         }
-        set_text(
-            h.hint_pattern,
-            &format!("Phần trong {{ }} là ngày giờ: yyyy MM dd HH mm ss SSS. Ví dụ: {}", v.preview),
-        );
+        set_text(h.hint_pattern, &fill(t.st_file_name_hint, &[&v.preview]));
         set_checked(h.copy, c.copy_to_clipboard);
         set_checked(h.hk3_on, c.hotkeys.freeze_enabled);
+        set_combo(h.ui_lang, UI_LANGS.iter().position(|(l, _)| *l == c.ui_language).unwrap_or(0) as i32);
+        set_text(h.about_ver, &version_text());
         unsafe {
             let _ = EnableWindow(h.hk3_on, !c.hotkeys.freeze.is_empty());
         }
@@ -1060,15 +1100,10 @@ impl Settings {
         let engine_missing = matches!(v.ocr_engine, EngineInfo::Missing);
         let downloaded = matches!(v.ocr_engine, EngineInfo::Downloaded(_)) || pack::data().is_installed(&v.ocr_root);
         let (status, button, enabled) = match v.ocr_vi {
-            OcrViState::Ready => ("OCR tiếng Việt: đã sẵn sàng.".to_string(), "Xoá bản đã tải".to_string(), downloaded),
+            OcrViState::Ready => (t.st_ocr_ready.to_string(), t.st_ocr_remove.to_string(), downloaded),
             OcrViState::NoPack => (
-                if engine_missing {
-                    "OCR tiếng Việt: chưa tải. Tải từ GitHub: engine (repo Chup) và dữ liệu (tesseract-ocr/tessdata_fast)."
-                } else {
-                    "OCR tiếng Việt: chưa tải dữ liệu. Tải từ GitHub (tesseract-ocr/tessdata_fast)."
-                }
-                .to_string(),
-                format!("Tải về ({})", pack::size_label(v.ocr_download)),
+                if engine_missing { t.st_ocr_missing_all } else { t.st_ocr_missing_data }.to_string(),
+                fill(t.st_ocr_download, &[&pack::size_label(v.ocr_download)]),
                 true,
             ),
         };
@@ -1088,11 +1123,7 @@ impl Settings {
         }
         set_text(
             h.note,
-            if v.exclusion_ok {
-                "Thường không cần bật: Windows đã loại toolbar và stack khỏi ảnh chụp. Bật nếu vẫn thấy chúng lọt vào ảnh."
-            } else {
-                "Windows này không hỗ trợ loại cửa sổ khỏi ảnh chụp (cần Windows 10 bản 2004 trở lên), nên Chup luôn ẩn toolbar và stack trong lúc chụp."
-            },
+            if v.exclusion_ok { t.st_hide_ui_note_ok } else { t.st_hide_ui_note_old },
         );
         self.st.borrow_mut().view = Some(v);
         self.render_hotkeys();
@@ -1113,7 +1144,7 @@ impl Settings {
             ("ocr", h.hk4, h.err4, &v.config.hotkeys.ocr),
         ] {
             if recording != Some(name) {
-                set_text(edit, if val.is_empty() { "Không dùng" } else { val });
+                set_text(edit, if val.is_empty() { t().unused_hotkey } else { val });
             }
             let msg = rec_err.get(name).or_else(|| v.hotkey_errors.get(name)).cloned().unwrap_or_default();
             set_text(err, &msg);
@@ -1151,7 +1182,7 @@ impl Settings {
             st.record_errors.remove(name);
         }
         emit(Action::PauseHotkeys);
-        set_text(edit, RECORDING_TEXT);
+        set_text(edit, t().st_recording);
         self.render_hotkeys();
     }
 
@@ -1203,9 +1234,9 @@ impl Settings {
             if let Recorded::Accelerator(a) = hotkey_name::record(vk, current_mods()) {
                 self.st.borrow_mut().record_errors.insert(
                     name.to_string(),
-                    format!("{a} đang được app khác (hoặc Windows) dùng nên Chup không đăng ký được. Hãy chọn tổ hợp khác."),
+                    fill(t().hotkey_taken_recording, &[&a]),
                 );
-                set_text(edit, RECORDING_TEXT);
+                set_text(edit, t().st_recording);
                 self.render_hotkeys();
             }
         }
@@ -1279,7 +1310,7 @@ impl Settings {
             SetTextColor(dc, COLORREF(TEXT));
             let mut tr = r;
             tr.left += p(14.0);
-            let mut text: Vec<u16> = name.encode_utf16().collect();
+            let mut text: Vec<u16> = name(t()).encode_utf16().collect();
             DrawTextW(dc, &mut text, &mut tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
             SelectObject(dc, old_font);
             if di.itemState.0 & ODS_FOCUS.0 != 0 && di.itemState.0 & ODS_NOFOCUSRECT.0 == 0 {
@@ -1363,7 +1394,7 @@ fn pick_folder_dialog(owner: HWND, current: Option<PathBuf>) -> Result<Option<Pa
             CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).map_err(|e| e.to_string())?;
         let opts = dlg.GetOptions().map_err(|e| e.to_string())?;
         dlg.SetOptions(opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM).map_err(|e| e.to_string())?;
-        let _ = dlg.SetTitle(w!("Chọn folder lưu ảnh"));
+        let _ = dlg.SetTitle(&HSTRING::from(t().st_pick_folder_title));
         if let Some(dir) = current.filter(|d| d.is_dir()) {
             let p = HSTRING::from(dir.as_os_str());
             if let Ok(item) = SHCreateItemFromParsingName::<_, _, IShellItem>(&p, None) {
@@ -1414,6 +1445,10 @@ impl Handler for Settings {
                         SetTimer(Some(hwnd), TIMER_PATTERN, 400, None);
                     },
                     (ID_COPY, BN_CLICKED) => self.patch(json!({ "copyToClipboard": checked(h.copy) })),
+                    (ID_UI_LANG, CBN_SELCHANGE) => {
+                        let i = combo_sel(h.ui_lang).clamp(0, UI_LANGS.len() as i32 - 1) as usize;
+                        self.patch(json!({ "uiLanguage": UI_LANGS[i].0 }))
+                    }
                     (ID_HK_FREEZE_ON, BN_CLICKED) => {
                         self.patch(json!({ "hotkeys": { "freezeEnabled": checked(h.hk3_on) } }))
                     }

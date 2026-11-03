@@ -147,12 +147,16 @@
 
 Cửa sổ thường, có trên taskbar. Chỉ tạo khi mở, huỷ khi đóng. Thay đổi được lưu ngay khi sửa, không có nút Save.
 
+**Ngôn ngữ giao diện** (chup-81y): tiếng Việt và tiếng Anh, chuỗi ở `core::i18n`. Mặc định theo ngôn ngữ giao diện
+của Windows (tiếng Việt nếu Windows là tiếng Việt, còn lại tiếng Anh); đổi trong Cài đặt có hiệu lực ngay (tray,
+Cài đặt, toast mới). Ngôn ngữ OCR là lựa chọn riêng. Bộ cài cũng tự chọn tiếng Việt / tiếng Anh theo Windows.
+
 Bố cục (chup-ck1, 2026-11-03) kiểu Cài đặt của Windows 11: bên trái là danh sách trang, bên phải là tiêu đề trang và các
 thẻ nền trắng trên nền xám. Cửa sổ cỡ cố định theo trang cao nhất; mở lại trong cùng phiên thì về trang lần trước.
 
 | Trang | Nội dung |
 |---|---|
-| Chung | Folder lưu ảnh, tên file; khởi động cùng Windows |
+| Chung | Folder lưu ảnh, tên file; ngôn ngữ giao diện (Theo Windows / Tiếng Việt / English); khởi động cùng Windows |
 | Phím tắt | 4 ô ghi phím (chọn vùng, chụp vùng hiện tại/cuối, Freeze, chụp text), báo lỗi ngay dưới ô; ô bật/tắt phím Freeze |
 | Chụp ảnh | Tự động chọn vùng (SPEC 16); sau khi chụp (copy clipboard, giữ/đóng vùng chọn); ẩn toolbar/stack lúc chụp |
 | Copy chữ (OCR) | Ngôn ngữ, trạng thái + nút tải/xoá gói tiếng Việt, tự nhận diện khi mở Preview |
@@ -304,6 +308,8 @@ File: `%APPDATA%\app.chup.desktop\config.json` (giữ nguyên đường dẫn c�
 - Version 3 (2026-11-03, chup-289): mặc định `hotkeys.capture` đổi từ `Ctrl+Alt+S` (hay bị app khác giữ) sang `Ctrl+Alt+X`.
   Migrate: còn đúng `Ctrl+Alt+S` thì đổi sang `Ctrl+Alt+X`, trừ khi phím đó đã gán cho hotkey khác. Thêm
   `hotkeys.freezeEnabled` (mặc định `true`): tắt thì không đăng ký hotkey Freeze (F1 trả lại cho app khác) mà vẫn nhớ phím.
+- Version 4 (chup-81y): thêm `uiLanguage` (`system` | `vi` | `en`). Cài mới (chưa có file): `system`. Config cũ: `vi`,
+  để người đang dùng không bị đổi sang tiếng Anh chỉ vì Windows của họ là tiếng Anh.
 - Chuỗi rỗng = tắt hotkey đó. Hai hotkey không được trùng nhau.
 
 Config hỏng hoặc parse lỗi: backup thành `config.bak.json`, rồi dùng mặc định.

@@ -7,6 +7,7 @@
 //! hoặc job quá thời gian, là kill process; lần sau chạy lại. Process gắn Job Object `KILL_ON_JOB_CLOSE` nên Chup chết
 //! thì nó chết theo. Kết quả về UI thread bằng `emit(Action::OcrDone)`.
 
+use chup_core::i18n::t;
 use std::{
     io::{BufReader, BufWriter},
     os::windows::{io::AsRawHandle, process::CommandExt},
@@ -276,12 +277,12 @@ fn err(user: &str, log: impl Into<String>) -> OcrError {
 fn windows_engine() -> Result<OcrEngine, OcrError> {
     let en = Language::CreateLanguage(&HSTRING::from("en-US")).and_then(|l| OcrEngine::TryCreateFromLanguage(&l));
     en.or_else(|_| OcrEngine::TryCreateFromUserProfileLanguages()).map_err(|e| {
-        err("Windows chưa có OCR tiếng Anh. Hãy chọn \"Tiếng Việt + Anh\" trong Cài đặt.", format!("OcrEngine: {e}"))
+        err(t().ocr_no_windows_en, format!("OcrEngine: {e}"))
     })
 }
 
 fn recognize_windows(engine: &mut Option<OcrEngine>, gray: &GrayImage) -> Result<Vec<Line>, OcrError> {
-    let fail = |e: windows::core::Error| err("OCR lỗi, hãy thử lại.", format!("Windows OCR: {e}"));
+    let fail = |e: windows::core::Error| err(t().ocr_failed_retry, format!("Windows OCR: {e}"));
     if engine.is_none() {
         *engine = Some(windows_engine()?);
     }
@@ -391,12 +392,10 @@ fn start_tess(shared: &SharedRef, ocr_root: &Path) -> Result<Tess, OcrError> {
             r => return r.map_err(StartError::into_ocr),
         }
     }
-    let exe = downloaded.ok_or_else(|| err(DOWNLOAD_AGAIN, "không thấy chup-ocr.exe"))?;
+    let exe = downloaded.ok_or_else(|| err(t().ocr_engine_missing, "không thấy chup-ocr.exe"))?;
     spawn_tess(shared, ocr_root, &exe).map_err(StartError::into_ocr)
 }
 
-const REINSTALL: &str = "Engine OCR tiếng Việt không khớp phiên bản Chup. Hãy cài lại Chup.";
-const DOWNLOAD_AGAIN: &str = "Thiếu engine OCR tiếng Việt. Hãy tải lại trong Cài đặt > Copy chữ (OCR).";
 
 enum StartError {
     /// Exe phụ khác PROTO: thử bản khác được.
@@ -428,7 +427,7 @@ fn spawn_tess(shared: &SharedRef, ocr_root: &Path, exe: &Path) -> Result<Tess, S
         .spawn()
         .map_err(|e| {
             StartError::Other(err(
-                "Không chạy được engine OCR tiếng Việt. Phần mềm diệt virus có thể đã chặn chup-ocr.exe.",
+                t().ocr_engine_blocked,
                 format!("chạy {}: {e}", exe.display()),
             ))
         })?;
@@ -446,7 +445,7 @@ fn spawn_tess(shared: &SharedRef, ocr_root: &Path, exe: &Path) -> Result<Tess, S
         other => {
             lock(shared).kill();
             return Err(StartError::Other(err(
-                "Gói OCR tiếng Việt bị lỗi. Hãy xoá gói rồi tải lại trong Cài đặt.",
+                t().ocr_pack_broken,
                 format!("chup-ocr.exe không chào: {:?}", other.err()),
             )));
         }
@@ -454,7 +453,7 @@ fn spawn_tess(shared: &SharedRef, ocr_root: &Path, exe: &Path) -> Result<Tess, S
     if hello.proto != PROTO {
         lock(shared).kill();
         return Err(StartError::Proto(err(
-            REINSTALL,
+            t().ocr_engine_mismatch,
             format!("{} proto {} khác {PROTO}", exe.display(), hello.proto),
         )));
     }
@@ -481,21 +480,21 @@ fn recognize_tesseract(
     if lock(shared).cancelled {
         return Err(err("", "đã huỷ"));
     }
-    let t = tess.as_mut().expect("vừa tạo");
+    let conn = tess.as_mut().expect("vừa tạo");
     let (width, height) = gray.dimensions();
     let req = Request { id, width, height, pixels: gray.into_raw() };
-    let io = |e: std::io::Error| err("OCR lỗi, hãy thử lại.", format!("pipe chup-ocr.exe: {e}"));
-    let resp = write_frame(&mut t.stdin, &req.encode())
-        .and_then(|()| read_json::<Response>(&mut t.stdout))
+    let io = |e: std::io::Error| err(t().ocr_failed_retry, format!("pipe chup-ocr.exe: {e}"));
+    let resp = write_frame(&mut conn.stdin, &req.encode())
+        .and_then(|()| read_json::<Response>(&mut conn.stdout))
         .map_err(io)
-        .and_then(|r| r.ok_or_else(|| err("OCR lỗi, hãy thử lại.", "chup-ocr.exe đóng pipe")));
+        .and_then(|r| r.ok_or_else(|| err(t().ocr_failed_retry, "chup-ocr.exe đóng pipe")));
     match resp {
         Ok(Response::Ok { id: rid, lines }) if rid == id => Ok(lines),
-        Ok(Response::Err { error, .. }) => Err(err("OCR lỗi, hãy thử lại.", format!("chup-ocr.exe: {error}"))),
+        Ok(Response::Err { error, .. }) => Err(err(t().ocr_failed_retry, format!("chup-ocr.exe: {error}"))),
         Ok(other) => {
             *tess = None;
             lock(shared).kill();
-            Err(err("OCR lỗi, hãy thử lại.", format!("trả lời lệch job: {} != {id}", other.id())))
+            Err(err(t().ocr_failed_retry, format!("trả lời lệch job: {} != {id}", other.id())))
         }
         Err(e) => {
             // Pipe hỏng (crash, bị kill): bỏ kết nối, lần sau chạy lại.

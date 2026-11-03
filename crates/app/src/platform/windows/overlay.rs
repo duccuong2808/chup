@@ -39,8 +39,6 @@ use super::{
 const DIM: Color = Color::rgba(0, 0, 0, 0.4);
 /// Gần như trong suốt nhưng vẫn nhận chuột.
 const HOLE_PX: u32 = 0x0100_0000;
-const HINT: &str = "Kéo để chọn vùng · Esc hoặc chuột phải để huỷ";
-const HINT_AUTO: &str = "Click để chọn khung đang tô · Kéo để chọn vùng · Lăn chuột đổi cỡ khung · Esc để huỷ";
 
 struct Sprite {
     s: Surface,
@@ -125,7 +123,7 @@ impl Overlay {
         if self.st.borrow().hint.is_none() || self.st.borrow().hint_auto != auto {
             let k = self.mon.scale as f32;
             let white = Color::rgba(255, 255, 255, 1.0);
-            let text = if auto { HINT_AUTO } else { HINT };
+            let text = if auto { chup_core::i18n::t().hint_select_auto } else { chup_core::i18n::t().hint_select };
             self.st.borrow_mut().hint_auto = auto;
             let hint = pill(text, 13.0 * k, 12.0 * k, 6.0 * k, 999.0, Color::rgba(0, 0, 0, 0.7), white).map(|s| {
                 let at = Rect::new((w - s.w) / 2, self.s(24.0), s.w as u32, s.h as u32);

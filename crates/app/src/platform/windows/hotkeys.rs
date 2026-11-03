@@ -1,5 +1,6 @@
 //! Phím tắt toàn cục (SPEC 5.1, 7). Báo lỗi bằng câu tiếng Việt khi tổ hợp đã có chủ.
 
+use chup_core::i18n::{fill, t};
 use std::{collections::BTreeMap, str::FromStr};
 
 use chup_core::config::Hotkeys as HotkeyConfig;
@@ -23,16 +24,16 @@ pub struct Hotkeys {
 
 /// RegisterHotKey thất bại gần như luôn vì tổ hợp đã có chủ (app khác hoặc chính Windows).
 fn taken_message(accel: &str) -> String {
-    format!("Không dùng được {accel} vì app khác (hoặc Windows) đang dùng tổ hợp này. Hãy chọn tổ hợp khác.")
+    fill(t().hotkey_taken, &[&accel])
 }
 
 fn invalid_message(accel: &str) -> String {
-    format!("Phím tắt \"{accel}\" không hợp lệ. Hãy bấm vào ô và nhấn lại tổ hợp phím.")
+    fill(t().hotkey_invalid, &[&accel])
 }
 
 impl Hotkeys {
     pub fn new() -> Result<Hotkeys, String> {
-        let mgr = GlobalHotKeyManager::new().map_err(|e| format!("Không khởi tạo được phím tắt: {e}"))?;
+        let mgr = GlobalHotKeyManager::new().map_err(|e| fill(t().err_hotkey_init, &[&e]))?;
         GlobalHotKeyEvent::set_event_handler(Some(|e: GlobalHotKeyEvent| {
             if e.state == HotKeyState::Pressed {
                 emit(Action::Hotkey(e.id));

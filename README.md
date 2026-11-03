@@ -283,6 +283,15 @@ tự đặt ảnh, nên không do Chup. Muốn kiểm tra clipboard thì phải 
 vừa rê vào thumbnail thì không kéo được (0/4); dừng ≥ 0,15 s thì 9/9. Có 1 lần lỗi dù đã dừng
 0,5 s, chưa rõ nguyên nhân (Chup hay cách VMPal giả lập chuột).
 
+## Ngôn ngữ giao diện
+
+Tiếng Việt và tiếng Anh (`crates/core/src/i18n.rs`: mỗi chuỗi một dòng, hai bản dịch cạnh nhau, thiếu bản dịch là lỗi
+biên dịch). Mặc định theo Windows; đổi ở Cài đặt > Chung. Đã chụp kiểm tra 6 trang Cài đặt bằng tiếng Anh và đổi
+ngôn ngữ khi đang mở Cài đặt (Windows 11 x64, 125%). Chưa xem bằng mắt: toolbar, stack, overlay, menu tray, hộp
+thoại tải OCR và bộ cài bằng tiếng Anh. Không dịch: log; câu báo file cấu hình hỏng (sinh ra trước khi biết ngôn ngữ).
+Trên máy Windows tiếng Anh mà đã dùng Chup từ trước: app giữ tiếng Việt (config cũ), còn bộ cài hiện tiếng Anh (bộ cài
+theo Windows, không đọc config).
+
 ## Khác với SPEC
 
 - **Frame không bị ẩn khi dùng chế độ "ẩn UI lúc chụp".**

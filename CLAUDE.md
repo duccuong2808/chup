@@ -49,7 +49,8 @@ Máy dev là macOS: check/clippy cho target Windows chạy được (cần `rust
 
 ## Quy ước
 
-- Thông báo cho người dùng viết bằng tiếng Việt; comment code tiếng Việt. Lỗi kỹ thuật của crate chỉ ghi log (`%LOCALAPPDATA%\app.chup.desktop\chup.log`), không hiện cho người dùng.
+- Chuỗi người dùng thấy đi qua `core::i18n` (`t().ten_chuoi`, tham số `{}` điền bằng `fill`), có cả tiếng Việt lẫn
+  tiếng Anh; không viết cứng chuỗi giao diện trong code. Log, comment code: tiếng Việt, không dịch. Lỗi kỹ thuật của crate chỉ ghi log (`%LOCALAPPDATA%\app.chup.desktop\chup.log`), không hiện cho người dùng.
 - Version crate được pin bằng `=`; kiểm tra signature trên docs.rs trước khi nâng (đặc biệt `xcap`, `windows`).
 - Hotkey dùng định dạng của crate `global-hotkey` (`Ctrl+Alt+A`, `F1`...).
 - Việc cần làm theo dõi bằng beads (`bd`, xem khối bên dưới). Memory chia hai nơi:

@@ -39,10 +39,6 @@ use super::{
     WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_RBUTTONUP, WM_SETCURSOR,
 };
 
-const HINT_FROZEN: &str = "Ảnh đã đóng băng · Kéo để chọn vùng · Enter để lưu · Esc để huỷ";
-const HINT_FROZEN_AUTO: &str = "Ảnh đã đóng băng · Click chọn khung hoặc kéo chọn vùng · Enter để lưu · Esc để huỷ";
-const HINT_FAILED: &str = "Không chụp được màn hình này · Esc để huỷ";
-const HINT_OCR: &str = "Chụp text · Kéo để chọn vùng có chữ · Esc để huỷ";
 /// Handle vẽ 8 DIP, vùng bắt chuột 14 DIP cho dễ trúng.
 const HANDLE_DIP: f64 = 8.0;
 const HANDLE_HIT_DIP: f64 = 14.0;
@@ -51,12 +47,16 @@ const BAR_GAP_DIP: f64 = 6.0;
 const WHITE: u32 = 0xFFFF_FFFF;
 const DARK: u32 = 0xFF20_2020;
 
-const BUTTONS: [BarButton; 4] = [
-    BarButton { icon: Icon::Check, label: "Lưu", primary: true, active: false },
-    BarButton { icon: Icon::Copy, label: "Copy", primary: false, active: false },
-    BarButton { icon: Icon::Text, label: "Chữ", primary: false, active: false },
-    BarButton { icon: Icon::Close, label: "", primary: false, active: false },
-];
+/// Nút của toolbar Freeze (chữ theo ngôn ngữ giao diện).
+fn buttons() -> [BarButton; 4] {
+    let t = chup_core::i18n::t();
+    [
+        BarButton { icon: Icon::Check, label: t.btn_save, primary: true, active: false },
+        BarButton { icon: Icon::Copy, label: "Copy", primary: false, active: false },
+        BarButton { icon: Icon::Text, label: t.btn_text, primary: false, active: false },
+        BarButton { icon: Icon::Close, label: "", primary: false, active: false },
+    ]
+}
 /// Hành động của từng nút; `None` = huỷ.
 const ACTIONS: [Option<FreezeAction>; 4] =
     [Some(FreezeAction::Save), Some(FreezeAction::Copy), Some(FreezeAction::Ocr), None];
@@ -115,7 +115,7 @@ struct Bar {
 impl Bar {
     fn new(k: f32) -> Option<Bar> {
         let font = Font::new(13.0 * k, false, Align::Leading, false);
-        let w = (bar_width(font.as_ref(), k, &BUTTONS, false) + 4.0 * k).ceil() as i32;
+        let w = (bar_width(font.as_ref(), k, &buttons(), false) + 4.0 * k).ceil() as i32;
         let h = (BAR_H_DIP as f32 * k).ceil() as i32;
         let surface = Surface::new(w, h)?;
         let canvas = Canvas::new(&surface)?;
@@ -129,7 +129,7 @@ impl Bar {
         let size = (self.surface.w, self.surface.h);
         self.canvas.begin(Color::rgba(0, 0, 0, 0.0));
         self.buttons =
-            paint_bar(&self.canvas, self.font.as_ref(), &theme, self.k, size, &BUTTONS, false, self.hover, self.pressed);
+            paint_bar(&self.canvas, self.font.as_ref(), &theme, self.k, size, &buttons(), false, self.hover, self.pressed);
         self.canvas.end();
     }
 
@@ -196,10 +196,10 @@ impl Overlay {
         let t0 = std::time::Instant::now();
         let k = self.mon.scale as f32;
         let text = match (img.is_some(), ocr_only) {
-            (false, _) => HINT_FAILED,
-            (true, true) => HINT_OCR,
-            (true, false) if auto => HINT_FROZEN_AUTO,
-            (true, false) => HINT_FROZEN,
+            (false, _) => chup_core::i18n::t().hint_freeze_failed,
+            (true, true) => chup_core::i18n::t().hint_ocr,
+            (true, false) if auto => chup_core::i18n::t().hint_frozen_auto,
+            (true, false) => chup_core::i18n::t().hint_frozen,
         };
         let white = Color::rgba(255, 255, 255, 1.0);
         let hint = pill(text, 13.0 * k, 12.0 * k, 6.0 * k, 999.0, Color::rgba(0, 0, 0, 0.7), white).map(|s| {

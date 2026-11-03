@@ -8,6 +8,7 @@ use std::{
     sync::Arc,
 };
 
+use crate::i18n::{fill, t};
 use chrono::{DateTime, Local};
 use image::{
     codecs::png::{CompressionType, FilterType, PngEncoder},
@@ -37,7 +38,7 @@ pub struct Shot {
 /// Chụp `rect` (physical px toàn desktop). Vùng được cắt theo màn hình chứa tâm của nó.
 pub fn grab_region(rect: Rect) -> Result<RgbaImage, String> {
     let (cx, cy) = rect.center();
-    let mon = xcap::Monitor::from_point(cx, cy).map_err(|e| format!("Không tìm thấy màn hình của vùng chụp: {e}"))?;
+    let mon = xcap::Monitor::from_point(cx, cy).map_err(|e| fill(t().err_no_monitor_for_region, &[&e]))?;
     let m = Rect::new(
         mon.x().map_err(|e| e.to_string())?,
         mon.y().map_err(|e| e.to_string())?,
@@ -46,9 +47,9 @@ pub fn grab_region(rect: Rect) -> Result<RgbaImage, String> {
     );
     let r = rect
         .intersect(&m)
-        .ok_or_else(|| "Vùng chụp nằm ngoài màn hình".to_string())?;
+        .ok_or_else(|| t().err_region_off_screen.to_string())?;
     mon.capture_region((r.x - m.x) as u32, (r.y - m.y) as u32, r.w, r.h)
-        .map_err(|e| format!("Chụp màn hình thất bại: {e}"))
+        .map_err(|e| fill(t().err_capture_failed, &[&e]))
 }
 
 /// Ảnh của 1 màn hình trong lần chụp Freeze: rect physical của màn hình kèm ảnh (hoặc lỗi).
@@ -57,7 +58,7 @@ pub type MonitorShot = (Rect, Result<RgbaImage, String>);
 /// Chụp mọi màn hình song song (Freeze, SPEC 14.3).
 /// Mỗi thread tự lấy `Monitor` của mình, không chia sẻ đối tượng xcap giữa các thread.
 pub fn grab_monitors() -> Result<Vec<MonitorShot>, String> {
-    let mons = xcap::Monitor::all().map_err(|e| format!("Không liệt kê được màn hình: {e}"))?;
+    let mons = xcap::Monitor::all().map_err(|e| fill(t().err_list_monitors, &[&e]))?;
     let rects: Vec<Rect> = mons
         .iter()
         .filter_map(|m| Some(Rect::new(m.x().ok()?, m.y().ok()?, m.width().ok()?, m.height().ok()?)))
@@ -71,14 +72,14 @@ pub fn grab_monitors() -> Result<Vec<MonitorShot>, String> {
                     let (cx, cy) = r.center();
                     xcap::Monitor::from_point(cx, cy)
                         .and_then(|m| m.capture_image())
-                        .map_err(|e| format!("Chụp màn hình thất bại: {e}"))
+                        .map_err(|e| fill(t().err_capture_failed, &[&e]))
                 })
             })
             .collect();
         rects
             .iter()
             .zip(jobs)
-            .map(|(r, j)| (*r, j.join().unwrap_or_else(|_| Err("Thread chụp bị panic".into()))))
+            .map(|(r, j)| (*r, j.join().unwrap_or_else(|_| Err(t().err_capture_thread.into()))))
             .collect()
     }))
 }
@@ -121,11 +122,11 @@ pub fn persist_shot(img: &RgbaImage, opts: &PersistOptions) -> Result<PersistOut
 
     let (path, mut warnings) = saved?;
     let (thumb_path, thumb) = thumb
-        .map_err(|_| "Tạo thumbnail bị lỗi".to_string())?
-        .map_err(|e| format!("Tạo thumbnail bị lỗi: {e}"))?;
+        .map_err(|_| t().err_thumbnail.to_string())?
+        .map_err(|e| fill(t().err_thumbnail_detail, &[&e]))?;
     match clip {
-        Some(Ok(Err(e))) => warnings.push(format!("Không copy được vào clipboard: {e}")),
-        Some(Err(_)) => warnings.push("Không copy được vào clipboard".into()),
+        Some(Ok(Err(e))) => warnings.push(fill(t().warn_clipboard_detail, &[&e])),
+        Some(Err(_)) => warnings.push(t().warn_clipboard.into()),
         _ => {}
     }
 
@@ -159,22 +160,14 @@ fn save_png(bytes: &[u8], opts: &PersistOptions, now: &DateTime<Local>) -> Resul
         Ok(p) => Ok((p, vec![])),
         Err(primary_err) => {
             if opts.fallback_dir == opts.save_dir {
-                return Err(format!("Không lưu được ảnh vào {}: {primary_err}", opts.save_dir.display()));
+                return Err(fill(t().err_save_to, &[&opts.save_dir.display(), &primary_err]));
             }
             let p = write_unique(&opts.fallback_dir, &base, bytes).map_err(|e| {
-                format!(
-                    "Không lưu được ảnh vào {} ({primary_err}) lẫn {} ({e})",
-                    opts.save_dir.display(),
-                    opts.fallback_dir.display()
-                )
+                fill(t().err_save_both, &[&opts.save_dir.display(), &primary_err, &opts.fallback_dir.display(), &e])
             })?;
             Ok((
                 p.clone(),
-                vec![format!(
-                    "Không ghi được vào {} ({primary_err}). Ảnh đã lưu tại {}",
-                    opts.save_dir.display(),
-                    p.display()
-                )],
+                vec![fill(t().warn_saved_fallback, &[&opts.save_dir.display(), &primary_err, &p.display()])],
             ))
         }
     }
@@ -199,7 +192,7 @@ fn write_unique(dir: &Path, base: &str, bytes: &[u8]) -> Result<PathBuf, String>
             Err(e) => return Err(e.to_string()),
         }
     }
-    Err("Quá nhiều file trùng tên".into())
+    Err(t().err_too_many_same_name.into())
 }
 
 /// Pattern: phần trong `{...}` là định dạng ngày giờ kiểu `yyyyMMdd-HHmmss-SSS`.

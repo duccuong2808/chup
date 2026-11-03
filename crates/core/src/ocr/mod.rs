@@ -43,7 +43,7 @@ pub fn postprocess(lines: Vec<Line>) -> String {
     TextLayout::build(lines, 1.0).all_text()
 }
 
-/// Câu toast sau khi copy: "Đã copy 3 dòng: “dòng đầu…”".
+/// Câu toast sau khi copy: "Đã copy 3 dòng: “dòng đầu…”" (theo ngôn ngữ giao diện).
 pub fn copied_message(text: &str) -> String {
     let n = text.lines().count();
     let first = text.lines().next().unwrap_or_default();
@@ -51,7 +51,8 @@ pub fn copied_message(text: &str) -> String {
     if first.chars().count() > TOAST_SNIPPET_CHARS || n > 1 {
         snippet.push('…');
     }
-    format!("Đã copy {n} dòng: “{snippet}”")
+    let t = crate::i18n::t();
+    crate::i18n::fill(if n == 1 { t.copied_lines_one } else { t.copied_lines_many }, &[&n, &snippet])
 }
 
 #[cfg(test)]

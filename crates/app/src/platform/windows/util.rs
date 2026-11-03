@@ -2,7 +2,10 @@
 
 use std::{ffi::OsString, os::windows::ffi::OsStringExt, path::Path, path::PathBuf};
 
-use chup_core::coords::{MonitorInfo, Rect};
+use chup_core::{
+    coords::{MonitorInfo, Rect},
+    i18n::{fill, t},
+};
 use windows::{
     core::{w, BOOL, HSTRING, PCWSTR, PWSTR},
     Win32::{
@@ -25,6 +28,19 @@ use windows::{
         },
     },
 };
+
+/// Ngôn ngữ giao diện của Windows là tiếng Việt (LANG_VIETNAMESE = 0x2A).
+pub fn system_is_vietnamese() -> bool {
+    let langid = unsafe { windows::Win32::Globalization::GetUserDefaultUILanguage() };
+    langid & 0x3ff == 0x2a
+}
+
+/// Chọn ngôn ngữ giao diện theo config (và ngôn ngữ của Windows khi config là "theo hệ thống").
+pub fn apply_ui_language(pref: chup_core::i18n::UiLanguage) {
+    let lang = pref.resolve(system_is_vietnamese());
+    chup_core::i18n::set(lang);
+    log::info!("ngôn ngữ giao diện: {lang:?} (config {pref:?})");
+}
 
 /// Chuỗi kết thúc bằng NUL cho API Win32.
 pub fn wide(s: &str) -> Vec<u16> {
@@ -144,7 +160,7 @@ pub fn shell_open(path: &Path) -> Result<(), String> {
     if r.0 as isize > 32 {
         Ok(())
     } else {
-        Err(format!("Không mở được {}", path.display()))
+        Err(fill(t().err_open_path, &[&path.display()]))
     }
 }
 
@@ -154,11 +170,11 @@ pub fn shell_reveal(path: &Path) -> Result<(), String> {
     unsafe {
         let pidl = ILCreateFromPathW(&p);
         if pidl.is_null() {
-            return Err(format!("Không tìm thấy {}", path.display()));
+            return Err(fill(t().err_not_found, &[&path.display()]));
         }
         let r = SHOpenFolderAndSelectItems(pidl, None, 0);
         ILFree(Some(pidl));
-        r.map_err(|e| format!("Không mở được Explorer: {e}"))
+        r.map_err(|e| fill(t().err_open_explorer, &[&e]))
     }
 }
 
@@ -178,7 +194,7 @@ pub fn set_autostart(enable: bool) -> Result<(), String> {
         let mut key = HKEY::default();
         RegOpenKeyExW(HKEY_CURRENT_USER, RUN_KEY, None, KEY_SET_VALUE, &mut key)
             .ok()
-            .map_err(|e| format!("Không mở được khoá Run: {e}"))?;
+            .map_err(|e| fill(t().err_run_key, &[&e]))?;
         let res = if enable {
             let exe = std::env::current_exe().map_err(|e| e.to_string())?;
             let cmd = wide(&format!("\"{}\"", exe.display()));
@@ -192,7 +208,7 @@ pub fn set_autostart(enable: bool) -> Result<(), String> {
             }
         };
         let _ = RegCloseKey(key);
-        res.map_err(|e| format!("Không đổi được chế độ khởi động cùng Windows: {e}"))
+        res.map_err(|e| fill(t().err_autostart, &[&e]))
     }
 }
 

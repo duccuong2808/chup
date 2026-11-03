@@ -48,7 +48,7 @@ BrandingText "Chup ${VERSION} (${EDITION})"
 !define MUI_ICON "..\crates\app\icons\icon.ico"
 !define MUI_UNICON "..\crates\app\icons\icon.ico"
 !define MUI_FINISHPAGE_RUN "$INSTDIR\chup.exe"
-!define MUI_FINISHPAGE_RUN_TEXT "Chạy Chup"
+!define MUI_FINISHPAGE_RUN_TEXT "$(RunChup)"
 !ifdef LITE
 ; Chỉ bản Lite có lựa chọn (ô OCR tiếng Việt); bản Full chỉ có một mục bắt buộc nên bỏ trang này.
 !insertmacro MUI_PAGE_COMPONENTS
@@ -57,7 +57,25 @@ BrandingText "Chup ${VERSION} (${EDITION})"
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
+; Bộ cài tự chọn ngôn ngữ theo Windows (chup-81y); Windows không phải tiếng Việt thì dùng tiếng Anh (ngôn ngữ đầu).
+!insertmacro MUI_LANGUAGE "English"
 !insertmacro MUI_LANGUAGE "Vietnamese"
+
+LangString RunChup ${LANG_ENGLISH} "Run Chup"
+LangString RunChup ${LANG_VIETNAMESE} "Chạy Chup"
+LangString DescChup ${LANG_ENGLISH} "The Chup app."
+LangString DescChup ${LANG_VIETNAMESE} "Chương trình Chup."
+!ifdef LITE
+; Chỉ bản Lite có mục OCR tiếng Việt (bản Full không dùng các chuỗi này).
+LangString SecOcrName ${LANG_ENGLISH} "Vietnamese OCR"
+LangString SecOcrName ${LANG_VIETNAMESE} "OCR tiếng Việt"
+LangString DescOcr ${LANG_ENGLISH} "Download ~11 MB from GitHub (Chup's Tesseract engine + tesseract-ocr/tessdata_fast data) to copy Vietnamese text from images. English uses the OCR built into Windows, nothing to download."
+LangString DescOcr ${LANG_VIETNAMESE} "Tải thêm ~11 MB từ GitHub (engine Tesseract của Chup + dữ liệu tesseract-ocr/tessdata_fast) để copy chữ tiếng Việt từ ảnh. Tiếng Anh dùng OCR có sẵn của Windows, không cần tải."
+LangString OcrDownloading ${LANG_ENGLISH} "Downloading Vietnamese OCR…"
+LangString OcrDownloading ${LANG_VIETNAMESE} "Đang tải OCR tiếng Việt…"
+LangString OcrFailed ${LANG_ENGLISH} "Couldn't download Vietnamese OCR. You can download it later in Chup's Settings."
+LangString OcrFailed ${LANG_VIETNAMESE} "Chưa tải được OCR tiếng Việt. Có thể tải lại trong Cài đặt của Chup."
+!endif
 
 Section "Chup" SecChup
   SectionIn RO
@@ -100,19 +118,19 @@ SectionEnd
 
 !ifdef LITE
 ; Mặc định bỏ trống (/o): ai cần OCR tiếng Việt mới tải. Không tích vẫn tải được sau trong Cài đặt của Chup.
-Section /o "OCR tiếng Việt" SecOcr
-  DetailPrint "Đang tải OCR tiếng Việt…"
+Section /o "$(SecOcrName)" SecOcr
+  DetailPrint "$(OcrDownloading)"
   ExecWait '"$INSTDIR\chup.exe" --install-ocr' $0
   ; 0 = xong, 2 = người dùng huỷ, khác = lỗi (chup.exe đã hỏi Thử lại).
   StrCmp $0 "0" ocr_done
   StrCmp $0 "2" ocr_done
-  MessageBox MB_OK|MB_ICONEXCLAMATION "Chưa tải được OCR tiếng Việt. Có thể tải lại trong Cài đặt của Chup."
+  MessageBox MB_OK|MB_ICONEXCLAMATION "$(OcrFailed)"
   ocr_done:
 SectionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
-  !insertmacro MUI_DESCRIPTION_TEXT ${SecChup} "Chương trình Chup."
-  !insertmacro MUI_DESCRIPTION_TEXT ${SecOcr} "Tải thêm ~11 MB từ GitHub (engine Tesseract của Chup + dữ liệu tesseract-ocr/tessdata_fast) để copy chữ tiếng Việt từ ảnh. Tiếng Anh dùng OCR có sẵn của Windows, không cần tải."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecChup} "$(DescChup)"
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecOcr} "$(DescOcr)"
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 !endif
 

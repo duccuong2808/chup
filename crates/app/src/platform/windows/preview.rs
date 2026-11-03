@@ -249,7 +249,7 @@ impl Preview {
         self.open.set(true);
         if !self.rescale() {
             self.close();
-            emit(Action::Toast(chup_core::model::Toast::error("Không đủ bộ nhớ để mở preview")));
+            emit(Action::Toast(chup_core::model::Toast::error(chup_core::i18n::t().err_preview_memory)));
             return;
         }
         self.paint();
@@ -783,7 +783,9 @@ impl Preview {
         let has_sel = self.selected_text().is_some();
         let has_text = self.st.borrow().text.as_ref().is_some_and(|t| !t.is_empty());
         let item = |enabled: bool| if enabled { MF_STRING } else { MF_STRING | MF_GRAYED };
-        let (copy_text, select_all, copy_image) = (wide("Copy chữ"), wide("Chọn tất cả chữ"), wide("Copy ảnh"));
+        let t = chup_core::i18n::t();
+        let (copy_text, select_all, copy_image) =
+            (wide(t.menu_copy_text), wide(t.menu_select_all_text), wide(t.menu_copy_image));
         let cmd = unsafe {
             let Ok(menu) = CreatePopupMenu() else { return };
             let pc = |w: &Vec<u16>| windows::core::PCWSTR(w.as_ptr());

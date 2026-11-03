@@ -254,6 +254,11 @@ tự đặt ảnh, nên không do Chup. Muốn kiểm tra clipboard thì phải 
 7. **Tự động chọn vùng (Phase 2.4) chưa chạy thử trong app thật**: mới có unit test core, clippy và build
    release. Spike UIA / khung từ ảnh đo trên Windows 11 x64 thật, xem
    `docs/plans/2026-11-03-autoselect-spike.md`. Checklist test: thiết kế mục 7.
+8. **Cài đặt chia trang** (chup-ck1): mới chụp màn hình 5 trang trên Windows 11 x64 thật (125%), đổi trang không còn
+   sót control. Chưa thử tay: Tab/phím mũi tên, ghi phím tắt, danh sách xổ của combobox, đổi DPI khi kéo sang màn khác.
+9. **Engine OCR nhúng** (chup-7bc): unit test giải nén (byte giả) và build có nhúng (exe giả) trên Windows: trang OCR
+   hết báo thiếu engine. Chưa chạy với `chup-ocr.exe` thật của CI, chưa biết Symantec Endpoint có chặn exe giải nén
+   vào `%LOCALAPPDATA%` không.
 
 **Vấn đề đang theo dõi:** kéo thumbnail đôi khi không bắt đầu kéo. Trên VM, nhấn chuột ngay khi
 vừa rê vào thumbnail thì không kéo được (0/4); dừng ≥ 0,15 s thì 9/9. Có 1 lần lỗi dù đã dừng
@@ -267,7 +272,8 @@ vừa rê vào thumbnail thì không kéo được (0/4); dừng ≥ 0,15 s thì
 - **Chưa có tooltip** cho nút trên toolbar và stack.
 - **Trim khi rảnh**: sau 15 s không thao tác, app giải phóng bộ đệm và trả working set
   cho hệ điều hành. Lần chọn vùng đầu tiên sau đó chậm hơn (đo được ~113 ms so với ~35 ms).
-- **Cài đặt bố cục 2 cột**.
+- **Cài đặt chia trang** (danh sách trang bên trái, thẻ bên phải, kiểu Windows 11), thay cho một trang dài.
+  SPEC 5.6 đã ghi.
 - **Freeze, mục tray "Chụp đóng băng"** chờ ~350 ms cho menu tray tắt hẳn rồi mới chụp (F1 chụp ngay).
 - **Freeze, lúc đếm ngược hẹn giờ**: icon tray mờ đi kèm tooltip, thay vì một icon riêng.
 - **OCR, nút [T] lúc đang chạy**: hiện vòng "bận" đứng yên (không quay) trên nút; bấm lần nữa là huỷ.

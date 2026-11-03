@@ -149,6 +149,17 @@
 
 Cửa sổ thường, có trên taskbar. Chỉ tạo khi mở, huỷ khi đóng. Thay đổi được lưu ngay khi sửa, không có nút Save.
 
+Bố cục (chup-ck1, 2026-11-03) kiểu Cài đặt của Windows 11: bên trái là danh sách trang, bên phải là tiêu đề trang và các
+thẻ nền trắng trên nền xám. Cửa sổ cỡ cố định theo trang cao nhất; mở lại trong cùng phiên thì về trang lần trước.
+
+| Trang | Nội dung |
+|---|---|
+| Chung | Folder lưu ảnh, tên file; khởi động cùng Windows |
+| Phím tắt | 4 ô ghi phím (chọn vùng, chụp vùng hiện tại/cuối, Freeze, chụp text), báo lỗi ngay dưới ô |
+| Chụp ảnh | Tự động chọn vùng (SPEC 16); sau khi chụp (copy clipboard, giữ/đóng vùng chọn); ẩn toolbar/stack lúc chụp |
+| Copy chữ (OCR) | Ngôn ngữ, trạng thái + nút tải/xoá gói tiếng Việt, tự nhận diện khi mở Preview |
+| Stack và Preview | Cạnh và màn hình của stack; các mục Preview (SPEC 17.4) |
+
 Các mục:
 - **Folder lưu ảnh**: nút chọn folder (dialog), kèm đường dẫn hiện tại.
 - **Pattern tên file.**

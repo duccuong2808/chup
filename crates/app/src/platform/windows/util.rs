@@ -42,6 +42,28 @@ pub fn apply_ui_language(pref: chup_core::i18n::UiLanguage) {
     log::info!("ngôn ngữ giao diện: {lang:?} (config {pref:?})");
 }
 
+/// Ghi RAM của process vào log (chup-3p3): working set, commit (bộ nhớ đã cấp), đỉnh working set. Gọi ở các mốc
+/// chính để đo từ việc dùng hằng ngày, không cần công cụ ngoài. Rẻ (một lời gọi psapi).
+pub fn log_memory(label: &str) {
+    use windows::Win32::System::{
+        ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX},
+        Threading::GetCurrentProcess,
+    };
+    let mut c = PROCESS_MEMORY_COUNTERS_EX { cb: std::mem::size_of::<PROCESS_MEMORY_COUNTERS_EX>() as u32, ..Default::default() };
+    let ok = unsafe {
+        GetProcessMemoryInfo(GetCurrentProcess(), &mut c as *mut _ as *mut PROCESS_MEMORY_COUNTERS, c.cb)
+    };
+    if ok.is_ok() {
+        let mb = |b: usize| b as f64 / 1_048_576.0;
+        log::info!(
+            "mem {label}: ws {:.1} MB, commit {:.1} MB, đỉnh ws {:.1} MB",
+            mb(c.WorkingSetSize),
+            mb(c.PrivateUsage),
+            mb(c.PeakWorkingSetSize)
+        );
+    }
+}
+
 /// Chuỗi kết thúc bằng NUL cho API Win32.
 pub fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()

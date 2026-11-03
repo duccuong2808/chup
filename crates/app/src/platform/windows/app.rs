@@ -204,6 +204,18 @@ impl App {
     // ---------- Action ----------
 
     pub fn handle(&mut self, a: Action) {
+        // Mốc đo RAM lúc đang dùng (chup-3p3): ghi sau khi xử lý xong.
+        let mem_label = match &a {
+            Action::StartSelection => Some("mở overlay chọn vùng"),
+            Action::Persisted(_) => Some("chụp và lưu xong"),
+            Action::FreezeGrabbed(_) => Some("hiện ảnh Freeze"),
+            Action::FreezeConfirm { .. } => Some("Freeze xong"),
+            Action::FreezeCancel => Some("Freeze huỷ"),
+            Action::PreviewLoaded(..) => Some("mở Preview"),
+            Action::PreviewClosed => Some("đóng Preview"),
+            Action::OcrDone(..) => Some("OCR xong"),
+            _ => None,
+        };
         let fx = match a {
             Action::StartSelection => self.model.start_selection(),
             Action::CancelSelection => self.model.cancel_selection(),
@@ -438,6 +450,9 @@ impl App {
         // Ảnh Freeze không được dùng tới (phiên đã huỷ, lỗi) thì bỏ ngay, không giữ vài chục MB.
         self.frozen.clear();
         self.picked = None;
+        if let Some(label) = mem_label {
+            util::log_memory(label);
+        }
     }
 
     /// App đang rảnh: không chọn vùng, Cài đặt đã đóng (frame có thể đang hiện, nhất là ở chế độ Mờ).
@@ -452,6 +467,8 @@ impl App {
     /// Rảnh đủ lâu: giải phóng DIB của overlay và trả working set lại cho Windows.
     /// Trang nhớ chỉ bị đưa ra khỏi RAM (không mất dữ liệu); lần dùng sau nạp lại rất nhanh.
     pub fn trim(&self) {
+        win::log_ui_stats();
+        util::log_memory("trước khi trả RAM");
         for o in &self.overlays {
             o.release();
         }
@@ -464,7 +481,7 @@ impl App {
                 windows::Win32::System::Threading::GetCurrentProcess(),
             );
         }
-        log::debug!("đã trim working set");
+        util::log_memory("sau khi trả RAM");
     }
 
     fn with_shot_file(&mut self, id: &str, f: impl FnOnce(&std::path::Path) -> Result<(), String>) -> Vec<Effect> {

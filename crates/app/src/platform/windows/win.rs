@@ -88,11 +88,75 @@ unsafe extern "system" fn wndproc<T: Handler>(hwnd: HWND, msg: u32, wp: WPARAM, 
     // Giữ 1 bản Rc trong lúc xử lý, phòng khi handler gây DestroyWindow.
     Rc::increment_strong_count(ptr);
     let me = Rc::from_raw(ptr);
+    let t0 = std::time::Instant::now();
     let r = me.handle(hwnd, msg, wp, lp);
+    record_ui::<T>(msg, t0.elapsed());
     drop(me);
     match r {
         Some(v) => v,
         None => DefWindowProcW(hwnd, msg, wp, lp),
+    }
+}
+
+// ---------- đo thời gian xử lý message (chup-3p3) ----------
+
+/// (loại cửa sổ, message) -> (số lần, tổng thời gian). Chỉ UI thread ghi. Message lồng nhau (SendMessage trong
+/// handler) bị tính cả ở message ngoài: số liệu để biết chỗ nào tốn, không phải để cộng ra tổng CPU.
+type UiStats = std::collections::HashMap<(&'static str, u32), (u32, std::time::Duration)>;
+
+thread_local! {
+    static UI_STATS: std::cell::RefCell<UiStats> = Default::default();
+}
+
+fn record_ui<T: Handler>(msg: u32, dt: std::time::Duration) {
+    // Bỏ qua message rẻ (đa số): đỡ tốn cho chính việc đo.
+    if dt < std::time::Duration::from_micros(500) {
+        return;
+    }
+    let name = std::any::type_name::<T>().rsplit("::").next().unwrap_or("?");
+    UI_STATS.with(|s| {
+        let mut s = s.borrow_mut();
+        let e = s.entry((name, msg)).or_default();
+        e.0 += 1;
+        e.1 += dt;
+    });
+}
+
+fn msg_name(msg: u32) -> String {
+    use windows::Win32::UI::WindowsAndMessaging::*;
+    let n = match msg {
+        WM_MOUSEMOVE => "WM_MOUSEMOVE",
+        WM_MOUSEWHEEL => "WM_MOUSEWHEEL",
+        WM_LBUTTONDOWN => "WM_LBUTTONDOWN",
+        WM_LBUTTONUP => "WM_LBUTTONUP",
+        WM_TIMER => "WM_TIMER",
+        WM_PAINT => "WM_PAINT",
+        WM_KEYDOWN => "WM_KEYDOWN",
+        WM_SETCURSOR => "WM_SETCURSOR",
+        0x02A3 => "WM_MOUSELEAVE",
+        WM_WINDOWPOSCHANGED => "WM_WINDOWPOSCHANGED",
+        WM_SIZE => "WM_SIZE",
+        WM_MOVE => "WM_MOVE",
+        WM_COMMAND => "WM_COMMAND",
+        WM_DPICHANGED => "WM_DPICHANGED",
+        WM_ERASEBKGND => "WM_ERASEBKGND",
+        m if m == WM_APP_ACTION => "WM_APP_ACTION",
+        _ => return format!("0x{msg:04X}"),
+    };
+    n.to_string()
+}
+
+/// Ghi vào log các (cửa sổ, message) tốn thời gian nhất từ lần ghi trước, rồi đặt lại. Gọi lúc trả RAM (rảnh).
+pub fn log_ui_stats() {
+    let mut v: Vec<_> = UI_STATS.with(|s| s.borrow_mut().drain().collect());
+    if v.is_empty() {
+        return;
+    }
+    v.sort_by_key(|x| std::cmp::Reverse(x.1 .1));
+    let total: std::time::Duration = v.iter().map(|x| x.1 .1).sum();
+    log::info!("ui: tổng {total:?} ở message ≥ 0,5 ms");
+    for ((win, msg), (n, dt)) in v.into_iter().take(10) {
+        log::info!("ui: {win} {}: {n} lần, {dt:?} (tb {:?})", msg_name(msg), dt / n.max(1));
     }
 }
 

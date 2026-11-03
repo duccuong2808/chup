@@ -695,25 +695,36 @@ impl Settings {
         lf.lfHeight = -((26 * dpi / 96) as i32);
         let title = unsafe { CreateFontIndirectW(&lf) };
         let nav = self.h.borrow().nav;
-        {
+        // Thả borrow trước khi gửi WM_SETFONT: control có thể vẽ lại ngay và xin nền của cha (WM_ERASEBKGND,
+        // WM_CTLCOLOR* đọc `st`). Font cũ xoá sau khi mọi control đã nhận font mới.
+        let (old, fonts) = {
             let mut st = self.st.borrow_mut();
-            for f in [st.gdi.normal, st.gdi.bold, st.gdi.title] {
-                if !f.is_invalid() {
-                    unsafe {
-                        let _ = DeleteObject(HGDIOBJ(f.0));
-                    }
-                }
-            }
+            let old = [st.gdi.normal, st.gdi.bold, st.gdi.title];
             st.gdi.normal = normal;
             st.gdi.bold = bold;
             st.gdi.title = title;
-            for c in &st.ctls {
-                let f = match c.kind {
-                    Kind::Title => title,
-                    Kind::Section => bold,
-                    _ => normal,
-                };
-                unsafe { SendMessageW(c.hwnd, WM_SETFONT, Some(WPARAM(f.0 as usize)), Some(LPARAM(1))) };
+            let fonts: Vec<(HWND, HFONT)> = st
+                .ctls
+                .iter()
+                .map(|c| {
+                    let f = match c.kind {
+                        Kind::Title => title,
+                        Kind::Section => bold,
+                        _ => normal,
+                    };
+                    (c.hwnd, f)
+                })
+                .collect();
+            (old, fonts)
+        };
+        for (c, f) in fonts {
+            unsafe { SendMessageW(c, WM_SETFONT, Some(WPARAM(f.0 as usize)), Some(LPARAM(1))) };
+        }
+        for f in old {
+            if !f.is_invalid() {
+                unsafe {
+                    let _ = DeleteObject(HGDIOBJ(f.0));
+                }
             }
         }
         let item_h = (NAV_ITEM_H * dpi as f64 / 96.0).round() as isize;

@@ -61,7 +61,7 @@ cargo clippy -p chup --target x86_64-pc-windows-msvc -- -D warnings
 CHUP_TESSDATA=<thư mục có vie/eng.traineddata> cargo test --release --manifest-path crates/ocr-helper/Cargo.toml
 ```
 
-**CI** (`.github/workflows/build.yml`, `windows-latest`): mỗi push / PR có đổi code chạy test + clippy, build và test
+**CI** (`.github/workflows/build.yml`, `windows-latest`): mỗi PR và mỗi push lên `main` có đổi code chạy test + clippy, build và test
 `chup-ocr.exe`, rồi build `chup.exe` và 2 bộ cài, ra artifact `chup-windows-<sha>`. Push tag `v*` (nhớ đổi `version`
 trong `Cargo.toml` trước) tạo thêm GitHub Release dạng draft. Commit chỉ đổi `*.md`, `docs/`, `.beads/`, `.claude/`, `tools/` thì không chạy CI.
 

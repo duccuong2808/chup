@@ -1,6 +1,8 @@
 # CI/CD cho Chup (Win32 native, không WebView).
-# - Mỗi lần push / PR: test + clippy trên Windows, build bản release, đóng gói 2 installer NSIS:
+# - Mỗi PR và mỗi lần push lên main: test + clippy trên Windows, build bản release, đóng gói 2 installer NSIS:
 #   Full (có sẵn OCR tiếng Việt) và Lite (chỉ chup.exe, OCR tiếng Việt tải khi cần). Đính kèm vào run làm artifact.
+# - Nhánh khác chỉ chạy qua PR (trước đây push nhánh + PR chạy 2 lần cho cùng commit). Nhánh chưa có PR mà cần
+#   build: tab Actions > Build > Run workflow, chọn nhánh.
 # - Push tag dạng v* (vd: v0.2.0): tạo thêm GitHub Release (draft) kèm 2 installer.
 # - Commit chỉ đổi tài liệu (*.md, docs/), beads, .claude/, tools/ (spike, ngoài workspace) thì không chạy.
 #   Tag v* luôn chạy (GitHub không xét paths với tag). Cần chạy tay: tab Actions > Build > Run workflow.
@@ -12,7 +14,7 @@ name: Build
 
 on:
   push:
-    branches: ["**"]
+    branches: ["main"]
     tags: ["v*"]
     paths-ignore:
       - "**.md"

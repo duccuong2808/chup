@@ -146,13 +146,17 @@ pub fn normalize(raw: &[Frame], p: (i32, i32), clip: Rect) -> Vec<Frame> {
     out
 }
 
-/// Chọn cấp khung (SPEC 16.2 bước 3). `up` = số cấp đã lên tính từ khung trong cùng; giữ nguyên khi di chuột
-/// trong cùng cửa sổ, về 0 khi sang cửa sổ khác. Chuỗi ngắn hơn `up` (kết quả UIA chưa về) thì kẹp khi đọc,
-/// không đổi `up`.
+/// Chọn cấp khung (SPEC 16.2 bước 3).
+/// - Khung đã chọn bằng ↑↓ / cuộn (`anchor`) được giữ nguyên khi con trỏ còn trong nó, dù chuỗi ở điểm mới sâu
+///   hay nông hơn (rê qua chữ, ảnh bên trong một thẻ).
+/// - Ra khỏi khung đó: `up` = số cấp đã lên tính từ khung trong cùng, giữ nguyên khi di chuột trong cùng cửa sổ
+///   (rê sang nút bên cạnh vẫn là thanh công cụ); chuỗi ngắn hơn `up` (kết quả UIA chưa về) thì kẹp khi đọc.
+/// - Sang cửa sổ khác: về khung trong cùng.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Picker {
     window: Option<isize>,
     up: usize,
+    anchor: Option<Rect>,
 }
 
 impl Picker {
@@ -160,16 +164,26 @@ impl Picker {
         if self.window != Some(window) {
             self.window = Some(window);
             self.up = 0;
+            self.anchor = None;
         }
-        let last = chain.len().checked_sub(1)?;
-        chain.get(last - self.up.min(last))
+        chain.get(self.index(chain)?)
     }
 
-    /// `steps` dương = lên khung cha, âm = xuống khung con. Kẹp trong chuỗi hiện tại.
-    pub fn wheel(&mut self, steps: i32, chain_len: usize) {
-        let Some(last) = chain_len.checked_sub(1) else { return };
-        let cur = self.up.min(last) as i64;
-        self.up = (cur + steps as i64).clamp(0, last as i64) as usize;
+    /// Vị trí khung đang chọn trong `chain` (ngoài -> trong).
+    fn index(&self, chain: &[Frame]) -> Option<usize> {
+        let last = chain.len().checked_sub(1)?;
+        let anchored = self.anchor.and_then(|a| chain.iter().position(|f| f.rect == a));
+        Some(anchored.unwrap_or(last - self.up.min(last)))
+    }
+
+    /// `steps` dương = lên khung cha, âm = xuống khung con, tính từ khung đang chọn trong `chain`. Kẹp trong chuỗi.
+    pub fn wheel(&mut self, steps: i32, chain: &[Frame]) {
+        let Some(cur) = self.index(chain) else { return };
+        let last = chain.len() - 1;
+        let next = (cur as i64 - steps as i64).clamp(0, last as i64) as usize;
+        self.up = last - next;
+        // Khung trong cùng thì đi theo con trỏ như bình thường, không giữ.
+        self.anchor = (next != last).then(|| chain[next].rect);
     }
 
     /// Phiên chọn vùng mới.
@@ -268,13 +282,13 @@ mod tests {
         ];
         let mut p = Picker::default();
         assert_eq!(p.pick(7, &chain).unwrap().kind, FrameKind::Button);
-        p.wheel(1, chain.len());
+        p.wheel(1, &chain);
         assert_eq!(p.pick(7, &chain).unwrap().kind, FrameKind::ToolBar);
-        p.wheel(5, chain.len());
+        p.wheel(5, &chain);
         assert_eq!(p.pick(7, &chain).unwrap().kind, FrameKind::Window);
-        p.wheel(-1, chain.len());
+        p.wheel(-1, &chain);
         assert_eq!(p.pick(7, &chain).unwrap().kind, FrameKind::ToolBar);
-        p.wheel(-9, chain.len());
+        p.wheel(-9, &chain);
         assert_eq!(p.pick(7, &chain).unwrap().kind, FrameKind::Button);
     }
 
@@ -292,7 +306,7 @@ mod tests {
         ];
         let mut p = Picker::default();
         p.pick(7, &chain);
-        p.wheel(1, chain.len());
+        p.wheel(1, &chain);
         // Rê sang nút bên cạnh trong cùng cửa sổ: vẫn là thanh công cụ.
         assert_eq!(p.pick(7, &next).unwrap().kind, FrameKind::ToolBar);
         // Kết quả UIA chưa về (chỉ có cửa sổ): kẹp, nhưng không quên cấp đã lên.
@@ -306,7 +320,32 @@ mod tests {
     fn picker_empty_chain() {
         let mut p = Picker::default();
         assert!(p.pick(1, &[]).is_none());
-        p.wheel(1, 0);
+        p.wheel(1, &[]);
+    }
+
+    #[test]
+    fn picker_holds_chosen_frame_while_pointer_inside() {
+        // Cửa sổ > cột > thẻ > ảnh. Chọn thẻ (↑ một lần từ ảnh), rê sang chữ trong thẻ (chuỗi nông hơn), rồi sang
+        // ảnh khác trong thẻ (chuỗi sâu hơn): vẫn là thẻ. Ra khỏi thẻ: quay về "lên 1 cấp từ trong cùng".
+        let win = f(0, 0, 1000, 800, FrameKind::Window);
+        let column = f(20, 20, 600, 700, FrameKind::Detected);
+        let card = f(40, 40, 400, 300, FrameKind::Detected);
+        let photo = f(60, 60, 100, 80, FrameKind::Detected);
+        let mut p = Picker::default();
+        let on_photo = [win, column, card, photo];
+        assert_eq!(p.pick(7, &on_photo), Some(&photo));
+        p.wheel(1, &on_photo);
+        assert_eq!(p.pick(7, &on_photo), Some(&card));
+        let on_text = [win, column, card];
+        assert_eq!(p.pick(7, &on_text), Some(&card), "chuỗi nông hơn: không nhảy lên cột");
+        let other_photo = f(200, 60, 100, 80, FrameKind::Detected);
+        let on_other_photo = [win, column, card, other_photo];
+        assert_eq!(p.pick(7, &on_other_photo), Some(&card));
+        p.wheel(1, &on_other_photo);
+        assert_eq!(p.pick(7, &on_other_photo), Some(&column), "↑ tiếp từ khung đang giữ");
+        p.wheel(-2, &on_other_photo);
+        assert_eq!(p.pick(7, &on_other_photo), Some(&other_photo), "về trong cùng: đi theo con trỏ");
+        assert_eq!(p.pick(7, &on_photo), Some(&photo));
     }
 
     #[test]

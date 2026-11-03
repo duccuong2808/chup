@@ -92,6 +92,24 @@ impl EdgeMap {
     /// Khung nhỏ nhất chứa `p`, nằm trong `within` (mép `within` coi như cạnh liền).
     /// `None` nếu không tìm được, hoặc khung tìm được chính là `within` (không thêm cấp nào).
     pub fn query(&self, p: (i32, i32), within: Rect) -> Option<Rect> {
+        self.query_around(p, within, None)
+    }
+
+    /// Các khung lồng nhau chứa `p` trong `within`, từ trong ra ngoài (tối đa `max`): khung nhỏ nhất, rồi khung nhỏ
+    /// nhất bao trọn khung đó, … Cho ↑↓ đi qua từng lớp (thẻ, khối, cột) như khi rê chuột thấy (chup-4q9).
+    pub fn ladder(&self, p: (i32, i32), within: Rect, max: usize) -> Vec<Rect> {
+        let mut out: Vec<Rect> = Vec::new();
+        while out.len() < max {
+            match self.query_around(p, within, out.last().copied()) {
+                Some(r) => out.push(r),
+                None => break,
+            }
+        }
+        out
+    }
+
+    /// Như `query`; có `inner` thì chỉ xét khung bao trọn `inner` (cạnh nằm ngoài cả đường viền của nó).
+    fn query_around(&self, p: (i32, i32), within: Rect, inner: Option<Rect>) -> Option<Rect> {
         let img = Rect::new(0, 0, self.w as u32, self.h as u32);
         let within = within.intersect(&img)?;
         if !within.contains_point(p.0, p.1) {
@@ -109,10 +127,16 @@ impl EdgeMap {
             v.push(edge);
             v
         };
-        let tops = pick(&mut (t + 1..=py).rev(), &hok, t);
-        let bots = pick(&mut (py + 1..b), &hok, b);
-        let lefts = pick(&mut (l + 1..=px).rev(), &vok, l);
-        let rights = pick(&mut (px + 1..r), &vok, r);
+        // Có `inner`: cạnh phải nằm ngoài nó, cách hơn bề dày đường viền (không lấy mặt ngoài của chính viền đó).
+        let gap = BORDER_MAX + 1;
+        let (top_max, bot_min, left_max, right_min) = match inner {
+            Some(i) => (i.y - gap, i.bottom() + gap, i.x - gap, i.right() + gap),
+            None => (py, py + 1, px, px + 1),
+        };
+        let tops = pick(&mut (t + 1..=top_max).rev(), &hok, t);
+        let bots = pick(&mut (bot_min..b), &hok, b);
+        let lefts = pick(&mut (l + 1..=left_max).rev(), &vok, l);
+        let rights = pick(&mut (right_min..r), &vok, r);
 
         let mut best: Option<(i32, i32, i32, i32)> = None;
         let area = |(x0, y0, x1, y1): (i32, i32, i32, i32)| (x1 - x0) as i64 * (y1 - y0) as i64;
@@ -253,6 +277,26 @@ mod tests {
         let m = img.map();
         assert_eq!(m.query((150, 130), img.all()), Some(inner));
         assert_eq!(m.query((350, 300), img.all()), Some(outer));
+    }
+
+    #[test]
+    fn ladder_goes_through_every_nested_box() {
+        // Cột > thẻ > ảnh trong thẻ, như trang web: ↑↓ phải đi qua cả ba.
+        let mut img = Img::new(600, 500);
+        let column = Rect::new(20, 20, 520, 440);
+        let card = Rect::new(60, 60, 300, 240);
+        let photo = Rect::new(90, 90, 160, 100);
+        img.border(column, 1, 190);
+        img.border(card, 1, 170);
+        img.border(photo, 2, 120);
+        let m = img.map();
+        assert_eq!(m.ladder((150, 130), img.all(), 6), vec![photo, card, column]);
+        // Trong thẻ nhưng ngoài ảnh: thẻ rồi cột.
+        assert_eq!(m.ladder((300, 250), img.all(), 6), vec![card, column]);
+        assert_eq!(m.ladder((150, 130), img.all(), 2), vec![photo, card], "giới hạn số lớp");
+        // Trong `within` = thẻ: chỉ còn ảnh (khung bằng `within` không tính).
+        assert_eq!(m.ladder((150, 130), card, 6), vec![photo]);
+        assert!(Img::new(300, 200).map().ladder((100, 100), Rect::new(0, 0, 300, 200), 6).is_empty());
     }
 
     #[test]

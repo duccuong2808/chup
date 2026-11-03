@@ -149,6 +149,8 @@ impl Worker {
 
 /// Hạn cho một truy vấn: hết hạn thì trả chuỗi sâu nhất đã có, lần sau đi tiếp từ cache (spike: Firefox cây sâu).
 const QUERY_BUDGET: Duration = Duration::from_millis(80);
+/// Số lớp khung đoán từ ảnh tối đa trong một phần tử UIA.
+const LADDER_MAX: usize = 6;
 /// Timeout UIA. Spike: Word lần đầu 276 ms, 200 ms (SPEC cũ) làm lỗi timeout.
 const UIA_TIMEOUT_MS: u32 = 1_000;
 /// `UIA_E_TIMEOUT`.
@@ -301,17 +303,23 @@ impl Session {
                 }
             }
         }
-        // Nguồn 3, phạm vi hẹp: chỉ khi đã xuống tới đáy cây UIA (không còn con chứa con trỏ).
+        // Nguồn 3, phạm vi hẹp: chỉ khi đã xuống tới đáy cây UIA (không còn con chứa con trỏ). Lấy cả thang khung lồng
+        // nhau trong phần tử đáy (thẻ, khối, ảnh…) để ↑↓ đi qua từng lớp như khi rê chuột thấy (chup-4q9).
         if self.image_edges && bottom {
             let within = chain.last().map(|f| f.rect).unwrap_or(win.rect);
-            if let Some(r) = self.detect(p, within, mon) {
+            for r in self.detect(p, within, mon).into_iter().rev() {
                 chain.push(Frame::new(r, FrameKind::Detected));
             }
         }
         chain
     }
 
-    fn detect(&mut self, p: (i32, i32), within: Rect, mon: Rect) -> Option<Rect> {
+    /// Khung đoán từ ảnh chứa `p` trong `within`, từ trong ra ngoài.
+    fn detect(&mut self, p: (i32, i32), within: Rect, mon: Rect) -> Vec<Rect> {
+        self.detect_ladder(p, within, mon).unwrap_or_default()
+    }
+
+    fn detect_ladder(&mut self, p: (i32, i32), within: Rect, mon: Rect) -> Option<Vec<Rect>> {
         let within = within.intersect(&mon)?;
         let key = (mon.x, mon.y, mon.w, mon.h);
         if !self.edges.contains_key(&key) {
@@ -319,8 +327,8 @@ impl Session {
             self.edges.insert(key, map);
         }
         let map = self.edges.get(&key)?.as_ref()?;
-        let r = map.query((p.0 - mon.x, p.1 - mon.y), within.offset(-mon.x, -mon.y))?;
-        Some(r.offset(mon.x, mon.y))
+        let rs = map.ladder((p.0 - mon.x, p.1 - mon.y), within.offset(-mon.x, -mon.y), LADDER_MAX);
+        Some(rs.into_iter().map(|r| r.offset(mon.x, mon.y)).collect())
     }
 
     fn build_edges(&self, mon: Rect) -> Option<EdgeMap> {

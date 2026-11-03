@@ -165,7 +165,7 @@ impl Overlay {
         let mut st = self.st.borrow_mut();
         let Some(a) = st.auto.as_mut() else { return };
         let Some((_, w)) = a.at else { return };
-        a.picker.wheel(steps, a.chain.len());
+        a.picker.wheel(steps, &a.chain);
         let target = a.picker.pick(w.id, &a.chain).copied();
         self.auto_show(&mut st, target);
     }

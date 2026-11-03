@@ -1,9 +1,13 @@
 //! Windows: nhúng manifest (DPI Per-Monitor v2, Common Controls v6) và icon của file exe.
+//! Commit đang build (`GITHUB_SHA` trên CI) ghi vào `CHUP_COMMIT` cho trang Giới thiệu; build tay thì rỗng.
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=icons/icon.ico");
     println!("cargo:rerun-if-changed=chup.rc");
+    println!("cargo:rerun-if-env-changed=GITHUB_SHA");
+    let commit = std::env::var("GITHUB_SHA").map(|s| s.chars().take(7).collect::<String>()).unwrap_or_default();
+    println!("cargo:rustc-env=CHUP_COMMIT={commit}");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }

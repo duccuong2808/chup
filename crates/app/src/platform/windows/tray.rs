@@ -3,11 +3,13 @@
 use std::cell::Cell;
 
 use tray_icon::{
-    menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
+    menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem},
     Icon, MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent,
 };
 
 use super::{app::Action, win::emit};
+
+const FREEZE_TOGGLE: &str = "Phím tắt chụp đóng băng";
 
 /// Mục menu có phím tắt: (mục, tên gốc). Phím tắt hiện ở cột phải của menu.
 struct Shortcut {
@@ -19,6 +21,8 @@ pub struct Tray {
     icon: TrayIcon,
     /// Chọn vùng, Chụp lại vùng cuối, Chụp đóng băng.
     shortcuts: [Shortcut; 3],
+    /// Tuỳ chọn "Phím tắt chụp đóng băng" (bật/tắt hotkey Freeze).
+    freeze_toggle: CheckMenuItem,
     normal: Option<Icon>,
     waiting: Option<Icon>,
     hotkey_errors: Cell<usize>,
@@ -41,13 +45,18 @@ impl Tray {
         let menu = Menu::new();
         let shortcuts = [("select", "Chọn vùng"), ("recapture", "Chụp lại vùng cuối"), ("freeze", "Chụp đóng băng")]
             .map(|(id, text)| Shortcut { item: MenuItem::with_id(id, text, true, None), text });
-        let items: [&dyn tray_icon::menu::IsMenuItem; 9] = [
+        let freeze_toggle = CheckMenuItem::with_id("freeze_toggle", FREEZE_TOGGLE, true, true, None);
+        // Hai phần: thao tác (bấm là làm ngay) và tuỳ chọn (bật/tắt, mở Cài đặt). Tiêu đề phần là mục mờ không bấm được.
+        let items: [&dyn tray_icon::menu::IsMenuItem; 12] = [
+            &MenuItem::new("Chụp", false, None),
             &shortcuts[0].item,
             &shortcuts[1].item,
             &shortcuts[2].item,
             &MenuItem::with_id("freeze_delayed", "Chụp đóng băng sau 3 giây", true, None),
             &MenuItem::with_id("open_folder", "Mở folder ảnh", true, None),
             &PredefinedMenuItem::separator(),
+            &MenuItem::new("Tuỳ chọn", false, None),
+            &freeze_toggle,
             &MenuItem::with_id("settings", "Cài đặt…", true, None),
             &PredefinedMenuItem::separator(),
             &MenuItem::with_id("quit", "Thoát", true, None),
@@ -70,7 +79,15 @@ impl Tray {
             b = b.with_icon(i);
         }
         let icon = b.build().map_err(|e| format!("Không tạo được icon khay: {e}"))?;
-        Ok(Tray { icon, shortcuts, normal, waiting, hotkey_errors: Cell::new(0), waiting_on: Cell::new(false) })
+        Ok(Tray {
+            icon,
+            shortcuts,
+            freeze_toggle,
+            normal,
+            waiting,
+            hotkey_errors: Cell::new(0),
+            waiting_on: Cell::new(false),
+        })
     }
 
     /// Hiện phím tắt cạnh mục menu, theo thứ tự Chọn vùng, Chụp (cũng là "Chụp lại vùng cuối"), Chụp đóng băng.
@@ -81,6 +98,16 @@ impl Tray {
             let text = if k.is_empty() { s.text.to_string() } else { format!("{}\t{k}", s.text) };
             s.item.set_text(text);
         }
+    }
+
+    /// Trạng thái bật/tắt hotkey Freeze, kèm phím đã gán (vd. "Phím tắt chụp đóng băng (F1)").
+    pub fn set_freeze_toggle(&self, enabled: bool, key: &str) {
+        let key = key.trim();
+        let text = if key.is_empty() { FREEZE_TOGGLE.to_string() } else { format!("{FREEZE_TOGGLE} ({key})") };
+        self.freeze_toggle.set_text(text);
+        self.freeze_toggle.set_checked(enabled && !key.is_empty());
+        // Chưa gán phím thì bật/tắt vô nghĩa: gán trong Cài đặt.
+        self.freeze_toggle.set_enabled(!key.is_empty());
     }
 
     /// Đang đếm ngược "Chụp đóng băng sau 3 giây": đổi icon và tooltip, không hiện gì lên màn hình (SPEC 14.4).

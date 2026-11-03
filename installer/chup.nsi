@@ -1,8 +1,10 @@
-﻿; Installer NSIS cho Chup. Cài cho user hiện tại, không cần quyền admin, không cần WebView2.
-; Build: makensis /DVERSION=0.2.0 /DEXE=path\chup.exe /DOCR_DIR=path\ocr-dist /DOUTFILE=Chup_0.2.0_x64-setup.exe installer\chup.nsi
-; OCR_DIR (artifact `chup-ocr` của CI) chứa chup-ocr.exe + NOTICE-ocr.txt. Không có thì bộ cài không có OCR tiếng Việt.
-; Dữ liệu tiếng Việt không nằm trong bộ cài: mục "OCR tiếng Việt" (mặc định bỏ trống) chạy `chup.exe --install-ocr`
-; để tải từ GitHub (tesseract-ocr/tessdata_fast).
+﻿; Installer NSIS cho Chup. Cài cho user hiện tại, không cần quyền admin, không cần WebView2. Hai bản:
+; - Full: có sẵn OCR tiếng Việt (engine chup-ocr.exe cạnh chup.exe + dữ liệu vào %LOCALAPPDATA%), không cần mạng.
+;     makensis /DVERSION=0.2.0 /DEXE=path\chup.exe /DOCR_DIR=<chup-ocr.exe + NOTICE-ocr.txt>
+;              /DDATA_DIR=<vie/eng.traineddata> /DDATA_PACK=vi-1 installer\chup.nsi
+;   OCR_DIR, DATA_DIR lấy bằng installer\fetch-ocr.ps1 (đúng file ghim trong manifest); DATA_PACK = tên thư mục gói in ra.
+; - Lite (/DLITE): chỉ chup.exe. Mục "OCR tiếng Việt" (mặc định bỏ trống) chạy `chup.exe --install-ocr` để tải engine
+;   (Release ocr-engine-vN của repo Chup) và dữ liệu (tesseract-ocr/tessdata_fast). Không tích thì tải sau trong Cài đặt.
 
 Unicode true
 SetCompressor /SOLID lzma
@@ -14,8 +16,25 @@ RequestExecutionLevel user
 !ifndef EXE
   !define EXE "..\target\release\chup.exe"
 !endif
-!ifndef OUTFILE
-  !define OUTFILE "Chup_${VERSION}_x64-setup.exe"
+!ifdef LITE
+  !ifndef OUTFILE
+    !define OUTFILE "Chup_${VERSION}_x64-setup-lite.exe"
+  !endif
+  !define EDITION "Lite"
+!else
+  !ifndef OCR_DIR
+    !error "Bản Full cần /DOCR_DIR, /DDATA_DIR và /DDATA_PACK (hoặc build bản Lite bằng /DLITE)"
+  !endif
+  !ifndef DATA_DIR
+    !error "Bản Full cần /DOCR_DIR, /DDATA_DIR và /DDATA_PACK (hoặc build bản Lite bằng /DLITE)"
+  !endif
+  !ifndef DATA_PACK
+    !error "Bản Full cần /DOCR_DIR, /DDATA_DIR và /DDATA_PACK (hoặc build bản Lite bằng /DLITE)"
+  !endif
+  !ifndef OUTFILE
+    !define OUTFILE "Chup_${VERSION}_x64-setup.exe"
+  !endif
+  !define EDITION "Full"
 !endif
 
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\Chup"
@@ -23,14 +42,17 @@ RequestExecutionLevel user
 Name "Chup"
 OutFile "${OUTFILE}"
 InstallDir "$LOCALAPPDATA\Chup"
-BrandingText "Chup ${VERSION}"
+BrandingText "Chup ${VERSION} (${EDITION})"
 
 !include "MUI2.nsh"
 !define MUI_ICON "..\crates\app\icons\icon.ico"
 !define MUI_UNICON "..\crates\app\icons\icon.ico"
 !define MUI_FINISHPAGE_RUN "$INSTDIR\chup.exe"
 !define MUI_FINISHPAGE_RUN_TEXT "Chạy Chup"
+!ifdef LITE
+; Chỉ bản Lite có lựa chọn (ô OCR tiếng Việt); bản Full chỉ có một mục bắt buộc nên bỏ trang này.
 !insertmacro MUI_PAGE_COMPONENTS
+!endif
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
@@ -47,9 +69,18 @@ Section "Chup" SecChup
   RMDir /r "$LOCALAPPDATA\app.chup.desktop\EBWebView"
   SetOutPath "$INSTDIR"
   File "/oname=chup.exe" "${EXE}"
-!ifdef OCR_DIR
+!ifndef LITE
+  ; OCR tiếng Việt có sẵn: engine cạnh chup.exe, dữ liệu vào đúng chỗ app tìm (core::ocr::pack).
   File "${OCR_DIR}\chup-ocr.exe"
   File "${OCR_DIR}\NOTICE-ocr.txt"
+  SetOutPath "$LOCALAPPDATA\app.chup.desktop\ocr\${DATA_PACK}"
+  File "${DATA_DIR}\vie.traineddata"
+  File "${DATA_DIR}\eng.traineddata"
+  SetOutPath "$INSTDIR"
+!else
+  ; Bản Full cũ để lại engine cạnh exe: xoá để app dùng bản tải về (cùng manifest với chup.exe mới).
+  Delete "$INSTDIR\chup-ocr.exe"
+  Delete "$INSTDIR\NOTICE-ocr.txt"
 !endif
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
@@ -67,21 +98,21 @@ Section "Chup" SecChup
   WriteRegDWORD HKCU "${UNINST_KEY}" "NoRepair" 1
 SectionEnd
 
-!ifdef OCR_DIR
+!ifdef LITE
 ; Mặc định bỏ trống (/o): ai cần OCR tiếng Việt mới tải. Không tích vẫn tải được sau trong Cài đặt của Chup.
 Section /o "OCR tiếng Việt" SecOcr
-  DetailPrint "Đang tải gói OCR tiếng Việt…"
+  DetailPrint "Đang tải OCR tiếng Việt…"
   ExecWait '"$INSTDIR\chup.exe" --install-ocr' $0
   ; 0 = xong, 2 = người dùng huỷ, khác = lỗi (chup.exe đã hỏi Thử lại).
   StrCmp $0 "0" ocr_done
   StrCmp $0 "2" ocr_done
-  MessageBox MB_OK|MB_ICONEXCLAMATION "Chưa tải được gói OCR tiếng Việt. Có thể tải lại trong Cài đặt của Chup."
+  MessageBox MB_OK|MB_ICONEXCLAMATION "Chưa tải được OCR tiếng Việt. Có thể tải lại trong Cài đặt của Chup."
   ocr_done:
 SectionEnd
 
 !insertmacro MUI_FUNCTION_DESCRIPTION_BEGIN
   !insertmacro MUI_DESCRIPTION_TEXT ${SecChup} "Chương trình Chup."
-  !insertmacro MUI_DESCRIPTION_TEXT ${SecOcr} "Tải thêm ~4,4 MB dữ liệu (GitHub tesseract-ocr/tessdata_fast) để copy chữ tiếng Việt từ ảnh. Tiếng Anh dùng OCR có sẵn của Windows, không cần tải."
+  !insertmacro MUI_DESCRIPTION_TEXT ${SecOcr} "Tải thêm ~11 MB từ GitHub (engine Tesseract của Chup + dữ liệu tesseract-ocr/tessdata_fast) để copy chữ tiếng Việt từ ảnh. Tiếng Anh dùng OCR có sẵn của Windows, không cần tải."
 !insertmacro MUI_FUNCTION_DESCRIPTION_END
 !endif
 
@@ -93,7 +124,7 @@ Section "Uninstall"
   Delete "$INSTDIR\chup-ocr.exe"
   Delete "$INSTDIR\NOTICE-ocr.txt"
   Delete "$INSTDIR\uninstall.exe"
-  ; Gói dữ liệu OCR tiếng Việt đã tải.
+  ; OCR tiếng Việt: dữ liệu (bộ cài Full đặt hoặc đã tải) và engine đã tải.
   RMDir /r "$LOCALAPPDATA\app.chup.desktop\ocr"
   RMDir "$INSTDIR"
   Delete "$SMPROGRAMS\Chup.lnk"

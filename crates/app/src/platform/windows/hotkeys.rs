@@ -48,7 +48,8 @@ impl Hotkeys {
         for (name, accel, kind) in [
             ("selectRegion", cfg.select_region.trim(), Kind::SelectRegion),
             ("capture", cfg.capture.trim(), Kind::Capture),
-            ("freeze", cfg.freeze.trim(), Kind::Freeze),
+            // Tắt trong Cài đặt / menu tray: không giữ phím (F1 trả lại cho app khác), vẫn nhớ phím đã gán.
+            ("freeze", if cfg.freeze_enabled { cfg.freeze.trim() } else { "" }, Kind::Freeze),
             ("ocr", cfg.ocr.trim(), Kind::Ocr),
         ] {
             if accel.is_empty() {

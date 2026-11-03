@@ -82,7 +82,7 @@
    - Overlay ẩn đi.
    - Frame hiện quanh region, Toolbar hiện cạnh frame.
    - Frame ở **Normal mode**.
-5. Bấm **[Chụp]** trên toolbar hoặc nhấn hotkey **Chụp** (`Ctrl+Alt+S`):
+5. Bấm **[Chụp]** trên toolbar hoặc nhấn hotkey **Chụp** (`Ctrl+Alt+X`; trước v3 là `Ctrl+Alt+S`, hay bị app khác giữ):
    - Chụp nội dung **tại thời điểm bấm**.
    - Lưu PNG vào folder đã cấu hình.
    - Copy ảnh vào clipboard nếu bật cấu hình.
@@ -136,18 +136,28 @@
 ### 5.5 Tray
 
 - **Click trái**: Chọn vùng.
-- **Click phải** mở menu:
-  - Chọn vùng
-  - Chụp lại vùng cuối
-  - Chụp đóng băng, Chụp đóng băng sau 3 giây (Phase 2, mục 14.5)
-  - Mở folder ảnh
-  - Cài đặt…
+- **Click phải** mở menu, chia hai phần có tiêu đề mờ (chup-289), phím tắt đang gán hiện ở cột phải:
+  - **Chụp**: Chọn vùng · Chụp lại vùng cuối · Chụp đóng băng, Chụp đóng băng sau 3 giây (Phase 2, mục 14.5) ·
+    Mở folder ảnh
+  - **Tuỳ chọn**: ☑ Phím tắt chụp đóng băng (F1) (bật/tắt hotkey Freeze, giống ô trong Cài đặt) · Cài đặt…
   - Thoát
 - **Tooltip**: hiển thị "Chup". Nếu có hotkey đăng ký lỗi thì kèm cảnh báo.
 
 ### 5.6 Cài đặt
 
 Cửa sổ thường, có trên taskbar. Chỉ tạo khi mở, huỷ khi đóng. Thay đổi được lưu ngay khi sửa, không có nút Save.
+
+Bố cục (chup-ck1, 2026-11-03) kiểu Cài đặt của Windows 11: bên trái là danh sách trang, bên phải là tiêu đề trang và các
+thẻ nền trắng trên nền xám. Cửa sổ cỡ cố định theo trang cao nhất; mở lại trong cùng phiên thì về trang lần trước.
+
+| Trang | Nội dung |
+|---|---|
+| Chung | Folder lưu ảnh, tên file; khởi động cùng Windows |
+| Phím tắt | 4 ô ghi phím (chọn vùng, chụp vùng hiện tại/cuối, Freeze, chụp text), báo lỗi ngay dưới ô; ô bật/tắt phím Freeze |
+| Chụp ảnh | Tự động chọn vùng (SPEC 16); sau khi chụp (copy clipboard, giữ/đóng vùng chọn); ẩn toolbar/stack lúc chụp |
+| Copy chữ (OCR) | Ngôn ngữ, trạng thái + nút tải/xoá gói tiếng Việt, tự nhận diện khi mở Preview |
+| Stack và Preview | Cạnh và màn hình của stack; các mục Preview (SPEC 17.4) |
+| Giới thiệu | Tên, phiên bản (+ commit nếu CI build), mô tả; nút Trang dự án, Mở thư mục log; nguồn engine/dữ liệu OCR tiếng Việt, nút Giấy phép (`NOTICE-ocr.txt`) |
 
 Các mục:
 - **Folder lưu ảnh**: nút chọn folder (dialog), kèm đường dẫn hiện tại.
@@ -279,7 +289,7 @@ File: `%APPDATA%\app.chup.desktop\config.json` (giữ nguyên đường dẫn c�
   "saveDir": "C:\\Users\\<user>\\Pictures\\Chup",
   "fileNamePattern": "chup-{yyyyMMdd-HHmmss-SSS}",
   "copyToClipboard": true,
-  "hotkeys": { "selectRegion": "Ctrl+Alt+A", "capture": "Ctrl+Alt+S", "freeze": "F1" },
+  "hotkeys": { "selectRegion": "Ctrl+Alt+A", "capture": "Ctrl+Alt+X", "freeze": "F1", "freezeEnabled": true },
   "stack": { "edge": "right", "monitor": "primary" },
   "afterCaptureNormal": "close",
   "launchAtStartup": false
@@ -291,6 +301,9 @@ File: `%APPDATA%\app.chup.desktop\config.json` (giữ nguyên đường dẫn c�
   `hotkeys.ocr` ("Chụp text", mặc định rỗng); vẫn version 2. Sau đó thêm `ocr.autoPreview` (tự nhận diện chữ khi
   mở Preview, mặc định `true`, config cũ thiếu field cũng là `true`).
 - Version 2 (Phase 2.1) thêm `hotkeys.freeze`. Migrate từ v1: điền `"F1"`; nếu F1 đã được dùng cho hotkey khác thì để trống (tắt).
+- Version 3 (2026-11-03, chup-289): mặc định `hotkeys.capture` đổi từ `Ctrl+Alt+S` (hay bị app khác giữ) sang `Ctrl+Alt+X`.
+  Migrate: còn đúng `Ctrl+Alt+S` thì đổi sang `Ctrl+Alt+X`, trừ khi phím đó đã gán cho hotkey khác. Thêm
+  `hotkeys.freezeEnabled` (mặc định `true`): tắt thì không đăng ký hotkey Freeze (F1 trả lại cho app khác) mà vẫn nhớ phím.
 - Chuỗi rỗng = tắt hotkey đó. Hai hotkey không được trùng nhau.
 
 Config hỏng hoặc parse lỗi: backup thành `config.bak.json`, rồi dùng mặc định.
@@ -380,7 +393,7 @@ Mục tiêu; đo thực tế ở bước 1.4 rồi chỉnh lại.
 | # | Quyết định | Lý do |
 |---|---|---|
 | Q1 | Tên app: **Chup** | Người dùng chốt |
-| Q2 | Hotkey: `Ctrl+Alt+A` (chọn vùng), `Ctrl+Alt+S` (chụp), `F1` (Freeze, Phase 2). OCR "Chụp text" chưa gán | Tránh `PrtScn` vì Windows 11 mặc định gán cho Snipping Tool. Freeze không dùng `Alt`, xem mục 14.4 |
+| Q2 | Hotkey: `Ctrl+Alt+A` (chọn vùng), `Ctrl+Alt+X` (chụp; trước v3 là `Ctrl+Alt+S`), `F1` (Freeze, Phase 2, bật/tắt được). OCR "Chụp text" chưa gán | Tránh `PrtScn` vì Windows 11 mặc định gán cho Snipping Tool. Freeze không dùng `Alt`, xem mục 14.4 |
 | Q3 | Normal mode: chụp xong thì **đóng** frame | Muốn chụp lặp lại thì chuyển sang Faded |
 | Q4 | Stack **không tự ẩn**, có nút thu gọn | Tự ẩn dễ làm mất ảnh đúng lúc đang định kéo |
 | Q5 | Click thumbnail: mở cửa sổ Preview của Chup (mục 17). Trước 2.2: mở bằng app mặc định của OS | Người dùng chốt (2026-11-01): cần nhìn ảnh vừa chụp cạnh chỗ đang làm, chỉnh được chỗ, cỡ, opacity, và có OCR trên đó |
@@ -446,9 +459,10 @@ Chụp được những thứ biến mất khi chuột hoặc focus thay đổi:
 
 ### 14.5 Tray bổ sung
 
-Thêm 2 mục vào menu tray:
+Thêm vào menu tray:
 - Chụp đóng băng
 - Chụp đóng băng sau 3 giây
+- (phần Tuỳ chọn) Phím tắt chụp đóng băng: bật/tắt hotkey Freeze. F1 giữ ở mọi app nên ai cần F1 cho app khác thì tắt.
 
 ### 14.6 Ngân sách
 
@@ -476,8 +490,8 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-ocr-design.md`.
 
 - Lấy text (tiếng Việt có dấu và tiếng Anh) từ một shot, hoặc trực tiếp từ vùng chọn, rồi copy vào clipboard.
 - **Offline hoàn toàn**: không gửi ảnh lên cloud.
-- **Installer không phình**: gói OCR tiếng Việt không nằm trong installer. Người dùng chọn tải nó **khi cài**
-  (ô "OCR tiếng Việt", mặc định bỏ trống), hoặc tải sau trong app.
+- **Hai bộ cài** (chup-0oa, 2026-11-03): **Full** có sẵn OCR tiếng Việt (engine + dữ liệu, không cần mạng);
+  **Lite** chỉ có `chup.exe`, OCR tiếng Việt tải **khi cài** (ô "OCR tiếng Việt", mặc định bỏ trống) hoặc sau trong app.
 
 ### 15.2 UX
 
@@ -493,8 +507,8 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-ocr-design.md`.
   - Chọn vùng xong là OCR luôn, không hiện toolbar.
 - **Không tìm thấy chữ**: hiện toast "Không tìm thấy chữ", clipboard giữ nguyên.
 - **Đang OCR**: hiện spinner trên Preview hoặc toolbar, có thể huỷ.
-- **Bộ cài**: trang chọn thành phần có ô **"OCR tiếng Việt"** (mô tả ghi rõ tải thêm ~4,4 MB), mặc định bỏ trống. Tích thì bộ cài
-  chạy `chup.exe --install-ocr` (cửa sổ tải có tiến trình). Tải lỗi vẫn cài xong app.
+- **Bộ cài Lite**: trang chọn thành phần có ô **"OCR tiếng Việt"** (mô tả ghi rõ tải thêm ~11 MB), mặc định bỏ trống. Tích thì
+  bộ cài chạy `chup.exe --install-ocr` (cửa sổ tải có tiến trình). Tải lỗi vẫn cài xong app. Bộ cài Full không có ô này.
 - **Lần đầu dùng tiếng Việt, chưa có gói** (hoặc nút "Tải gói" trong Cài đặt):
   - Hỏi người dùng có tải gói OCR không, ghi rõ dung lượng. Tải xong thì OCR luôn ảnh vừa yêu cầu.
   - Tải có thanh tiến trình, verify checksum.
@@ -535,13 +549,18 @@ pub trait OcrEngine {
 
 - **"Tiếng Anh"**: `Windows.Media.Ocr` (WinRT qua crate `windows`) chạy trong `chup.exe`.
 - **"Tiếng Việt + Anh"**: exe phụ **`chup-ocr.exe`** (crate `crates/ocr-helper`, ngoài workspace) link tĩnh Tesseract 5,
-  do CI của Chup build và **nằm trong bộ cài** cạnh `chup.exe`. Chup chạy nó như process con, gửi ảnh xám qua pipe
+  do CI của Chup build. Chup chạy nó như process con, gửi ảnh xám qua pipe
   (khung tin ở crate `crates/ocr-proto`), nhận lại các dòng. Process gắn Job Object `KILL_ON_JOB_CLOSE`.
-- **Gói tiếng Việt** = `vie.traineddata` + `eng.traineddata` (~4,4 MB) tải **từ GitHub cộng đồng**
-  (`tesseract-ocr/tessdata_fast`, ghim commit; repo Chup không phát hành file OCR). `chup.exe` ghi cứng tên, kích thước,
-  SHA-256 từng file. Cài vào `%LOCALAPPDATA%\app.chup.desktop\ocr\vi-<N>\` qua thư mục tạm rồi rename; lỗi thì xoá
-  phần dở dang. Tải bằng WinHTTP. Logic cài ở `core::ocr::pack` (test được).
-- **`chup.exe --install-ocr`**: cửa sổ tải (tiến trình, Huỷ), exit code 0 xong / 1 lỗi / 2 huỷ. Bộ cài và app dùng chung.
+- **Hai gói tải về**, ghim trong `crates/core/src/ocr/manifest.json` (tên, kích thước, SHA-256 từng file; CI đọc cùng file),
+  thiết kế `docs/plans/2026-11-03-ocr-full-lite-design.md`:
+  - **Dữ liệu** `vie` + `eng.traineddata` (~4,4 MB) từ `tesseract-ocr/tessdata_fast` (ghim commit), vào `ocr\vi-<N>\`.
+  - **Engine** `chup-ocr.exe` + `NOTICE-ocr.txt` (~6,6 MB) từ Release `ocr-engine-v<N>` của repo Chup (public), vào
+    `ocr\engine-v<N>\`. Chỉ tải khi không có `chup-ocr.exe` cạnh `chup.exe` (bộ cài Lite, chạy exe rời).
+  - Thư mục gốc `%LOCALAPPDATA%\app.chup.desktop\ocr\`. Cài qua thư mục tạm rồi rename; lỗi thì xoá phần dở dang.
+    Tải bằng WinHTTP (theo redirect của GitHub Release). Logic cài ở `core::ocr::pack` (test được).
+- **Chọn engine khi chạy**: `chup-ocr.exe` cạnh `chup.exe` (bộ cài Full) trước; không có, hoặc khác PROTO, thì bản đã tải.
+- **`chup.exe --install-ocr`**: tải những gì còn thiếu, cửa sổ tải (tiến trình, Huỷ), exit code 0 xong / 1 lỗi / 2 huỷ.
+  Bộ cài Lite và app dùng chung.
 - **Lazy-load**: exe phụ chỉ chạy khi cần, giữ sống giữa các lần OCR, **tắt sau 5 phút không dùng** để trả RAM.
   Huỷ job đang chạy = kill process. Crash hoặc quá 15 s = kill, báo lỗi.
 - **Luồng chạy**: 1 worker thread giữ cả 2 engine. Hàng đợi chỉ giữ 1 job; job mới tới thì thay job đang chờ.
@@ -589,7 +608,7 @@ pub trait OcrEngine {
 | Vùng nhỏ (khoảng 5 dòng) | ≤ 500 ms |
 | Vùng 1920×1080 dày chữ | ≤ 2 s |
 | RAM thêm khi model đang load | ≤ 150 MB, về mức Phase 1 sau khi giải phóng |
-| Dung lượng installer | Không tăng so với Phase 1 (chỉ thêm `chup-ocr.exe` ~1,5–2 MB nén; dữ liệu tiếng Việt ~4,4 MB tải riêng) |
+| Dung lượng installer | Lite: như Phase 1 (~1 MB nén). Full: thêm engine + dữ liệu (~4–5 MB nén, đo ở CI). `chup.exe` ~1,5 MB |
 
 ### 15.8 Nghiệm thu
 

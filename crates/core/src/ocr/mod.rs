@@ -1,5 +1,5 @@
 //! OCR (SPEC 15): tiền xử lý ảnh và hậu xử lý kết quả, không phụ thuộc engine hay OS.
-//! Engine thật nằm ở lớp platform (Windows OCR, `chup-ocr.exe`); gói dữ liệu tiếng Việt ở [`pack`].
+//! Engine thật nằm ở lớp platform (Windows OCR, `chup-ocr.exe`); các gói tải về (dữ liệu, engine) ở [`pack`].
 
 mod layout;
 pub mod pack;

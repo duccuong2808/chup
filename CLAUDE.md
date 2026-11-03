@@ -7,13 +7,16 @@ Rust thuần, **không WebView**: giao diện Win32 + Direct2D/DirectWrite. Lõi
 - Trạng thái: Phase 1 xong và đã test trên Windows 11 thật; bước 1.5 (bỏ Tauri, UI native) xong; 2.1 Freeze (SPEC mục 14, thiết kế ở `docs/plans/2026-11-01-freeze-design.md`) xong và đã test trên VM. Kết quả test ở README, mục "Đã kiểm chứng và chưa kiểm chứng".
 - 2.2 Preview khi bấm thumbnail (SPEC mục 17, thiết kế `docs/plans/2026-11-01-preview-design.md`) xong, đã test trên VM.
 - 2.3 OCR (SPEC mục 15, thiết kế `docs/plans/2026-11-01-ocr-design.md`) xong, đã test trên VM (epic beads `chup-2fy`).
-  Tiếng Anh = Windows OCR; tiếng Việt = `chup-ocr.exe` (Tesseract link tĩnh, nằm trong installer) + dữ liệu tessdata_fast
-  tải từ GitHub cộng đồng (repo này private, không phát file OCR).
+  Tiếng Anh = Windows OCR; tiếng Việt = `chup-ocr.exe` (Tesseract link tĩnh) + dữ liệu tessdata_fast. Cả hai ghim
+  trong `crates/core/src/ocr/manifest.json`; engine phát hành ở Release `ocr-engine-vN` của repo này (public).
+  Bộ cài Full có sẵn cả hai; Lite / exe rời tải khi cần (chup-0oa, `docs/plans/2026-11-03-ocr-full-lite-design.md`).
 - Preview chọn chữ trên ảnh kiểu Live Text (SPEC 15.2, 17.2; thiết kế `docs/plans/2026-11-01-live-text-design.md`,
   beads `chup-4fx`) xong, đã test trên VM. Chọn theo ký tự; tự nhận diện khi mở Preview (mặc định bật).
 - 2.4 Tự động chọn vùng (SPEC mục 16; spike `docs/plans/2026-11-03-autoselect-spike.md`, thiết kế
   `docs/plans/2026-11-03-autoselect-design.md`, epic beads `chup-pwn`): code xong trên nhánh `phase2-autoselect`,
   **chưa chạy thử trong app thật**. Công cụ spike ở `tools/` (ngoài workspace).
+- Cài đặt chia trang kiểu Windows 11 (SPEC 5.6, beads `chup-ck1`): nhánh `phase2-settings`, đã chụp màn hình kiểm tra
+  5 trang trên Windows 11 (125%); chưa thử tay từng control.
 
 ## Lệnh
 
@@ -24,7 +27,7 @@ cargo clippy -p chup --target x86_64-pc-windows-msvc -- -D warnings   # check co
 # chup-ocr.exe nằm ngoài workspace (cần Tesseract: macOS `brew install tesseract pkg-config`, Windows vcpkg static)
 CHUP_TESSDATA=<thư mục vie/eng.traineddata> cargo test --release --manifest-path crates/ocr-helper/Cargo.toml
 cargo build --release -p chup                            # trên Windows
-makensis /DVERSION=0.2.0 /DEXE=target\release\chup.exe /DOCR_DIR=<chup-ocr.exe + NOTICE-ocr.txt> installer\chup.nsi   # installer
+makensis /DLITE /DVERSION=0.2.0 /DEXE=target\release\chup.exe installer\chup.nsi   # bộ cài Lite; Full: xem README (fetch-ocr.ps1)
 ```
 
 Máy dev là macOS: check/clippy cho target Windows chạy được (cần `rustup target add x86_64-pc-windows-msvc`), nhưng không link được. Bản chạy thật lấy từ CI (artifact `chup-windows-<sha>` có cả `chup.exe` và installer).

@@ -21,16 +21,25 @@ và kéo thả thẳng được sang app khác. Đặc tả đầy đủ ở [SP
 
 ```powershell
 cargo build --release -p chup        # target\release\chup.exe
-# chup-ocr.exe (OCR tiếng Việt): cần vcpkg `tesseract:x64-windows-static` và biến VCPKG_ROOT
+# chup-ocr.exe (OCR tiếng Việt, chỉ cần khi sửa engine): vcpkg `tesseract:x64-windows-static` và biến VCPKG_ROOT
 cargo build --release --manifest-path crates\ocr-helper\Cargo.toml
-makensis /DVERSION=0.2.0 /DEXE=target\release\chup.exe /DOCR_DIR=<thư mục có chup-ocr.exe + NOTICE-ocr.txt> installer\chup.nsi
+# Bộ cài Lite (chỉ chup.exe)
+makensis /DLITE /DVERSION=0.2.0 /DEXE=target\release\chup.exe installer\chup.nsi
+# Bộ cài Full: lấy đúng engine + dữ liệu ghim trong crates\core\src\ocr\manifest.json (kiểm SHA-256)
+installer\fetch-ocr.ps1 -Pack engine -Out ocr-dist
+installer\fetch-ocr.ps1 -Pack data -Out ocr-data          # in ra tên thư mục gói, vd. vi-1
+makensis /DVERSION=0.2.0 /DEXE=target\release\chup.exe /DOCR_DIR=ocr-dist /DDATA_DIR=ocr-data /DDATA_PACK=vi-1 installer\chup.nsi
 ```
 
 - Installer cài cho user hiện tại vào `%LOCALAPPDATA%\Chup`, không cần quyền admin.
   Chạy với `/S` để cài im lặng.
-- Mục **"OCR tiếng Việt"** trong installer (mặc định bỏ trống) tải dữ liệu `vie`/`eng` (~4,4 MB) từ
-  [tesseract-ocr/tessdata_fast](https://github.com/tesseract-ocr/tessdata_fast) bằng `chup.exe --install-ocr`.
-  Không tích thì tải sau trong Cài đặt. Engine `chup-ocr.exe` luôn nằm trong installer.
+- Hai bộ cài (thiết kế `docs/plans/2026-11-03-ocr-full-lite-design.md`):
+  - **Full** (`Chup_<ver>_x64-setup.exe`): có sẵn OCR tiếng Việt, không cần mạng.
+  - **Lite** (`Chup_<ver>_x64-setup-lite.exe`): chỉ `chup.exe`. Mục **"OCR tiếng Việt"** (mặc định bỏ trống) tải
+    engine `chup-ocr.exe` (Release [`ocr-engine-v1`](https://github.com/duccuong2808/chup/releases/tag/ocr-engine-v1))
+    và dữ liệu `vie`/`eng` từ [tesseract-ocr/tessdata_fast](https://github.com/tesseract-ocr/tessdata_fast), ~11 MB,
+    bằng `chup.exe --install-ocr`. Không tích thì tải sau trong Cài đặt.
+  - Chạy `chup.exe` rời (không qua bộ cài) giống bản Lite: thiếu gì thì tải nấy.
 - Chup chạy nền ở khay hệ thống, **không mở cửa sổ nào khi khởi động**.
   - Nhấn `Ctrl+Alt+A` hoặc click trái icon tray để chọn vùng.
   - Click phải icon tray để mở menu (Cài đặt, Thoát…).
@@ -52,10 +61,21 @@ Workflow `.github/workflows/build.yml` chạy trên `windows-latest`:
 
 - Mỗi lần push / PR: job `check` (`cargo test`, `cargo clippy -D warnings`), job `ocr-helper`
   (vcpkg `tesseract:x64-windows-static`, build + test `chup-ocr.exe` với ảnh của spike, gom license),
-  rồi job `build` (`cargo build --release` + NSIS kèm `chup-ocr.exe`). Kết quả là artifact
-  `chup-windows-<sha>` gồm installer, `chup.exe`, `chup-ocr.exe` (tab Actions → chọn run → Artifacts).
+  rồi job `build` (`cargo build --release`, lấy engine + dữ liệu theo manifest, NSIS Full và Lite). Kết quả là
+  artifact `chup-windows-<sha>` gồm 2 installer và `chup.exe` (tab Actions → chọn run → Artifacts).
 - Push tag `v*` (vd: `git tag v0.2.0 && git push origin v0.2.0`): tạo thêm GitHub Release dạng
   draft kèm installer. Nhớ đổi `version` trong `Cargo.toml` (workspace) cho khớp tag trước.
+
+### Phát hành engine OCR
+
+Engine `chup-ocr.exe` không build lại mỗi lần phát hành Chup: app và bộ cài Full dùng đúng file ghim trong
+`crates/core/src/ocr/manifest.json`. Chỉ khi sửa `crates/ocr-helper` hoặc `crates/ocr-proto`:
+
+1. Push, lấy artifact `chup-ocr` của job `ocr-helper` (`chup-ocr.exe` + `NOTICE-ocr.txt`).
+2. Tạo Release `ocr-engine-v<N+1>` (không đánh dấu latest; tag không bắt đầu bằng `v` nên không kích hoạt workflow)
+   và đính kèm 2 file đó.
+3. Sửa mục `engine` trong manifest: `dir` = `engine-v<N+1>`, `baseUrl`, `size` + `sha256` từng file.
+   Đổi PROTO thì bắt buộc làm, vì `chup.exe` mới không nói chuyện được với engine cũ.
 
 ## Dùng nhanh
 
@@ -64,13 +84,13 @@ Workflow `.github/workflows/build.yml` chạy trên `windows-latest`:
 | Chọn vùng | `Ctrl+Alt+A`, hoặc click trái icon tray. Menu tray (click phải) hiện phím tắt đang gán cạnh từng mục |
 | Tự động chọn vùng | Trong lúc chọn vùng (cả Freeze), rê chuột là tô sẵn khung cửa sổ / nút / ảnh dưới con trỏ, click để chọn khung đó. Lăn chuột hoặc `↑` `↓` đổi sang khung lớn hơn / nhỏ hơn; giữ `Shift` để tạm tắt; kéo vẫn chọn vùng tự do. Tắt trong Cài đặt |
 | Huỷ chọn vùng | `Esc`, hoặc click phải |
-| Chụp | Nút **Chụp** trên toolbar, hoặc `Ctrl+Alt+S` |
-| Chụp lại vùng cuối | `Ctrl+Alt+S` khi không có vùng chọn, hoặc menu tray |
+| Chụp | Nút **Chụp** trên toolbar, hoặc `Ctrl+Alt+X` |
+| Chụp lại vùng cuối | `Ctrl+Alt+X` khi không có vùng chọn, hoặc menu tray |
 | Chế độ mờ | Nút **Mờ**: viền nhạt, chuột đi xuyên qua, vẫn chụp được bằng phím tắt |
 | Di chuyển / đổi kích thước vùng | Kéo phần lề quanh viền / kéo 8 ô vuông nhỏ |
 | Dùng ảnh trong stack | Kéo thumbnail thả vào app khác; click để mở Preview; hover để copy / mở folder / bỏ khỏi stack |
 | Thu gọn stack | Hover stack → nút `›`; click tab nhỏ ở mép màn hình để mở lại |
-| Chụp đóng băng (menu, tooltip) | `F1`, hoặc menu tray "Chụp đóng băng" / "… sau 3 giây". Màn hình đóng băng ngay; kéo chọn vùng, chỉnh bằng 8 ô vuông, kéo trong vùng để di chuyển |
+| Chụp đóng băng (menu, tooltip) | `F1`, hoặc menu tray "Chụp đóng băng" / "… sau 3 giây". Màn hình đóng băng ngay; kéo chọn vùng, chỉnh bằng 8 ô vuông, kéo trong vùng để di chuyển. F1 được giữ ở mọi app; cần F1 cho app khác thì tắt ở menu tray (Tuỳ chọn) hoặc Cài đặt > Phím tắt |
 | Preview | Kéo để di chuyển, kéo mép/góc để đổi cỡ, lăn chuột để zoom, `Ctrl` + lăn chuột đổi opacity. Hover: ghim (luôn nằm trên), copy, folder, đóng. `Esc` đóng. Lần sau mở đúng chỗ và cỡ cũ (đổi trong Cài đặt) |
 | Lưu / Copy / huỷ (Freeze) | `Enter`, double-click trong vùng hoặc nút **Lưu** / nút **Copy** (chỉ clipboard, không lưu file) / `Esc` hoặc click phải |
 | Copy chữ trong ảnh (OCR) | Nút **[T]** trên Preview, trên toolbar vùng chọn, hoặc nút **Chữ** khi Freeze; hotkey "Chụp text" (gán trong Cài đặt): chọn vùng là copy chữ luôn. Không lưu file. Tiếng Việt cần tải gói (Cài đặt) |
@@ -158,7 +178,7 @@ Cách giữ RAM thấp:
 - `WDA_EXCLUDEFROMCAPTURE` có tác dụng với cách chụp của `xcap`.
 - Stack: hover hiện nút và nhãn W × H; kéo thả thumbnail ra Desktop; click thẻ mở ảnh;
   thu gọn và mở lại; toast lỗi khi file bị xoá bên ngoài (thẻ tự bỏ khỏi stack).
-- Chế độ Mờ: click xuyên qua, gõ phím và cuộn ở app bên dưới bình thường; `Ctrl+Alt+S` chụp
+- Chế độ Mờ: click xuyên qua, gõ phím và cuộn ở app bên dưới bình thường; `Ctrl+Alt+S` (nay là `Ctrl+Alt+X`) chụp
   đúng vùng (ảnh là nội dung sau khi cuộn, không dính viền) và app bên dưới vẫn giữ focus.
 - Chụp 7 lần liên tiếp: stack còn 5 ảnh mới nhất, ổ đĩa có đủ 7 file.
 - Kéo thả thumbnail (chỉ đưa `CF_HDROP`, hiệu ứng copy): Explorer (copy file, file gốc còn
@@ -226,7 +246,7 @@ Cách giữ RAM thấp:
 
 - Clipboard (khi chụp và nút Copy, ảnh 2193×1350): có đủ `PNG` (đúng byte của file), CF_DIBV5,
   và `Bitmap`/`DIB` do Windows tự suy ra. Chuẩn bị ~16–20 ms, giữ clipboard ~9–10 ms.
-- Nút mở folder (Explorer chọn sẵn file), nút bỏ khỏi stack, Xoá hết, `Ctrl+Alt+S` chụp lại vùng cuối.
+- Nút mở folder (Explorer chọn sẵn file), nút bỏ khỏi stack, Xoá hết, `Ctrl+Alt+S` (nay là `Ctrl+Alt+X`) chụp lại vùng cuối.
 - Menu tray (Mở folder ảnh, Cài đặt…); bật/tắt chạy cùng Windows (khoá `HKCU\…\Run`);
   đổi folder lưu qua hộp chọn folder, ảnh sau đó lưu đúng folder mới.
 
@@ -249,6 +269,15 @@ tự đặt ảnh, nên không do Chup. Muốn kiểm tra clipboard thì phải 
 7. **Tự động chọn vùng (Phase 2.4) chưa chạy thử trong app thật**: mới có unit test core, clippy và build
    release. Spike UIA / khung từ ảnh đo trên Windows 11 x64 thật, xem
    `docs/plans/2026-11-03-autoselect-spike.md`. Checklist test: thiết kế mục 7.
+8. **Cài đặt chia trang** (chup-ck1): mới chụp màn hình 5 trang trên Windows 11 x64 thật (125%), đổi trang không còn
+   sót control. Chưa thử tay: Tab/phím mũi tên, ghi phím tắt, danh sách xổ của combobox, đổi DPI khi kéo sang màn khác.
+9. **Bộ cài Full / Lite** (chup-0oa): `chup.exe --install-ocr` trên Windows 11 x64 thật tải engine từ Release
+   `ocr-engine-v1` (WinHTTP theo redirect 302 của GitHub), đúng SHA-256, `chup-ocr.exe --version` chạy được từ
+   `%LOCALAPPDATA%` (Symantec không chặn). Chưa chạy: 2 bộ cài NSIS (máy dev không có makensis, CI build), Lite cài
+   có tick OCR, Full chạy không mạng.
+10. **Phím tắt** (chup-289): `Ctrl+Alt+X` đăng ký được trên máy thật (`Ctrl+Alt+S/D/T` có app khác giữ); trang Phím tắt
+    có ô bật/tắt F1 (đã chụp). **Menu tray hai phần chưa ai nhìn thấy**: tiêu đề mờ "Chụp" / "Tuỳ chọn", dấu tick
+    "Phím tắt chụp đóng băng (F1)", bấm vào thì F1 tắt/bật.
 
 **Vấn đề đang theo dõi:** kéo thumbnail đôi khi không bắt đầu kéo. Trên VM, nhấn chuột ngay khi
 vừa rê vào thumbnail thì không kéo được (0/4); dừng ≥ 0,15 s thì 9/9. Có 1 lần lỗi dù đã dừng
@@ -262,7 +291,8 @@ vừa rê vào thumbnail thì không kéo được (0/4); dừng ≥ 0,15 s thì
 - **Chưa có tooltip** cho nút trên toolbar và stack.
 - **Trim khi rảnh**: sau 15 s không thao tác, app giải phóng bộ đệm và trả working set
   cho hệ điều hành. Lần chọn vùng đầu tiên sau đó chậm hơn (đo được ~113 ms so với ~35 ms).
-- **Cài đặt bố cục 2 cột**.
+- **Cài đặt chia trang** (danh sách trang bên trái, thẻ bên phải, kiểu Windows 11), thay cho một trang dài.
+  SPEC 5.6 đã ghi.
 - **Freeze, mục tray "Chụp đóng băng"** chờ ~350 ms cho menu tray tắt hẳn rồi mới chụp (F1 chụp ngay).
 - **Freeze, lúc đếm ngược hẹn giờ**: icon tray mờ đi kèm tooltip, thay vì một icon riêng.
 - **OCR, nút [T] lúc đang chạy**: hiện vòng "bận" đứng yên (không quay) trên nút; bấm lần nữa là huỷ.

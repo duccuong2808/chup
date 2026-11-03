@@ -277,8 +277,7 @@ tự đặt ảnh, nên không do Chup. Muốn kiểm tra clipboard thì phải 
    `NOTICE-ocr.txt` và 2 file dữ liệu vào `ocr\vi-1\` (đúng SHA-256 manifest, xem bằng 7-Zip), Lite 0,69 MB chỉ có
    `chup.exe`. Chưa chạy thật: cài Lite có tick OCR, Full trên máy không mạng.
 10. **Phím tắt** (chup-289): `Ctrl+Alt+X` đăng ký được trên máy thật (`Ctrl+Alt+S/D/T` có app khác giữ); trang Phím tắt
-    có ô bật/tắt F1 (đã chụp). **Menu tray hai phần chưa ai nhìn thấy**: tiêu đề mờ "Chụp" / "Tuỳ chọn", dấu tick
-    "Phím tắt chụp đóng băng (F1)", bấm vào thì F1 tắt/bật.
+    có ô bật/tắt F1 (đã chụp). Menu tray hai phần ("Chụp" / "Tuỳ chọn") hiện đúng (user xem tay 2026-11-03).
 
 **Vấn đề đang theo dõi:** kéo thumbnail đôi khi không bắt đầu kéo. Trên VM, nhấn chuột ngay khi
 vừa rê vào thumbnail thì không kéo được (0/4); dừng ≥ 0,15 s thì 9/9. Có 1 lần lỗi dù đã dừng

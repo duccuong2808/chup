@@ -299,7 +299,9 @@ tự đặt ảnh, nên không do Chup. Muốn kiểm tra clipboard thì phải 
 10. **Phím tắt** (chup-289): `Ctrl+Alt+X` đăng ký được trên máy thật (`Ctrl+Alt+S/D/T` có app khác giữ); trang Phím tắt
     có ô bật/tắt F1 (đã chụp). Menu tray hai phần ("Chụp" / "Tuỳ chọn") hiện đúng (user xem tay 2026-11-03).
 
-**Vấn đề đang theo dõi:** kéo thumbnail đôi khi không bắt đầu kéo. Trên VM, nhấn chuột ngay khi
+**Vấn đề đang theo dõi:** kéo thumbnail đôi khi không bắt đầu kéo. *(2026-11-03, chup-t8m: tìm ra một nguyên nhân
+và đã sửa: lần nhấn thứ hai nhanh tới dưới dạng nhấp đúp mà stack không xử lý; thêm chặn lần nhấn treo. Chờ thử trên
+máy thật.)* Trên VM, nhấn chuột ngay khi
 vừa rê vào thumbnail thì không kéo được (0/4); dừng ≥ 0,15 s thì 9/9. Có 1 lần lỗi dù đã dừng
 0,5 s, chưa rõ nguyên nhân (Chup hay cách VMPal giả lập chuột).
 

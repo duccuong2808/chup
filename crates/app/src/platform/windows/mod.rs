@@ -1,6 +1,7 @@
 //! Chup trên Windows: Win32 + Direct2D/DirectWrite, không WebView (SPEC 6).
 
 mod app;
+mod autoselect;
 mod frame;
 mod gfx;
 mod hotkeys;

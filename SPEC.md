@@ -616,13 +616,15 @@ pub trait OcrEngine {
 ### 16.2 Luồng
 
 1. Nhấn hotkey Chọn vùng (hoặc Freeze). Overlay hiện như bình thường.
-2. **Rê chuột**: khung nằm dưới con trỏ được **tô viền nét đứt** (màu accent), kèm nhãn nhỏ `W × H` và loại khung (ví dụ "Cửa sổ", "Nút", "Vùng ảnh").
+2. **Rê chuột**: khung nằm dưới con trỏ được **tô viền nét đứt** (màu accent), bên trong khung không phủ tối (thấy rõ ảnh sẽ chụp), kèm nhãn nhỏ `W × H · Loại` (ví dụ "Cửa sổ", "Nút", "Vùng ảnh").
    - Khung luôn bị cắt trong màn hình đang có con trỏ (giữ quy tắc 1 màn hình của Phase 1).
 3. **Đổi cấp khung** (ví dụ đang tô nút, muốn lấy cả toolbar chứa nút đó):
    - Cuộn chuột lên: lên khung cha. Cuộn xuống: về khung con.
    - Phím tương đương: `↑` lên cha, `↓` xuống con.
+   - Cấp đã chọn **được giữ** khi di chuột trong cùng cửa sổ (đang tô thanh công cụ thì rê sang nút bên cạnh vẫn tô thanh công cụ); sang cửa sổ khác thì về khung trong cùng.
 4. **Chọn**:
-   - Click trái mà không di chuột quá 4px: lấy khung đang tô làm region. Từ đây giống hệt bước 4 của mục 5.1 (Live mode: hiện frame và toolbar; Freeze: hiện handle và toolbar trong overlay).
+   - Click trái mà không di chuột quá 4px: lấy khung đang tô làm region. Từ đây giống hệt bước 4 của mục 5.1 (Live mode: hiện frame và toolbar; Freeze: hiện handle và toolbar trong overlay; "Chụp text": OCR luôn).
+   - Freeze khi đã có vùng chọn: rê ra **ngoài** vùng vẫn tô khung, click là chọn khung mới. Trong vùng, trên handle, trên toolbar thì không tô.
    - Nhấn giữ và kéo ≥ 4px: chọn vùng tự do như Phase 1, bỏ qua khung đang tô.
 5. **Tạm tắt**: giữ `Shift` trong lúc rê thì không tô khung nào (để kéo tay chính xác ở vùng có nhiều khung lồng nhau).
 6. Huỷ: `Esc` hoặc click phải, như cũ.
@@ -635,28 +637,31 @@ Lấy theo thứ tự ưu tiên. Khung được tô là **khung nhỏ nhất ch�
 |---|---|---|---|
 | 1 | Cửa sổ top-level | `EnumWindows` theo z-order; bỏ cửa sổ ẩn, cửa sổ bị cloak (`DWMWA_CLOAKED`) và cửa sổ của Chup | Dùng `DWMWA_EXTENDED_FRAME_BOUNDS` thay cho `GetWindowRect`, để không dính viền resize vô hình và bóng đổ của Windows 10/11 |
 | 2 | Phần tử UI trong cửa sổ | UI Automation: từ element của cửa sổ dưới con trỏ (`ElementFromHandle`), đi xuống phần tử sâu nhất có `BoundingRectangle` chứa con trỏ, theo Control View | Không dùng `ElementFromPoint`, vì điểm đó luôn trúng overlay của Chup |
-| 3 | Khung nhận diện từ ảnh | Tìm cạnh thẳng ngang/dọc trên ảnh chụp màn hình rồi ghép thành hình chữ nhật | Cho những app không khai báo UI Automation: canvas, game, ảnh trong trang web, app Electron cũ. **Cần spike** (mục 16.6) |
+| 3 | Khung nhận diện từ ảnh | Tìm cạnh thẳng ngang/dọc trên ảnh chụp màn hình rồi ghép thành hình chữ nhật | Cho những app không khai báo UI Automation: canvas, game, ảnh trong trang web, app Electron cũ. **Phạm vi hẹp**: chỉ dùng khi phần tử UIA sâu nhất không có con chứa con trỏ (hoặc cửa sổ không có UIA), khung nằm trong phần tử đó |
 
 - **Cây khung** = cửa sổ → phần tử UIA lồng nhau → (khung từ ảnh nằm trong phần tử sâu nhất). "Lên cha / xuống con" đi theo cây này.
-- Bỏ các khung **nhỏ hơn 8×8 px** hoặc **trùng khít khung cha** (chênh dưới 2px mỗi cạnh), để cuộn chuột không phải đi qua nhiều cấp giống hệt nhau.
+- Bỏ các khung **nhỏ hơn 8×8 px** hoặc **trùng khít khung cha** (chênh không quá 2px mỗi cạnh), để cuộn chuột không phải đi qua nhiều cấp giống hệt nhau.
+- Đi xuống cây UIA: chọn con nhỏ nhất chứa con trỏ; nhánh đó không có con chứa con trỏ mà có anh em trùng khít khung thì thử anh em đó (Chromium có nhiều Pane trùng khít, có cái rỗng).
 
 ### 16.4 Kỹ thuật
 
-- **Chụp nhanh danh sách cửa sổ trước khi hiện overlay**: cùng lúc với bước chụp ảnh của Freeze. Mất vài ms, không làm chậm hotkey.
+- **Chụp nhanh danh sách cửa sổ trước khi hiện overlay** (Freeze: trước bước chụp ảnh và trước khi overlay lấy focus). Spike: 0,1–1 ms.
   - Live mode: danh sách cửa sổ có thể cũ đi nếu người dùng chờ lâu trong overlay. Chấp nhận, vì overlay đang phủ màn hình nên hầu như không có cửa sổ nào đổi chỗ.
 - **UI Automation chạy lazy, trên thread riêng**:
-  - Một thread COM (MTA) cố định, nhận yêu cầu "điểm (x, y) trong cửa sổ H" qua channel. Chỉ xử lý yêu cầu mới nhất (debounce khoảng 30 ms khi chuột đang di).
-  - Dùng `CacheRequest` lấy `BoundingRectangle`, `ControlType`, `Name` trong một lượt, tránh mỗi thuộc tính một lần gọi cross-process.
-  - Cache kết quả theo cửa sổ trong suốt một lần chọn vùng; xoá cache khi overlay đóng.
-  - Đặt timeout (`IUIAutomation2::ConnectionTimeout`, `TransactionTimeout` khoảng 200 ms). App bị treo hoặc chạy quyền admin (Chup không đọc được UIA của nó) thì chỉ dùng khung cửa sổ.
+  - Một thread COM (MTA) cố định, nhận yêu cầu "điểm (x, y) trong cửa sổ H" qua channel. Chỉ xử lý yêu cầu mới nhất, không chờ cố định (truy vấn đã cache gần như tức thì). Mọi yêu cầu và kết quả mang số thế hệ của phiên chọn vùng; kết quả của phiên cũ bị bỏ.
+  - Dùng `CacheRequest` lấy `BoundingRectangle`, `ControlType` trong một lượt, tránh mỗi thuộc tính một lần gọi cross-process.
+  - Cache cây theo cửa sổ trong suốt một lần chọn vùng (con lấy lười, giữ lại); xoá cache khi overlay đóng. Mỗi truy vấn có hạn 80 ms: hết hạn thì trả chuỗi sâu nhất đã có, lần sau đi tiếp từ cache.
+  - Đặt timeout (`IUIAutomation2::ConnectionTimeout`, `TransactionTimeout`) **1 s** (spike: Word lần đầu mất 276 ms). Timeout, app treo hoặc chạy quyền admin (Chup không đọc được UIA của nó) thì cửa sổ đó chỉ dùng khung cửa sổ trong phiên.
+  - Khi overlay vừa mở, hỏi ngay tại vị trí con trỏ: Chromium / Electron chỉ bật cây accessibility sau khi có client hỏi.
 - **Toạ độ**: Chup là app Per-Monitor DPI Aware v2, nên DWM và UIA trả về **physical px**. Dùng thẳng làm `Rect` (mục 6.3), không quy đổi.
-- **Freeze mode**: lấy danh sách cửa sổ và UIA ngay lúc chụp đóng băng, nên menu, tooltip vẫn còn trong cây UI và chọn được đúng khung của chúng.
+- **Freeze mode**: lấy danh sách cửa sổ ngay lúc chụp đóng băng, nên menu, tooltip vẫn có trong danh sách và chọn được khung của cả menu. UIA vẫn lười: menu đóng khi overlay lấy focus, nên không chọn được từng mục menu.
+- **Khung từ ảnh**: Freeze dùng ảnh đóng băng; Live chụp ngầm màn hình sau khi overlay hiện, nên overlay được loại khỏi ảnh chụp (`WDA_EXCLUDEFROMCAPTURE`, như frame / toolbar / stack; hệ quả: app chia sẻ màn hình không thấy overlay). Máy không hỗ trợ thì Live không có khung từ ảnh. Bản đồ cạnh dựng lười theo màn hình (4K: ~63 ms, 33 MB), giải phóng khi overlay đóng.
 - **Không để UIA làm chậm việc vẽ**: overlay tô ngay khung cửa sổ (đã có sẵn), rồi thay bằng khung UIA khi kết quả về.
 - **Action bổ sung**:
   - Overlay gửi điểm dưới con trỏ cho thread UIA, nhận lại `{ rect, kind, depth }` (physical px).
   - Cuộn chuột hoặc phím mũi tên đổi `depth` (lên khung cha / xuống khung con).
   - Click chọn khung dùng lại `Action::RegionSelected(rect)` của Phase 1.
-- **Config**: thêm `autoDetect: { enabled: true, imageEdges: false }`, gộp vào lần tăng `version` lên 2 của Freeze (mục 14.4).
+- **Config**: thêm `autoDetect: { enabled: true, imageEdges: true }` (serde default, không tăng `version`). Cài đặt có 2 ô tương ứng.
 - **Phase 3**:
   - macOS: `CGWindowListCopyWindowInfo` cho cửa sổ, Accessibility API (`AXUIElement`) cho phần tử. Cần quyền Accessibility.
   - Linux X11: `XQueryTree` cho cửa sổ; phần tử qua AT-SPI nếu có, không thì chỉ cửa sổ.
@@ -671,6 +676,8 @@ Lấy theo thứ tự ưu tiên. Khung được tô là **khung nhỏ nhất ch�
 | CPU khi idle (overlay đã đóng) | ~0%, thread UIA ngủ |
 
 ### 16.6 Spike (khoảng 1 ngày)
+
+> Đã làm 2026-11-03: [docs/plans/2026-11-03-autoselect-spike.md](docs/plans/2026-11-03-autoselect-spike.md). Chốt: làm nguồn 3, bật mặc định, phạm vi hẹp. Thiết kế: [docs/plans/2026-11-03-autoselect-design.md](docs/plans/2026-11-03-autoselect-design.md).
 
 - Đo UIA trên các app hay dùng: Chrome, Edge, Explorer, VS Code, Zalo PC, Slack, Word, Excel, Teams. Ghi lại:
   - Thời gian lần đầu lấy cây và các lần sau (đã cache).

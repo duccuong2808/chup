@@ -205,6 +205,31 @@ impl Surface {
         self.fill(Rect::new(r.right(), r.y, t as u32, r.h), px);
     }
 
+    /// Viền nét đứt dày `t` nằm bên ngoài `r`: các đoạn dài `dash` xen kẽ màu `a` và `b`
+    /// (2 màu tương phản để nhìn rõ trên mọi nền).
+    pub fn outline_dashed_outside(&mut self, r: Rect, t: i32, dash: i32, a: u32, b: u32) {
+        let o = r.expand(t);
+        let dash = dash.max(1);
+        let (mut x, mut i) = (o.x, 0);
+        while x < o.right() {
+            let len = dash.min(o.right() - x) as u32;
+            let c = if i % 2 == 0 { a } else { b };
+            self.fill(Rect::new(x, o.y, len, t as u32), c);
+            self.fill(Rect::new(x, r.bottom(), len, t as u32), c);
+            x += dash;
+            i += 1;
+        }
+        let (mut y, mut i) = (r.y, 1);
+        while y < r.bottom() {
+            let len = dash.min(r.bottom() - y) as u32;
+            let c = if i % 2 == 0 { a } else { b };
+            self.fill(Rect::new(o.x, y, t as u32, len), c);
+            self.fill(Rect::new(r.right(), y, t as u32, len), c);
+            y += dash;
+            i += 1;
+        }
+    }
+
     /// Chép `src` (premultiplied) lên vị trí (x, y) bằng phép "over".
     pub fn blend_from(&mut self, src: &mut Surface, x: i32, y: i32) {
         let (w, h) = (src.w, src.h);

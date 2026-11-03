@@ -273,8 +273,9 @@ tự đặt ảnh, nên không do Chup. Muốn kiểm tra clipboard thì phải 
    sót control. Chưa thử tay: Tab/phím mũi tên, ghi phím tắt, danh sách xổ của combobox, đổi DPI khi kéo sang màn khác.
 9. **Bộ cài Full / Lite** (chup-0oa): `chup.exe --install-ocr` trên Windows 11 x64 thật tải engine từ Release
    `ocr-engine-v1` (WinHTTP theo redirect 302 của GitHub), đúng SHA-256, `chup-ocr.exe --version` chạy được từ
-   `%LOCALAPPDATA%` (Symantec không chặn). Chưa chạy: 2 bộ cài NSIS (máy dev không có makensis, CI build), Lite cài
-   có tick OCR, Full chạy không mạng.
+   `%LOCALAPPDATA%` (Symantec không chặn). CI (2897593) build được 2 bộ cài: Full 4,9 MB có `chup-ocr.exe`,
+   `NOTICE-ocr.txt` và 2 file dữ liệu vào `ocr\vi-1\` (đúng SHA-256 manifest, xem bằng 7-Zip), Lite 0,69 MB chỉ có
+   `chup.exe`. Chưa chạy thật: cài Lite có tick OCR, Full trên máy không mạng.
 10. **Phím tắt** (chup-289): `Ctrl+Alt+X` đăng ký được trên máy thật (`Ctrl+Alt+S/D/T` có app khác giữ); trang Phím tắt
     có ô bật/tắt F1 (đã chụp). **Menu tray hai phần chưa ai nhìn thấy**: tiêu đề mờ "Chụp" / "Tuỳ chọn", dấu tick
     "Phím tắt chụp đóng băng (F1)", bấm vào thì F1 tắt/bật.

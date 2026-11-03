@@ -230,17 +230,24 @@ impl Surface {
         }
     }
 
-    /// Chép `src` (premultiplied) lên vị trí (x, y) bằng phép "over".
-    pub fn blend_from(&mut self, src: &mut Surface, x: i32, y: i32) {
+    /// Chép `src` (premultiplied) lên vị trí (x, y) bằng phép "over", chỉ trong `clip`.
+    pub fn blend_from(&mut self, src: &mut Surface, x: i32, y: i32, clip: Rect) {
         let (w, h) = (src.w, src.h);
-        self.blend_part(src, (w, h), x, y)
+        self.blend_part(src, (w, h), x, y, clip)
     }
 
     /// Như `blend_from` nhưng chỉ lấy góc trên-trái cỡ `size` của `src`.
-    pub fn blend_part(&mut self, src: &mut Surface, size: (i32, i32), x: i32, y: i32) {
+    ///
+    /// `clip` là vùng vừa được tô lại (dirty): "over" không lặp lại được, nên blend ra ngoài vùng đó là chồng lên
+    /// pixel đã blend lần trước (sprite bán trong suốt đậm dần) (chup-71a.12).
+    pub fn blend_part(&mut self, src: &mut Surface, size: (i32, i32), x: i32, y: i32, clip: Rect) {
         let dst_bounds = Rect::new(0, 0, self.w as u32, self.h as u32);
         let (pw, ph) = (size.0.min(src.w), size.1.min(src.h));
-        let Some(area) = Rect::new(x, y, pw as u32, ph as u32).intersect(&dst_bounds) else { return };
+        let Some(area) =
+            Rect::new(x, y, pw as u32, ph as u32).intersect(&dst_bounds).and_then(|a| a.intersect(&clip))
+        else {
+            return;
+        };
         let (sw, dw) = (src.w as usize, self.w as usize);
         let s = src.pixels().to_vec();
         let d = self.pixels();

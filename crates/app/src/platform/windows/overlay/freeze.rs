@@ -562,20 +562,20 @@ pub(super) fn paint_frozen(st: &mut State, dirty: Rect) {
     if f.hint_visible() {
         if let Some(h) = f.hint.as_mut() {
             if h.at.intersect(&dirty).is_some() {
-                s.blend_from(&mut h.s, h.at.x, h.at.y);
+                s.blend_from(&mut h.s, h.at.x, h.at.y, dirty);
             }
         }
     }
     if let (Some(p), Some(at)) = (label.as_mut(), label_at.as_ref()) {
-        s.blend_part(&mut p.surface, (at.w as i32, at.h as i32), at.x, at.y);
+        s.blend_part(&mut p.surface, (at.w as i32, at.h as i32), at.x, at.y, dirty);
     }
     let show_bar = f.bar_visible();
     if let Some(b) = f.bar.as_mut().filter(|_| show_bar) {
         if b.at.intersect(&dirty).is_some() {
-            s.blend_from(&mut b.surface, b.at.x, b.at.y);
+            s.blend_from(&mut b.surface, b.at.x, b.at.y, dirty);
         }
     }
     if hl.is_some() {
-        auto::paint_auto_edges(st);
+        auto::paint_auto_edges(st, dirty);
     }
 }

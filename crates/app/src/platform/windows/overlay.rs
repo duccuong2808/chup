@@ -161,6 +161,11 @@ impl Overlay {
         );
     }
 
+    /// Lấy focus (nhận Esc / Enter) khi overlay vốn được giao focus không hiện được.
+    pub fn take_focus(&self) {
+        self.raise(true);
+    }
+
     /// Hiện cửa sổ trên cùng; `focus` = lấy focus để nhận phím.
     fn raise(&self, focus: bool) {
         unsafe {
@@ -286,15 +291,15 @@ fn paint(st: &mut State, dirty: Rect) {
     if start.is_none() {
         if let Some(h) = hint.as_mut() {
             if h.at.intersect(&dirty).is_some() {
-                s.blend_from(&mut h.s, h.at.x, h.at.y);
+                s.blend_from(&mut h.s, h.at.x, h.at.y, dirty);
             }
         }
     }
     if let (Some(p), Some(at)) = (label.as_mut(), label_at) {
-        s.blend_part(&mut p.surface, (at.w as i32, at.h as i32), at.x, at.y);
+        s.blend_part(&mut p.surface, (at.w as i32, at.h as i32), at.x, at.y, dirty);
     }
     if hl.is_some() {
-        auto::paint_auto_edges(st);
+        auto::paint_auto_edges(st, dirty);
     }
 }
 

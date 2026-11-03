@@ -156,6 +156,9 @@ pub fn run() -> i32 {
     if std::env::args().any(|a| a == "--install-ocr") {
         logger::init(&dirs.cache_dir.join("chup-install-ocr.log"));
         log::info!("Chup {} --install-ocr", env!("CARGO_PKG_VERSION"));
+        // Hộp thoại tải theo ngôn ngữ giao diện (bộ cài Lite cài mới: chưa có config, theo Windows).
+        let cfg = config::load(&dirs.config_dir.join("config.json"), &dirs.pictures.join("Chup")).config;
+        util::apply_ui_language(cfg.ui_language);
         return ocr_download::install_mode(
             &ocr::ocr_root(&dirs.cache_dir),
             &dirs.config_dir.join("config.json"),
@@ -188,6 +191,8 @@ pub fn run() -> i32 {
     // Stack rỗng khi khởi động (SPEC 2) -> dọn thumbnail cũ.
     let _ = std::fs::remove_dir_all(&thumbs_dir);
     let loaded = config::load(&config_file, &default_save_dir);
+    // Trước khi dựng bất kỳ giao diện nào (tray, toast, Cài đặt).
+    util::apply_ui_language(loaded.config.ui_language);
 
     let cls = win::register_class::<AppWindow>("ChupApp");
     let mut app_hwnd = HWND::default();

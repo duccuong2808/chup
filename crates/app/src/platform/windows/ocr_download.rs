@@ -5,6 +5,7 @@
 //! TaskDialog có thanh tiến trình và nút Huỷ; lỗi thì hỏi Thử lại. Các hộp thoại ở đây là modal, nên app gọi
 //! chúng ngoài lúc `App` đang bị borrow (xem `WM_APP_OCR_DOWNLOAD`).
 
+use chup_core::i18n::{fill, t};
 use std::{
     path::Path,
     sync::{
@@ -43,7 +44,10 @@ use windows::{
 
 use super::{ocr, util::wide};
 
-const TITLE: PCWSTR = w!("Chup – OCR tiếng Việt");
+/// Tiêu đề các hộp thoại tải (UTF-16, kết thúc NUL).
+fn title() -> Vec<u16> {
+    wide(t().dl_title)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Outcome {
@@ -90,12 +94,10 @@ pub fn install_mode(ocr_root: &Path, config_file: &Path, default_save_dir: &Path
 }
 
 fn confirm(ocr_root: &Path) -> bool {
-    let text = wide(&format!(
-        "OCR tiếng Việt cần tải thêm {} từ GitHub.\n\nTải về bây giờ?",
-        pack::size_label(ocr::download_size(ocr_root))
-    ));
+    let text = wide(&fill(t().dl_confirm, &[&pack::size_label(ocr::download_size(ocr_root))]));
+    let title = title();
     let r = unsafe {
-        MessageBoxW(None, PCWSTR(text.as_ptr()), TITLE, MB_YESNO | MB_ICONQUESTION | MB_TOPMOST | MB_SETFOREGROUND)
+        MessageBoxW(None, PCWSTR(text.as_ptr()), PCWSTR(title.as_ptr()), MB_YESNO | MB_ICONQUESTION | MB_TOPMOST | MB_SETFOREGROUND)
     };
     r == IDYES
 }
@@ -108,8 +110,9 @@ fn install_with_retry(ocr_root: &Path) -> Outcome {
             Err(e) => {
                 log::error!("ocr: tải gói lỗi: {e:?}");
                 let text = wide(e.user_message());
+                let title = title();
                 let r = unsafe {
-                    MessageBoxW(None, PCWSTR(text.as_ptr()), TITLE, MB_RETRYCANCEL | MB_ICONERROR | MB_TOPMOST)
+                    MessageBoxW(None, PCWSTR(text.as_ptr()), PCWSTR(title.as_ptr()), MB_RETRYCANCEL | MB_ICONERROR | MB_TOPMOST)
                 };
                 if r != IDRETRY {
                     return Outcome::Failed;
@@ -131,7 +134,7 @@ struct Progress {
 const RANGE: u64 = 1000;
 
 fn mb(bytes: u64) -> String {
-    format!("{:.1}", bytes as f64 / 1_048_576.0).replace('.', ",")
+    chup_core::i18n::decimal1(bytes as f64 / 1_048_576.0)
 }
 
 unsafe extern "system" fn callback(
@@ -151,7 +154,7 @@ unsafe extern "system" fn callback(
         TDN_TIMER => {
             let done = p.done.load(Ordering::Relaxed);
             let total = p.total.max(1);
-            let text = wide(&format!("Đã tải {} / {} MB", mb(done), mb(total)));
+            let text = wide(&fill(t().dl_progress, &[&mb(done), &mb(total)]));
             unsafe {
                 SendMessageW(hwnd, TDM_SET_PROGRESS_BAR_POS.0 as u32, Some(WPARAM((done * RANGE / total) as usize)), None);
                 // UPDATE (không SET): đổi chữ mà không dàn lại hộp thoại mỗi 200 ms.
@@ -189,13 +192,14 @@ fn download_dialog(ocr_root: &Path) -> Result<(), InstallError> {
             FETCHING.store(false, Ordering::Release);
         })
     });
-    let instruction = wide("Đang tải OCR tiếng Việt");
-    let content = wide("Đang kết nối…");
+    let instruction = wide(t().dl_heading);
+    let content = wide(t().dl_connecting);
+    let title = title();
     let cfg = TASKDIALOGCONFIG {
         cbSize: std::mem::size_of::<TASKDIALOGCONFIG>() as u32,
         dwFlags: TDF_SHOW_PROGRESS_BAR | TDF_CALLBACK_TIMER,
         dwCommonButtons: TDCBF_CANCEL_BUTTON,
-        pszWindowTitle: TITLE,
+        pszWindowTitle: PCWSTR(title.as_ptr()),
         pszMainInstruction: PCWSTR(instruction.as_ptr()),
         pszContent: PCWSTR(content.as_ptr()),
         pfCallback: Some(callback),

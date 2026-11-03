@@ -1,6 +1,7 @@
 //! Điều phối: nhận `Action` (từ cửa sổ, tray, hotkey, worker), gọi `Model`, áp `Effect` lên cửa sổ.
 //! Chụp và lưu file chạy ở worker thread; kết quả quay về bằng `emit`.
 
+use chup_core::i18n::{fill, t};
 use std::{rc::Rc, sync::Arc, time::Duration};
 
 use chup_core::{
@@ -286,7 +287,7 @@ impl App {
             Action::ConfigPatch(p) => match self.model.update_config(&p) {
                 Ok(fx) => {
                     if let Some(s) = &self.settings {
-                        s.set_status("Đã lưu", false);
+                        s.set_status(t().st_saved, false);
                     }
                     fx
                 }
@@ -375,7 +376,7 @@ impl App {
             Action::PreviewCopy(path) => {
                 std::thread::spawn(move || {
                     let t = match chup_core::clipboard::copy_file_image(&path) {
-                        Ok(()) => Toast::info("Đã copy ảnh"),
+                        Ok(()) => Toast::info(t().image_copied),
                         Err(e) => Toast::error(e),
                     };
                     emit(Action::Toast(t));
@@ -407,7 +408,7 @@ impl App {
                 // Xoá những gì đã tải (dữ liệu, engine); engine cạnh chup.exe của bộ cài Full thì giữ.
                 let r = pack::data().remove(&self.ocr_root).and(pack::engine().remove(&self.ocr_root));
                 fx.push(match r {
-                    Ok(()) => Effect::Toast(Toast::info("Đã xoá OCR tiếng Việt")),
+                    Ok(()) => Effect::Toast(Toast::info(t().ocr_removed)),
                     Err(e) => Effect::Toast(Toast::error(e)),
                 });
                 fx.extend(self.model.set_ocr_vi(ocr::vi_state(&self.ocr_root)));
@@ -418,7 +419,7 @@ impl App {
                     let had_pending = self.model.ocr_has_pending();
                     let mut fx = self.model.ocr_pack_installed(ocr::vi_state(&self.ocr_root));
                     if !had_pending {
-                        fx.push(Effect::Toast(Toast::info("Đã tải OCR tiếng Việt")));
+                        fx.push(Effect::Toast(Toast::info(t().ocr_installed)));
                     }
                     fx
                 } else {
@@ -479,7 +480,7 @@ impl App {
     fn open_save_dir(&mut self) -> Vec<Effect> {
         let dir = self.model.config.save_dir.clone();
         if let Err(e) = std::fs::create_dir_all(&dir) {
-            return vec![Effect::Toast(Toast::error(format!("Không tạo được {}: {e}", dir.display())))];
+            return vec![Effect::Toast(Toast::error(fill(t().err_create_dir, &[&dir.display(), &e])))];
         }
         match util::shell_open(&dir) {
             Ok(()) => vec![],
@@ -521,6 +522,17 @@ impl App {
                 Effect::StartCapture(job) => self.start_capture(job.rect, job.hide_ui, job.text),
                 Effect::ApplyHotkeys => self.apply_hotkeys(),
                 Effect::SyncAutostart => self.sync_autostart(),
+                Effect::UiLanguageChanged => {
+                    util::apply_ui_language(self.model.config.ui_language);
+                    if let Some(t) = &self.tray {
+                        t.retext();
+                    }
+                    if let Some(s) = &self.settings {
+                        s.retext();
+                    }
+                    // Đăng ký lại phím tắt: câu báo lỗi (nếu có) sinh theo ngôn ngữ lúc đăng ký. Cũng refresh Cài đặt.
+                    self.apply_hotkeys();
+                }
                 Effect::ConfigChanged => {
                     self.refresh_settings();
                     let p = &self.model.config.preview;
@@ -734,7 +746,7 @@ impl App {
         self.preview.request(path.clone());
         std::thread::spawn(move || {
             let t0 = std::time::Instant::now();
-            let r = image::open(&path).map(|i| i.to_rgba8()).map_err(|e| format!("Không mở được ảnh: {e}"));
+            let r = image::open(&path).map(|i| i.to_rgba8()).map_err(|e| fill(t().err_open_image, &[&e]));
             log::info!("preview: giải mã ảnh mất {:?}", t0.elapsed());
             emit(Action::PreviewLoaded(path, r));
         });
@@ -844,7 +856,7 @@ impl App {
         if !shown {
             // Không overlay nào hiện được: không còn chỗ nhận Esc, phải tự kết thúc phiên.
             let mut fx = self.model.freeze_cancel();
-            fx.push(Effect::Toast(Toast::error("Không đủ bộ nhớ để hiện ảnh đóng băng")));
+            fx.push(Effect::Toast(Toast::error(t().err_freeze_memory)));
             self.apply(fx);
         }
     }
@@ -860,7 +872,7 @@ impl App {
             let shot = chup_core::freeze::crop(&img, mon, rect);
             drop(img);
             let Some(shot) = shot else {
-                emit(Action::Toast(Toast::error("Vùng chọn nằm ngoài ảnh")));
+                emit(Action::Toast(Toast::error(t().err_selection_outside)));
                 return;
             };
             if save {
@@ -882,7 +894,7 @@ impl App {
             return;
         };
         let Some(shot) = chup_core::freeze::crop(&img, mon, rect) else {
-            self.apply(vec![Effect::Toast(Toast::error("Vùng chọn nằm ngoài ảnh"))]);
+            self.apply(vec![Effect::Toast(Toast::error(t().err_selection_outside))]);
             return;
         };
         drop(img);
@@ -902,7 +914,7 @@ impl App {
                 self.ocr.submit(ocr::Job { id: job.id, lang: job.lang, scale: job.scale, img, background: !job.copy })
             }
             None => {
-                let fx = self.model.ocr_done(job.id, Err("Không đọc được ảnh để OCR".into()));
+                let fx = self.model.ocr_done(job.id, Err(t().ocr_read_image_failed.into()));
                 self.apply(fx);
             }
         }

@@ -4,7 +4,7 @@ App chụp màn hình theo vùng cho Windows (macOS/Linux X11 ở Phase 3).
 Rust thuần, **không WebView**: giao diện Win32 + Direct2D/DirectWrite. Lõi tách riêng, không phụ thuộc OS.
 
 - **Đặc tả là nguồn sự thật: [SPEC.md](SPEC.md).** Mọi thay đổi hành vi phải khớp SPEC; nếu cần lệch thì cập nhật SPEC và ghi vào mục "Khác với SPEC" trong README.
-- Trạng thái: Phase 1 xong và đã test trên Windows 11 thật; bước 1.5 (bỏ Tauri, UI native) xong; 2.1 Freeze (SPEC mục 14, thiết kế ở `docs/plans/2026-11-01-freeze-design.md`) xong và đã test trên VM. Kết quả test ở README, mục "Đã kiểm chứng và chưa kiểm chứng".
+- Trạng thái: Phase 1 xong và đã test trên Windows 11 thật; bước 1.5 (bỏ Tauri, UI native) xong; 2.1 Freeze (SPEC mục 14, thiết kế ở `docs/plans/2026-11-01-freeze-design.md`) xong và đã test trên VM. Kết quả test và số đo ở `docs/testing.md` (README chỉ tóm tắt).
 - 2.2 Preview khi bấm thumbnail (SPEC mục 17, thiết kế `docs/plans/2026-11-01-preview-design.md`) xong, đã test trên VM.
 - 2.3 OCR (SPEC mục 15, thiết kế `docs/plans/2026-11-01-ocr-design.md`) xong, đã test trên VM (epic beads `chup-2fy`).
   Tiếng Anh = Windows OCR; tiếng Việt = `chup-ocr.exe` (Tesseract link tĩnh) + dữ liệu tessdata_fast. Cả hai ghim

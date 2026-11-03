@@ -85,6 +85,7 @@ const ID_PV_SIZE: u16 = 116;
 const ID_HK_OCR: u16 = 117;
 const ID_OCR_LANG: u16 = 118;
 const ID_OCR_PACK: u16 = 119;
+const ID_OCR_AUTO: u16 = 120;
 const TIMER_PATTERN: usize = 1;
 
 const RECORDING_TEXT: &str = "Nhấn tổ hợp phím…";
@@ -174,6 +175,7 @@ struct Handles {
     ocr_lang: HWND,
     ocr_status: HWND,
     ocr_pack: HWND,
+    ocr_auto: HWND,
     sec_after: HWND,
     copy: HWND,
     lbl_after: HWND,
@@ -352,6 +354,7 @@ impl Settings {
             ocr_lang: self.add(w!("COMBOBOX"), "", combo, none, ID_OCR_LANG, Kind::Control),
             ocr_status: self.add(st, "", s, none, 0, Kind::Hint),
             ocr_pack: self.add(w!("BUTTON"), "", button, none, ID_OCR_PACK, Kind::Control),
+            ocr_auto: self.add(w!("BUTTON"), "Tự nhận diện chữ khi mở Preview", check, none, ID_OCR_AUTO, Kind::Control),
             sec_after: self.add(st, "SAU KHI CHỤP", s, none, 0, Kind::Section),
             copy: self.add(w!("BUTTON"), "Copy ảnh vào clipboard", check, none, ID_COPY, Kind::Control),
             lbl_after: self.add(st, "Vùng chọn ở chế độ thường", s, none, 0, Kind::Label),
@@ -511,7 +514,9 @@ impl Settings {
         mv(h.ocr_status, x0, y, col, 34.0);
         y += 38.0;
         mv(h.ocr_pack, x0, y, 150.0, 28.0);
-        let left_bottom = y + 28.0;
+        y += 38.0;
+        mv(h.ocr_auto, x0, y, col, 22.0);
+        let left_bottom = y + 22.0;
 
         // Cột phải.
         let mut y = 58.0;
@@ -612,6 +617,7 @@ impl Settings {
         // 30/50/70/90: giá trị khác (sửa tay trong file) lấy mục gần nhất.
         set_combo(h.pv_size, ((c.preview.size as i32 - 20) / 20).clamp(0, 3));
         set_combo(h.ocr_lang, if c.ocr.language == OcrLanguage::Vi { 1 } else { 0 });
+        set_checked(h.ocr_auto, c.ocr.auto_preview);
         let (status, button, enabled) = match v.ocr_vi {
             OcrViState::Ready => ("Gói dữ liệu tiếng Việt: đã cài.".to_string(), "Xoá gói".to_string(), true),
             OcrViState::NoPack => (
@@ -876,6 +882,7 @@ impl Handler for Settings {
                         let ready = self.st.borrow().view.as_ref().is_some_and(|v| v.ocr_vi == OcrViState::Ready);
                         emit(if ready { Action::OcrRemove } else { Action::OcrDownload });
                     }
+                    (ID_OCR_AUTO, BN_CLICKED) => self.patch(json!({ "ocr": { "autoPreview": checked(h.ocr_auto) } })),
                     (ID_HIDEUI, BN_CLICKED) => self.patch(json!({ "hideUiDuringCapture": checked(h.hideui) })),
                     (ID_AFTER, CBN_SELCHANGE) => {
                         let v = if combo_sel(h.after) == 1 { "keep" } else { "close" };

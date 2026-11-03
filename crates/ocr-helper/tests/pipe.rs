@@ -63,7 +63,7 @@ fn recognizes_spike_images_over_pipe() {
     // np200: chụp ở 200% (không phóng). np100: 100% (prepare phóng ×2).
     for (id, (file, scale)) in [("np200.png", 2.0), ("np100.png", 1.0)].into_iter().enumerate() {
         let img = image::open(data(file)).unwrap().to_rgba8();
-        let gray = ocr::prepare(&img, scale, OcrLanguage::Vi);
+        let (gray, factor) = ocr::prepare(&img, scale, OcrLanguage::Vi);
         let (w, h) = gray.dimensions();
         let req = Request { id: id as u32 + 1, width: w, height: h, pixels: gray.into_raw() };
         let t = Instant::now();
@@ -71,7 +71,36 @@ fn recognizes_spike_images_over_pipe() {
         let resp: Response = read_json(&mut stdout).unwrap().unwrap();
         let Response::Ok { id: rid, lines } = resp else { panic!("{file}: {resp:?}") };
         assert_eq!(rid, req.id);
+        // Mỗi dòng có words; từ nằm trong dòng theo chiều ngang, tâm nằm trong dòng theo chiều dọc
+        // (bbox từ có dấu tiếng Việt cao hơn bbox dòng).
+        for l in &lines {
+            assert!(!l.words.is_empty(), "{file}: dòng không có từ: {:?}", l.text);
+            let [lx, ly, lw, lh] = l.bbox;
+            for w in &l.words {
+                let [x, y, ww, wh] = w.bbox;
+                let cy = y + wh / 2;
+                assert!(x >= lx - 2 && x + ww <= lx + lw + 2 && cy >= ly && cy <= ly + lh, "{file}: {w:?} ngoài {l:?}");
+            }
+        }
+        // Vị trí ký tự: hầu hết từ có đúng số ký tự (sau NFC) để chọn một phần của từ.
+        let (mut ok, mut total) = (0, 0);
+        for w in lines.iter().flat_map(|l| &l.words) {
+            total += 1;
+            let n = w.text.trim().chars().collect::<String>();
+            let n = unicode_normalization::UnicodeNormalization::nfc(n.as_str()).count();
+            if w.chars.len() == n {
+                ok += 1;
+            }
+        }
+        eprintln!("{file}: {ok}/{total} từ có đủ vị trí ký tự");
+        assert!(ok * 10 >= total * 9, "{file}: chỉ {ok}/{total} từ khớp số ký tự");
+        // Bbox sau khi đổi về ảnh gốc nằm trong ảnh.
+        let layout = ocr::TextLayout::build(lines.clone(), factor);
+        for w in layout.words() {
+            assert!(w.rect.right() <= img.width() as i32 + 2 && w.rect.bottom() <= img.height() as i32 + 2, "{w:?}");
+        }
         let text = ocr::postprocess(lines);
+        assert_eq!(text, layout.all_text());
         let c = cer(&text, &truth);
         eprintln!("{file}: {:?}, CER {:.2}%\n{text}", t.elapsed(), c * 100.0);
         assert!(c <= 0.03, "{file}: CER {:.2}% > 3%", c * 100.0);

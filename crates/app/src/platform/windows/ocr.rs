@@ -18,7 +18,7 @@ use std::{
 use chup_core::{
     config::OcrLanguage,
     model::OcrViState,
-    ocr::{self, pack, Line},
+    ocr::{self, pack, Line, LineWord, TextLayout},
 };
 use chup_ocr_proto::{read_json, write_frame, Hello, Request, Response, PROTO};
 use image::{GrayImage, RgbaImage};
@@ -74,6 +74,8 @@ pub struct Job {
     pub lang: OcrLanguage,
     pub scale: f64,
     pub img: RgbaImage,
+    /// Job nền cho Preview: huỷ thì để chạy xong rồi bỏ kết quả, không kill exe phụ (khỏi nạp lại model).
+    pub background: bool,
 }
 
 /// State chia sẻ giữa worker và UI thread (một mutex + condvar).
@@ -82,7 +84,8 @@ struct Shared {
     /// Job chờ chạy (chỉ giữ cái mới nhất).
     pending: Option<Job>,
     /// Job worker đang chạy: chỉ worker đặt và xoá. Watchdog dựa vào đây.
-    current: Option<(u32, OcrLanguage)>,
+    /// (id, ngôn ngữ, job nền).
+    current: Option<(u32, OcrLanguage, bool)>,
     /// UI thread huỷ (hoặc thay) job đang chạy: worker bỏ kết quả.
     cancelled: bool,
     /// Exe phụ đang chạy, để UI thread / watchdog kill được trong lúc worker đang chờ đọc pipe.
@@ -98,10 +101,11 @@ impl Shared {
     }
 
     /// Dừng job đang chạy: đánh dấu huỷ; nếu là Tesseract thì kill exe phụ (Windows OCR nhanh, để chạy xong).
+    /// Job nền thì không kill: người dùng không chờ nó, còn nạp lại model tốn thêm ~0,6 s cho lần OCR sau.
     fn stop_current(&mut self) {
-        if let Some((_, lang)) = self.current {
+        if let Some((_, lang, background)) = self.current {
             self.cancelled = true;
-            if lang == OcrLanguage::Vi {
+            if lang == OcrLanguage::Vi && !background {
                 self.kill();
             }
         }
@@ -172,7 +176,7 @@ fn run(shared: SharedRef, ocr_root: PathBuf) {
             let mut sh = lock(&shared);
             loop {
                 if let Some(j) = sh.pending.take() {
-                    sh.current = Some((j.id, j.lang));
+                    sh.current = Some((j.id, j.lang, j.background));
                     sh.cancelled = false;
                     break j;
                 }
@@ -187,7 +191,7 @@ fn run(shared: SharedRef, ocr_root: PathBuf) {
         };
         let (id, lang) = (job.id, job.lang);
         let t0 = Instant::now();
-        let gray = ocr::prepare(&job.img, job.scale, lang);
+        let (gray, factor) = ocr::prepare(&job.img, job.scale, lang);
         drop(job.img);
         let lines = if lock(&shared).cancelled {
             Err(err("", "đã huỷ trước khi nhận diện"))
@@ -206,7 +210,8 @@ fn run(shared: SharedRef, ocr_root: PathBuf) {
         if cancelled {
             continue;
         }
-        let result = lines.map(ocr::postprocess).map_err(|e| {
+        // Dựng bố cục chữ ở đây (không phải UI thread); bbox đổi về toạ độ ảnh gốc.
+        let result = lines.map(|l| TextLayout::build(l, factor)).map_err(|e| {
             log::error!("ocr: {}", e.log);
             e.user
         });
@@ -239,12 +244,14 @@ fn recognize_windows(engine: &mut Option<OcrEngine>, gray: &GrayImage) -> Result
         *engine = Some(windows_engine()?);
     }
     let engine = engine.as_ref().expect("vừa tạo");
-    // Ảnh quá lớn so với giới hạn của Windows OCR thì thu nhỏ (toạ độ bbox chỉ dùng để sắp dòng nên không cần đổi lại).
+    // Ảnh quá lớn so với giới hạn của Windows OCR thì thu nhỏ; bbox nhân `back` để về lại ảnh `gray`.
     let max = OcrEngine::MaxImageDimension().unwrap_or(2600).max(1);
     let (w, h) = gray.dimensions();
     let scaled;
+    let mut back = 1.0f32;
     let img = if w.max(h) > max {
         let k = max as f64 / w.max(h) as f64;
+        back = (1.0 / k) as f32;
         let (nw, nh) = (((w as f64 * k) as u32).max(1), ((h as f64 * k) as u32).max(1));
         scaled = image::imageops::resize(gray, nw, nh, image::imageops::FilterType::Triangle);
         &scaled
@@ -270,15 +277,23 @@ fn recognize_windows(engine: &mut Option<OcrEngine>, gray: &GrayImage) -> Result
         let text = line.Text().map_err(fail)?.to_string_lossy();
         let words = line.Words().map_err(fail)?;
         let (mut l, mut t, mut r, mut b) = (f32::MAX, f32::MAX, f32::MIN, f32::MIN);
+        let mut ws = vec![];
+        let bbox = |x: f32, y: f32, w: f32, h: f32| {
+            [(x * back).round() as i32, (y * back).round() as i32, (w * back).round() as i32, (h * back).round() as i32]
+        };
         for j in 0..words.Size().map_err(fail)? {
-            let rc = words.GetAt(j).and_then(|w| w.BoundingRect()).map_err(fail)?;
+            let word = words.GetAt(j).map_err(fail)?;
+            let rc = word.BoundingRect().map_err(fail)?;
             (l, t, r, b) = (l.min(rc.X), t.min(rc.Y), r.max(rc.X + rc.Width), b.max(rc.Y + rc.Height));
+            let text = word.Text().map_err(fail)?.to_string_lossy();
+            // Windows OCR không có confidence.
+            // Không có vị trí ký tự: `TextLayout` ước lượng theo độ rộng chữ.
+            ws.push(LineWord { text, bbox: bbox(rc.X, rc.Y, rc.Width, rc.Height), conf: 100.0, chars: vec![] });
         }
         if l > r {
             continue;
         }
-        // Windows OCR không có confidence.
-        out.push(Line { text, bbox: [l as i32, t as i32, (r - l) as i32, (b - t) as i32], conf: 100.0 });
+        out.push(Line { text, bbox: bbox(l, t, r - l, b - t), conf: 100.0, words: ws });
     }
     Ok(out)
 }
@@ -317,7 +332,7 @@ fn watchdog(shared: &SharedRef, id: u32, timeout: Duration) {
     std::thread::spawn(move || {
         std::thread::sleep(timeout);
         let mut s = lock(&sh);
-        if s.current.is_some_and(|(cur, _)| cur == id) && s.child.is_some() {
+        if s.current.is_some_and(|(cur, _, _)| cur == id) && s.child.is_some() {
             log::warn!("ocr: job {id} quá {}s, kill chup-ocr.exe", timeout.as_secs());
             s.kill();
         }

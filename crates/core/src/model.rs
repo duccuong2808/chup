@@ -1,12 +1,17 @@
 //! State machine của app (SPEC 5, 6.6). Không biết gì về cửa sổ: nhận sự kiện từ lớp platform
 //! và trả về danh sách `Effect` để lớp platform thực hiện. Nhờ vậy logic test được trên mọi OS.
 
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use crate::{
     capture::{PersistOptions, PersistOutcome, Shot},
     config::{self, AfterCapture, Config, OcrLanguage},
     coords::{self, frame_margin, monitor_at, MonitorInfo, Rect},
+    ocr::TextLayout,
     stack::{self, Stack},
 };
 
@@ -69,6 +74,8 @@ pub struct OcrJob {
     pub lang: OcrLanguage,
     /// Scale màn hình lúc chụp, để `ocr::prepare` biết có phóng ×2 không.
     pub scale: f64,
+    /// `true`: người dùng yêu cầu (xong thì copy, nút [T] quay "bận"). `false`: job nền nhận diện chữ cho Preview.
+    pub copy: bool,
 }
 
 /// OCR tiếng Việt dùng được chưa (lớp platform kiểm tra file và báo cho Model).
@@ -150,6 +157,8 @@ pub enum Effect {
     CopyText(String),
     /// Chưa có gói tiếng Việt: hỏi người dùng có tải không.
     AskOcrDownload,
+    /// Chữ nhận diện được của ảnh Preview này (để chọn chữ, SPEC 17.2).
+    PreviewText(PathBuf, Arc<TextLayout>),
 }
 
 pub struct Paths {
@@ -179,13 +188,15 @@ pub struct Model {
     /// Phiên Freeze hiện tại là "Chụp text": thả chuột là OCR luôn, không có toolbar.
     pub freeze_ocr: bool,
     pub ocr_vi: OcrViState,
-    /// Job OCR đang chạy.
+    /// Job OCR đang chạy (cả job nền).
     pub ocr_busy: Option<OcrJob>,
     ocr_next_id: u32,
     /// Yêu cầu OCR đang chờ tải gói tiếng Việt xong.
     ocr_pending: Option<OcrSource>,
-    /// Kết quả cuối: (file Preview, ngôn ngữ) -> text.
-    ocr_cache: Option<(PathBuf, OcrLanguage, String)>,
+    /// Kết quả cuối: (file Preview, ngôn ngữ) -> chữ.
+    ocr_cache: Option<(PathBuf, OcrLanguage, Arc<TextLayout>)>,
+    /// File Preview đang mở (ảnh đã giải mã xong): để nhận diện nền và gửi chữ cho Preview.
+    preview_open: Option<PathBuf>,
 }
 
 impl Model {
@@ -210,6 +221,7 @@ impl Model {
             ocr_next_id: 0,
             ocr_pending: None,
             ocr_cache: None,
+            preview_open: None,
         }
     }
 
@@ -477,12 +489,50 @@ impl Model {
 
     // ---------- OCR (SPEC 15) ----------
 
+    /// Đang có job người dùng yêu cầu (nút [T] quay "bận"). Job nền không tính.
+    fn ocr_visible_busy(&self) -> bool {
+        self.ocr_busy.as_ref().is_some_and(|j| j.copy)
+    }
+
+    fn ocr_cached(&self, p: &Path, lang: OcrLanguage) -> Option<Arc<TextLayout>> {
+        self.ocr_cache.as_ref().filter(|(cp, cl, _)| cp == p && *cl == lang).map(|(_, _, t)| t.clone())
+    }
+
+    fn ocr_copy(text: &TextLayout) -> Effect {
+        if text.is_empty() {
+            Effect::Toast(Toast::info("Không tìm thấy chữ"))
+        } else {
+            Effect::CopyText(text.all_text())
+        }
+    }
+
+    fn ocr_start(&mut self, source: OcrSource, lang: OcrLanguage, copy: bool) -> Vec<Effect> {
+        let scale = match &source {
+            OcrSource::Preview(p) => self.stack.iter().find(|s| &s.path == p).map(|s| s.scale).unwrap_or(1.0),
+            OcrSource::Image { scale } => *scale,
+        };
+        self.ocr_next_id = self.ocr_next_id.wrapping_add(1);
+        let job = OcrJob { id: self.ocr_next_id, source, lang, scale, copy };
+        let was_busy = self.ocr_visible_busy();
+        self.ocr_busy = Some(job.clone());
+        let mut fx = vec![Effect::StartOcr(job)];
+        if was_busy != self.ocr_visible_busy() {
+            fx.push(Effect::OcrBusyChanged);
+        }
+        fx
+    }
+
     /// Người dùng yêu cầu OCR (nút [T], Freeze, Chụp text).
     pub fn ocr_request(&mut self, source: OcrSource) -> Vec<Effect> {
         let lang = self.config.ocr.language;
-        if let (OcrSource::Preview(p), Some((cp, cl, text))) = (&source, &self.ocr_cache) {
-            if p == cp && *cl == lang {
-                return vec![Effect::CopyText(text.clone())];
+        if let OcrSource::Preview(p) = &source {
+            if let Some(text) = self.ocr_cached(p, lang) {
+                return vec![Self::ocr_copy(&text)];
+            }
+            // Job nền của đúng ảnh này đang chạy: không chạy lại, chỉ cần copy khi xong.
+            if let Some(j) = self.ocr_busy.as_mut().filter(|j| !j.copy && j.source == source && j.lang == lang) {
+                j.copy = true;
+                return vec![Effect::OcrBusyChanged];
             }
         }
         if lang == OcrLanguage::Vi {
@@ -499,40 +549,99 @@ impl Model {
                 }
             }
         }
-        let scale = match &source {
-            OcrSource::Preview(p) => self.stack.iter().find(|s| &s.path == p).map(|s| s.scale).unwrap_or(1.0),
-            OcrSource::Image { scale } => *scale,
-        };
-        self.ocr_next_id = self.ocr_next_id.wrapping_add(1);
-        let job = OcrJob { id: self.ocr_next_id, source, lang, scale };
-        let was_busy = self.ocr_busy.replace(job.clone()).is_some();
-        let mut fx = vec![Effect::StartOcr(job)];
-        if !was_busy {
+        self.ocr_start(source, lang, true)
+    }
+
+    /// Job nền nhận diện chữ cho Preview đang mở, nếu cần và chạy được mà không phải hỏi ai
+    /// (tiếng Việt thiếu gói hay `chup-ocr.exe` thì bỏ qua). Không thay job người dùng đang chạy.
+    fn ocr_auto_preview(&mut self) -> Vec<Effect> {
+        let lang = self.config.ocr.language;
+        let Some(p) = self.preview_open.clone() else { return vec![] };
+        let src = OcrSource::Preview(p.clone());
+        let blocked = self.ocr_busy.as_ref().is_some_and(|j| j.copy || j.source == src);
+        if !self.config.ocr.auto_preview
+            || blocked
+            || self.ocr_cached(&p, lang).is_some()
+            || (lang == OcrLanguage::Vi && self.ocr_vi != OcrViState::Ready)
+        {
+            return vec![];
+        }
+        self.ocr_start(src, lang, false)
+    }
+
+    /// Preview vừa hiện ảnh `path` (đã giải mã xong).
+    pub fn preview_shown(&mut self, path: PathBuf) -> Vec<Effect> {
+        self.preview_open = Some(path.clone());
+        match self.ocr_cached(&path, self.config.ocr.language) {
+            Some(text) => {
+                let mut fx = vec![Effect::PreviewText(path, text)];
+                // Job nền của ảnh trước còn chạy: huỷ, không thì kết quả của nó đè cache của ảnh này.
+                if self.ocr_busy.take_if(|j| !j.copy).is_some() {
+                    fx.push(Effect::CancelOcr);
+                }
+                fx
+            }
+            None => self.ocr_auto_preview(),
+        }
+    }
+
+    /// Preview đã đóng: huỷ job nền (job người dùng vẫn chạy tiếp, xong thì copy).
+    pub fn preview_closed(&mut self) -> Vec<Effect> {
+        self.preview_open = None;
+        match self.ocr_busy.take_if(|j| !j.copy) {
+            Some(_) => vec![Effect::CancelOcr],
+            None => vec![],
+        }
+    }
+
+    /// Worker OCR báo kết quả. Job đã bị thay hoặc huỷ thì bỏ qua.
+    pub fn ocr_done(&mut self, id: u32, result: Result<TextLayout, String>) -> Vec<Effect> {
+        let Some(job) = self.ocr_busy.take_if(|j| j.id == id) else { return vec![] };
+        let mut fx = vec![];
+        if job.copy {
             fx.push(Effect::OcrBusyChanged);
         }
-        fx
-    }
-
-    /// Worker OCR báo kết quả (text đã hậu xử lý). Job đã bị thay hoặc huỷ thì bỏ qua.
-    pub fn ocr_done(&mut self, id: u32, result: Result<String, String>) -> Vec<Effect> {
-        let Some(job) = self.ocr_busy.take_if(|j| j.id == id) else { return vec![] };
-        let mut fx = vec![Effect::OcrBusyChanged];
         match result {
-            Err(e) => fx.push(Effect::Toast(Toast::error(e))),
-            Ok(text) if text.trim().is_empty() => fx.push(Effect::Toast(Toast::info("Không tìm thấy chữ"))),
-            Ok(text) => {
-                if let OcrSource::Preview(p) = job.source {
-                    self.ocr_cache = Some((p, job.lang, text.clone()));
+            // Job nền lỗi: không làm phiền người dùng (worker đã ghi log).
+            Err(e) => {
+                if job.copy {
+                    fx.push(Effect::Toast(Toast::error(e)));
                 }
-                fx.push(Effect::CopyText(text));
             }
+            Ok(text) => {
+                let text = Arc::new(text);
+                if let OcrSource::Preview(p) = &job.source {
+                    self.ocr_cache = Some((p.clone(), job.lang, text.clone()));
+                    if self.preview_open.as_ref() == Some(p) {
+                        fx.push(Effect::PreviewText(p.clone(), text.clone()));
+                    }
+                }
+                if job.copy {
+                    fx.push(Self::ocr_copy(&text));
+                }
+            }
+        }
+        // Job khác vừa chiếm chỗ job nền: chạy lại job nền. Job của chính ảnh Preview thì không (lỗi sẽ lặp lại).
+        if !matches!(&job.source, OcrSource::Preview(p) if self.preview_open.as_ref() == Some(p)) {
+            fx.extend(self.ocr_auto_preview());
         }
         fx
     }
 
-    pub fn ocr_cancel(&mut self) -> Vec<Effect> {
+    /// Lớp platform đã dừng worker (tắt exe phụ để tải/xoá gói): job đang chạy sẽ không bao giờ báo kết quả.
+    pub fn ocr_abort(&mut self) -> Vec<Effect> {
         match self.ocr_busy.take() {
-            Some(_) => vec![Effect::CancelOcr, Effect::OcrBusyChanged],
+            Some(j) if j.copy => vec![Effect::OcrBusyChanged],
+            _ => vec![],
+        }
+    }
+
+    /// Huỷ job đang chạy (bấm [T] lần nữa). Không chạy lại job nền.
+    pub fn ocr_cancel(&mut self) -> Vec<Effect> {
+        let visible = self.ocr_visible_busy();
+        match self.ocr_busy.take() {
+            Some(_) if visible => vec![Effect::CancelOcr, Effect::OcrBusyChanged],
+            Some(_) => vec![Effect::CancelOcr],
             None => vec![],
         }
     }
@@ -560,6 +669,7 @@ impl Model {
         if let Some(src) = self.ocr_pending.take() {
             fx.extend(self.ocr_request(src));
         }
+        fx.extend(self.ocr_auto_preview());
         fx
     }
 
@@ -934,6 +1044,10 @@ mod tests {
         }
     }
 
+    fn lay(text: &str) -> TextLayout {
+        TextLayout::build(vec![crate::ocr::Line { text: text.into(), bbox: [0, 0, 100, 20], conf: 90.0, words: vec![] }], 1.0)
+    }
+
     fn started(fx: &[Effect]) -> OcrJob {
         fx.iter()
             .find_map(|e| match e {
@@ -953,7 +1067,7 @@ mod tests {
         assert_eq!(fx[1], Effect::OcrBusyChanged);
         assert_eq!((job.lang, job.scale), (OcrLanguage::En, 1.25), "scale lấy từ shot trong stack");
         assert_eq!(
-            m.ocr_done(job.id, Ok("Xin chào".into())),
+            m.ocr_done(job.id, Ok(lay("Xin chào"))),
             vec![Effect::OcrBusyChanged, Effect::CopyText("Xin chào".into())]
         );
         assert!(m.ocr_busy.is_none());
@@ -973,9 +1087,9 @@ mod tests {
         let b = started(&fx);
         assert_eq!(fx.len(), 1, "đã bận thì không đổi trạng thái spinner");
         assert_ne!(a.id, b.id);
-        assert!(m.ocr_done(a.id, Ok("cũ".into())).is_empty(), "kết quả job cũ bị bỏ qua");
+        assert!(m.ocr_done(a.id, Ok(lay("cũ"))).is_empty(), "kết quả job cũ bị bỏ qua");
         assert_eq!(m.ocr_cancel(), vec![Effect::CancelOcr, Effect::OcrBusyChanged]);
-        assert!(m.ocr_done(b.id, Ok("muộn".into())).is_empty(), "đã huỷ");
+        assert!(m.ocr_done(b.id, Ok(lay("muộn"))).is_empty(), "đã huỷ");
         assert!(m.ocr_cancel().is_empty());
     }
 
@@ -984,7 +1098,7 @@ mod tests {
         let mut m = model();
         let j = started(&m.ocr_request(OcrSource::Image { scale: 1.0 }));
         assert_eq!(
-            m.ocr_done(j.id, Ok(" \n".into())),
+            m.ocr_done(j.id, Ok(lay(" \n"))),
             vec![Effect::OcrBusyChanged, Effect::Toast(Toast::info("Không tìm thấy chữ"))]
         );
         let j = started(&m.ocr_request(OcrSource::Image { scale: 1.0 }));
@@ -1027,6 +1141,110 @@ mod tests {
         m.ocr_vi = OcrViState::NoHelper;
         let fx = m.ocr_request(OcrSource::Image { scale: 1.0 });
         assert!(matches!(&fx[..], [Effect::Toast(t)] if t.message.contains("chup-ocr.exe")));
+    }
+
+    #[test]
+    fn preview_background_ocr_sends_text_without_spinner() {
+        let mut m = model();
+        let p = PathBuf::from("/pics/a.png");
+        let fx = m.preview_shown(p.clone());
+        let job = started(&fx);
+        assert_eq!(fx.len(), 1, "job nền: không quay bận");
+        assert!(!job.copy);
+        let fx = m.ocr_done(job.id, Ok(lay("Xin chào")));
+        assert!(matches!(&fx[..], [Effect::PreviewText(fp, t)] if *fp == p && t.all_text() == "Xin chào"));
+        // Mở lại cùng ảnh: lấy cache. [T]: copy luôn.
+        assert!(matches!(&m.preview_shown(p.clone())[..], [Effect::PreviewText(..)]));
+        assert_eq!(m.ocr_request(OcrSource::Preview(p)), vec![Effect::CopyText("Xin chào".into())]);
+    }
+
+    #[test]
+    fn preview_button_upgrades_background_job() {
+        let mut m = model();
+        let p = PathBuf::from("/pics/a.png");
+        let job = started(&m.preview_shown(p.clone()));
+        assert_eq!(m.ocr_request(OcrSource::Preview(p.clone())), vec![Effect::OcrBusyChanged], "không chạy lại");
+        let fx = m.ocr_done(job.id, Ok(lay("abc")));
+        assert_eq!(fx[0], Effect::OcrBusyChanged);
+        assert!(matches!(fx[1], Effect::PreviewText(..)));
+        assert_eq!(fx[2], Effect::CopyText("abc".into()));
+        // Ảnh trống: cache rỗng, [T] báo không có chữ.
+        let q = PathBuf::from("/pics/b.png");
+        let job = started(&m.preview_shown(q.clone()));
+        m.ocr_done(job.id, Ok(lay(" ")));
+        assert_eq!(m.ocr_request(OcrSource::Preview(q)), vec![Effect::Toast(Toast::info("Không tìm thấy chữ"))]);
+    }
+
+    #[test]
+    fn user_job_replaces_background_job_which_restarts_after() {
+        let mut m = model();
+        let p = PathBuf::from("/pics/a.png");
+        let bg = started(&m.preview_shown(p.clone()));
+        let fx = m.ocr_request(OcrSource::Image { scale: 1.0 });
+        let user = started(&fx);
+        assert!(fx.contains(&Effect::OcrBusyChanged), "job người dùng: quay bận");
+        assert!(m.ocr_done(bg.id, Ok(lay("cũ"))).is_empty(), "job nền đã bị thay");
+        let fx = m.ocr_done(user.id, Ok(lay("chữ")));
+        assert_eq!(fx[..2], [Effect::OcrBusyChanged, Effect::CopyText("chữ".into())]);
+        let again = started(&fx);
+        assert_eq!((again.source.clone(), again.copy), (OcrSource::Preview(p.clone()), false), "chạy lại job nền");
+        // Mở ảnh khác lúc job nền đang chạy: thay. Đóng Preview: huỷ job nền.
+        let q = PathBuf::from("/pics/b.png");
+        assert_eq!(started(&m.preview_shown(q)).source, OcrSource::Preview(PathBuf::from("/pics/b.png")));
+        assert_eq!(m.preview_closed(), vec![Effect::CancelOcr]);
+        assert!(m.ocr_busy.is_none());
+        assert!(m.preview_closed().is_empty());
+    }
+
+    #[test]
+    fn background_job_never_asks_and_respects_setting() {
+        let mut m = model();
+        m.config.ocr.language = OcrLanguage::Vi;
+        assert!(m.preview_shown(PathBuf::from("/a.png")).is_empty(), "thiếu gói: không hỏi");
+        m.ocr_vi = OcrViState::NoHelper;
+        assert!(m.preview_shown(PathBuf::from("/a.png")).is_empty());
+        let mut m = model();
+        m.config.ocr.auto_preview = false;
+        assert!(m.preview_shown(PathBuf::from("/a.png")).is_empty(), "tắt tự nhận diện");
+        // Job nền lỗi: không toast, không chạy lại.
+        let mut m = model();
+        let job = started(&m.preview_shown(PathBuf::from("/a.png")));
+        assert!(m.ocr_done(job.id, Err("hỏng".into())).is_empty());
+        // Đang có job người dùng: mở Preview không chen vào; người dùng huỷ [T] thì không chạy lại.
+        let mut m = model();
+        m.ocr_request(OcrSource::Image { scale: 1.0 });
+        assert!(m.preview_shown(PathBuf::from("/a.png")).is_empty());
+        assert_eq!(m.ocr_cancel(), vec![Effect::CancelOcr, Effect::OcrBusyChanged]);
+    }
+
+    #[test]
+    fn abort_clears_job_and_cached_preview_cancels_other_background_job() {
+        let mut m = model();
+        let a = PathBuf::from("/pics/a.png");
+        let job = started(&m.preview_shown(a.clone()));
+        assert!(m.ocr_abort().is_empty(), "job nền: không có spinner để tắt");
+        assert!(m.ocr_busy.is_none());
+        assert!(m.ocr_done(job.id, Ok(lay("muộn"))).is_empty());
+        m.ocr_request(OcrSource::Image { scale: 1.0 });
+        assert_eq!(m.ocr_abort(), vec![Effect::OcrBusyChanged]);
+        // b đã có trong cache; mở a (job nền chạy) rồi quay lại b: huỷ job của a.
+        let b = PathBuf::from("/pics/b.png");
+        let jb = started(&m.preview_shown(b.clone()));
+        m.ocr_done(jb.id, Ok(lay("bê")));
+        started(&m.preview_shown(a));
+        let fx = m.preview_shown(b);
+        assert!(matches!(fx[0], Effect::PreviewText(..)));
+        assert_eq!(fx[1], Effect::CancelOcr);
+        assert!(m.ocr_busy.is_none());
+    }
+
+    #[test]
+    fn pack_installed_starts_background_job_for_open_preview() {
+        let mut m = model();
+        m.config.ocr.language = OcrLanguage::Vi;
+        m.preview_shown(PathBuf::from("/a.png"));
+        let job = started(&m.ocr_pack_installed(OcrViState::Ready));
+        assert!(!job.copy);
     }
 
     #[test]

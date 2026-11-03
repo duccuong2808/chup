@@ -288,7 +288,8 @@ File: `%APPDATA%\app.chup.desktop\config.json` (giữ nguyên đường dẫn c�
 
 - Phase 2.2 thêm `preview` (mục 17.4); field mới có default nên vẫn là version 2.
 - Phase 2.3 thêm `ocr: { "language": "en" }` (`en` = Windows OCR, `vi` = Tesseract tiếng Việt + Anh) và
-  `hotkeys.ocr` ("Chụp text", mặc định rỗng); vẫn version 2.
+  `hotkeys.ocr` ("Chụp text", mặc định rỗng); vẫn version 2. Sau đó thêm `ocr.autoPreview` (tự nhận diện chữ khi
+  mở Preview, mặc định `true`, config cũ thiếu field cũng là `true`).
 - Version 2 (Phase 2.1) thêm `hotkeys.freeze`. Migrate từ v1: điền `"F1"`; nếu F1 đã được dùng cho hotkey khác thì để trống (tắt).
 - Chuỗi rỗng = tắt hotkey đó. Hai hotkey không được trùng nhau.
 
@@ -483,6 +484,8 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-ocr-design.md`.
 - **Preview** (mục 17): toolbar có thêm nút **[T]**.
   - Bấm vào: OCR ảnh đang xem và copy text.
   - Hiện toast "Đã copy N dòng" kèm 1 dòng preview.
+  - **Chọn chữ trên ảnh** (kiểu Live Text, mục 17.2): chữ nhận diện được chọn được bằng chuột theo từng ký tự rồi copy.
+    Cài đặt "Tự nhận diện chữ khi mở Preview" (mặc định bật) nhận diện ở nền ngay khi mở; tắt thì chỉ sau khi bấm [T].
 - **Toolbar Live mode**: thêm nút **[T]** (chỉ icon, trước ✕). Chụp region, OCR, copy text, **không lưu file và không thêm vào stack**.
 - **Toolbar Freeze mode**: thêm nút **[T Chữ]** (`freeze_confirm` với `action: "ocr"`).
 - **Hotkey "Chụp text"**: mặc định chưa gán.
@@ -522,7 +525,8 @@ Get-WindowsCapability -Online | Where-Object { $_.Name -Like 'Language.OCR*' }
 ### 15.4 Kiến trúc
 
 ```rust
-pub struct OcrLine { pub text: String, pub bbox: [i32; 4], pub conf: f32 }
+pub struct OcrWord { pub text: String, pub bbox: [i32; 4], pub conf: f32, pub chars: Vec<[i32; 2]> } // [x, w] từng ký tự
+pub struct OcrLine { pub text: String, pub bbox: [i32; 4], pub conf: f32, pub words: Vec<OcrWord> }
 
 pub trait OcrEngine {
     fn recognize(&mut self, img: &image::GrayImage) -> Result<Vec<OcrLine>, String>;
@@ -542,6 +546,12 @@ pub trait OcrEngine {
   Huỷ job đang chạy = kill process. Crash hoặc quá 15 s = kill, báo lỗi.
 - **Luồng chạy**: 1 worker thread giữ cả 2 engine. Hàng đợi chỉ giữ 1 job; job mới tới thì thay job đang chờ.
 - **Cache**: nhớ kết quả cuối theo (file, ngôn ngữ). Copy lần 2 không OCR lại.
+- **Job nền cho Preview** (thiết kế `docs/plans/2026-11-01-live-text-design.md`): mở Preview là nhận diện ở nền
+  để chọn chữ (không quay "bận", không toast, tiếng Việt thiếu gói thì bỏ qua không hỏi). Bấm [T] lúc đó thì đợi
+  job nền xong rồi copy. Job khác (Freeze, Chụp text) thay job nền; xong thì job nền chạy lại nếu Preview còn mở.
+  Đóng Preview huỷ job nền.
+- Bbox (dòng, từ, ký tự) được đổi về toạ độ ảnh gốc (bỏ hệ số phóng ×2 hoặc thu nhỏ của Windows OCR).
+  Tesseract trả vị trí từng ký tự; Windows OCR chỉ có bbox từ nên vị trí ký tự được ước lượng theo độ rộng chữ.
 
 ### 15.5 Pipeline
 
@@ -711,8 +721,16 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-preview-design.md`.
   (không lưu). Không thấp hơn 20%.
 - **Luôn nằm trên** cửa sổ khác: Cài đặt (mặc định bật). Nút ghim trên toolbar bật/tắt cho cửa sổ đang mở.
 - **Toolbar** góc trên-phải, chỉ hiện khi hover: [T] [Ghim] [Copy] [Folder] [✕] ([T] = OCR, mục 15.2).
+- **Chọn chữ** (khi đã nhận diện, mục 15.2):
+  - Con trỏ I-beam trên chữ. Kéo bắt đầu trên chữ là chọn theo từng ký tự (qua nhiều dòng được); kéo bắt đầu ở
+    chỗ khác là di chuyển cửa sổ. `Alt` + kéo luôn di chuyển. Bấm đúp chọn một từ, bấm 3 lần chọn cả dòng.
+    `Shift` + bấm nới vùng chọn. Bấm (không kéo) bỏ vùng chọn.
+  - Vùng chọn tô màu nhấn trong suốt, theo đúng zoom và cỡ cửa sổ.
+  - `Ctrl+A` chọn tất cả chữ. `Ctrl+C` copy chữ đã chọn (chưa chọn thì copy ảnh). Toast như [T].
+  - Chuột phải: menu "Copy chữ", "Chọn tất cả chữ", "Copy ảnh".
+  - `Esc` bỏ vùng chọn trước, lần sau mới đóng.
 - Đổi zoom hoặc opacity: nhãn "75%" / "Opacity 60%" ở đáy trong 1,2 giây.
-- `Esc` hoặc ✕: đóng. `Ctrl+C`: copy ảnh.
+- `Esc` hoặc ✕: đóng. `Ctrl+C`: copy ảnh (khi chưa chọn chữ).
 - Preview lấy focus khi mở; có trên taskbar và Alt+Tab (tiêu đề là tên file).
 - Preview **không** bị loại khỏi ảnh chụp (khác stack, toolbar): người dùng có thể muốn chụp lại hoặc
   chia sẻ màn hình có nó.
@@ -734,6 +752,7 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-preview-design.md`.
 - `position`: `remember` | `stack` | `center`. `last`: khung lần trước `{x, y, w, h}` (physical px toàn desktop),
   chỉ ghi khi `position = remember`.
 - `opacity` kẹp 20–100, `size` kẹp 20–100.
+- Tự nhận diện chữ nằm ở `"ocr": { "language": "en", "autoPreview": true }` (mục 15).
 
 ### 17.5 Ngân sách
 
@@ -750,3 +769,6 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-preview-design.md`.
 - [ ] Copy, Folder, ✕, `Esc`, `Ctrl+C`, Alt+F4 (ẩn, mở lại được).
 - [ ] Bấm thumbnail khác khi đang mở: thay ảnh. File bị xoá: toast, bỏ khỏi stack.
 - [ ] RAM về mức trước khi mở sau khi đóng.
+- [ ] Chọn chữ: kéo trên chữ tiếng Anh và tiếng Việt (một phần từ, nhiều dòng, sau khi zoom), bấm đúp, bấm 3 lần,
+  `Shift` + bấm, `Ctrl+A`, `Ctrl+C`,
+  menu chuột phải, `Alt` + kéo, `Esc`. Tắt "Tự nhận diện" thì chỉ chọn được sau khi bấm [T].

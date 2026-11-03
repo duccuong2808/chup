@@ -65,6 +65,8 @@ LangString RunChup ${LANG_ENGLISH} "Run Chup"
 LangString RunChup ${LANG_VIETNAMESE} "Chạy Chup"
 LangString DescChup ${LANG_ENGLISH} "The Chup app."
 LangString DescChup ${LANG_VIETNAMESE} "Chương trình Chup."
+!ifdef LITE
+; Chỉ bản Lite có mục OCR tiếng Việt (bản Full không dùng các chuỗi này).
 LangString SecOcrName ${LANG_ENGLISH} "Vietnamese OCR"
 LangString SecOcrName ${LANG_VIETNAMESE} "OCR tiếng Việt"
 LangString DescOcr ${LANG_ENGLISH} "Download ~11 MB from GitHub (Chup's Tesseract engine + tesseract-ocr/tessdata_fast data) to copy Vietnamese text from images. English uses the OCR built into Windows, nothing to download."
@@ -73,6 +75,7 @@ LangString OcrDownloading ${LANG_ENGLISH} "Downloading Vietnamese OCR…"
 LangString OcrDownloading ${LANG_VIETNAMESE} "Đang tải OCR tiếng Việt…"
 LangString OcrFailed ${LANG_ENGLISH} "Couldn't download Vietnamese OCR. You can download it later in Chup's Settings."
 LangString OcrFailed ${LANG_VIETNAMESE} "Chưa tải được OCR tiếng Việt. Có thể tải lại trong Cài đặt của Chup."
+!endif
 
 Section "Chup" SecChup
   SectionIn RO

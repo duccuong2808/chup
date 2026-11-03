@@ -92,7 +92,7 @@ impl Pack {
         match fs::remove_dir_all(self.dir(ocr_root)) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
                 log::warn!("xoá gói OCR {}: {e}", self.dir);
-                Err("Không xoá được OCR tiếng Việt, hãy thử lại sau.".into())
+                Err(crate::i18n::t().ocr_remove_failed.into())
             }
             _ => Ok(()),
         }
@@ -180,7 +180,7 @@ impl Pack {
 
 /// Dung lượng cho người dùng xem, vd. "4,4 MB".
 pub fn size_label(bytes: u64) -> String {
-    format!("{:.1} MB", bytes as f64 / 1_048_576.0).replace('.', ",")
+    format!("{} MB", crate::i18n::decimal1(bytes as f64 / 1_048_576.0))
 }
 
 /// Xoá mọi thứ trong thư mục OCR trừ các gói hiện tại: gói cũ sau khi nâng cấp, thư mục tạm bị bỏ dở,
@@ -220,12 +220,13 @@ pub enum InstallError {
 impl InstallError {
     /// Câu báo cho người dùng (tiếng Việt, không lộ chi tiết kỹ thuật).
     pub fn user_message(&self) -> &'static str {
+        let t = crate::i18n::t();
         match self {
-            InstallError::Network(_) => "Không tải được. Kiểm tra mạng rồi thử lại.",
-            InstallError::Corrupt(_) => "File tải về bị lỗi. Hãy thử lại.",
-            InstallError::Io(_) => "Không ghi được vào máy. Kiểm tra dung lượng ổ đĩa rồi thử lại.",
-            InstallError::Cancelled => "Đã huỷ tải.",
-            InstallError::Busy => "Lần tải trước đang dừng. Hãy thử lại sau vài giây.",
+            InstallError::Network(_) => t.dl_network,
+            InstallError::Corrupt(_) => t.dl_corrupt,
+            InstallError::Io(_) => t.dl_io,
+            InstallError::Cancelled => t.dl_cancelled,
+            InstallError::Busy => t.dl_busy,
         }
     }
 }

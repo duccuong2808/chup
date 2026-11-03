@@ -11,6 +11,7 @@ use crate::{
     capture::{PersistOptions, PersistOutcome, Shot},
     config::{self, AfterCapture, Config, OcrLanguage},
     coords::{self, frame_margin, monitor_at, MonitorInfo, Rect},
+    i18n::{fill, t},
     ocr::TextLayout,
     stack::{self, Stack},
 };
@@ -127,6 +128,8 @@ pub enum Effect {
     StartCapture(CaptureJob),
     ApplyHotkeys,
     SyncAutostart,
+    /// Ngôn ngữ giao diện trong config đổi: platform chọn lại ngôn ngữ, dựng lại chữ của tray / Cài đặt.
+    UiLanguageChanged,
     /// Config đổi: cửa sổ Cài đặt (nếu đang mở) cập nhật lại.
     ConfigChanged,
     /// Chụp mọi màn hình (chưa hiện cửa sổ nào), xong thì gọi `freeze_grabbed`.
@@ -344,7 +347,7 @@ impl Model {
         if self.monitor_of(&rect).is_none() {
             let mut fx = self.close_region();
             self.last_region = None;
-            fx.push(Effect::Toast(Toast::error("Màn hình chứa vùng chụp không còn. Hãy chọn vùng mới.")));
+            fx.push(Effect::Toast(Toast::error(t().monitor_gone_choose_again)));
             return fx;
         }
         let hide_ui = self.config.hide_ui_during_capture || !self.capture_exclusion_ok;
@@ -450,7 +453,7 @@ impl Model {
             vec![Effect::ShowFreezeOverlays]
         } else {
             self.freeze = None;
-            vec![Effect::Toast(Toast::error("Không chụp được màn hình"))]
+            vec![Effect::Toast(Toast::error(t().capture_failed))]
         }
     }
 
@@ -480,7 +483,7 @@ impl Model {
 
     pub fn freeze_copied(&self, result: Result<(), String>) -> Vec<Effect> {
         match result {
-            Ok(()) => vec![Effect::Toast(Toast::info("Đã copy ảnh vào clipboard"))],
+            Ok(()) => vec![Effect::Toast(Toast::info(t().image_copied_clipboard))],
             Err(e) => vec![Effect::Toast(Toast::error(e))],
         }
     }
@@ -498,7 +501,7 @@ impl Model {
 
     fn ocr_copy(text: &TextLayout) -> Effect {
         if text.is_empty() {
-            Effect::Toast(Toast::info("Không tìm thấy chữ"))
+            Effect::Toast(Toast::info(t().no_text_found))
         } else {
             Effect::CopyText(text.all_text())
         }
@@ -705,10 +708,7 @@ impl Model {
             return (Some(path), vec![]);
         }
         let mut fx = self.stack_remove(id);
-        fx.push(Effect::Toast(Toast::error(format!(
-            "File {} không còn, đã bỏ khỏi stack",
-            path.display()
-        ))));
+        fx.push(Effect::Toast(Toast::error(fill(t().file_missing_removed, &[&path.display()]))));
         (None, fx)
     }
 
@@ -751,7 +751,7 @@ impl Model {
             if self.monitor_of(&r).is_none() {
                 fx.extend(self.close_region());
                 self.last_region = None;
-                fx.push(Effect::Toast(Toast::info("Màn hình chứa vùng chọn đã bị rút, vùng chọn đã đóng.")));
+                fx.push(Effect::Toast(Toast::info(t().monitor_unplugged_closed)));
             } else {
                 fx.push(Effect::LayoutToolbar);
             }
@@ -777,6 +777,9 @@ impl Model {
         }
         if prev.launch_at_startup != self.config.launch_at_startup {
             fx.push(Effect::SyncAutostart);
+        }
+        if prev.ui_language != self.config.ui_language {
+            fx.push(Effect::UiLanguageChanged);
         }
         if prev.stack != self.config.stack {
             fx.push(Effect::StackChanged);
@@ -942,7 +945,7 @@ mod tests {
         assert_eq!(m.freeze_cancel(), vec![Effect::HideOverlays]);
 
         m.start_freeze();
-        assert_eq!(m.freeze_grabbed(false), vec![Effect::Toast(Toast::error("Không chụp được màn hình"))]);
+        assert_eq!(m.freeze_grabbed(false), vec![Effect::Toast(Toast::error(t().capture_failed))]);
         assert_eq!(m.freeze, None);
 
         // Huỷ lúc đang chụp: kết quả chụp về sau bị bỏ qua.
@@ -950,7 +953,7 @@ mod tests {
         assert!(m.freeze_cancel().is_empty());
         assert!(m.freeze_grabbed(true).is_empty());
 
-        assert_eq!(m.freeze_copied(Ok(())), vec![Effect::Toast(Toast::info("Đã copy ảnh vào clipboard"))]);
+        assert_eq!(m.freeze_copied(Ok(())), vec![Effect::Toast(Toast::info(t().image_copied_clipboard))]);
     }
 
     #[test]
@@ -1092,7 +1095,7 @@ mod tests {
         let j = started(&m.ocr_request(OcrSource::Image { scale: 1.0 }));
         assert_eq!(
             m.ocr_done(j.id, Ok(lay(" \n"))),
-            vec![Effect::OcrBusyChanged, Effect::Toast(Toast::info("Không tìm thấy chữ"))]
+            vec![Effect::OcrBusyChanged, Effect::Toast(Toast::info(t().no_text_found))]
         );
         let j = started(&m.ocr_request(OcrSource::Image { scale: 1.0 }));
         assert_eq!(m.ocr_done(j.id, Err("hỏng".into()))[1], Effect::Toast(Toast::error("hỏng")));
@@ -1156,7 +1159,7 @@ mod tests {
         let q = PathBuf::from("/pics/b.png");
         let job = started(&m.preview_shown(q.clone()));
         m.ocr_done(job.id, Ok(lay(" ")));
-        assert_eq!(m.ocr_request(OcrSource::Preview(q)), vec![Effect::Toast(Toast::info("Không tìm thấy chữ"))]);
+        assert_eq!(m.ocr_request(OcrSource::Preview(q)), vec![Effect::Toast(Toast::info(t().no_text_found))]);
     }
 
     #[test]

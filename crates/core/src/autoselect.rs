@@ -58,25 +58,26 @@ impl FrameKind {
 
     pub fn label(self) -> &'static str {
         use FrameKind::*;
+        let t = crate::i18n::t();
         match self {
-            Window => "Cửa sổ",
-            Button => "Nút",
-            Edit => "Ô nhập",
-            Text => "Chữ",
-            Image => "Ảnh",
-            Link => "Liên kết",
-            List => "Danh sách",
-            ListItem => "Mục",
-            Menu => "Menu",
-            MenuItem => "Mục menu",
-            Tab => "Tab",
-            ToolBar => "Thanh công cụ",
-            TitleBar => "Thanh tiêu đề",
-            Document => "Tài liệu",
-            Table => "Bảng",
-            Group => "Nhóm",
-            Pane | Other => "Vùng",
-            Detected => "Vùng ảnh",
+            Window => t.kind_window,
+            Button => t.kind_button,
+            Edit => t.kind_edit,
+            Text => t.kind_text,
+            Image => t.kind_image,
+            Link => t.kind_link,
+            List => t.kind_list,
+            ListItem => t.kind_list_item,
+            Menu => t.kind_menu,
+            MenuItem => t.kind_menu_item,
+            Tab => t.kind_tab,
+            ToolBar => t.kind_toolbar,
+            TitleBar => t.kind_title_bar,
+            Document => t.kind_document,
+            Table => t.kind_table,
+            Group => t.kind_group,
+            Pane | Other => t.kind_pane,
+            Detected => t.kind_detected,
         }
     }
 }

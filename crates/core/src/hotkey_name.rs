@@ -114,7 +114,7 @@ pub fn record(vk: u16, mods: Mods) -> Recorded {
     if !(is_fn || mods.ctrl || mods.alt || mods.win) {
         return Recorded::Incomplete(match mods.partial() {
             Some(p) => p,
-            None => "Cần có Ctrl, Alt hoặc dùng phím F1–F24".into(),
+            None => crate::i18n::t().hotkey_need_modifier.into(),
         });
     }
     let mut parts = mods.names();

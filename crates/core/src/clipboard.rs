@@ -100,8 +100,8 @@ pub fn copy_text(text: &str) -> Result<(), String> {
 
 /// Copy ảnh từ file (nút Copy trên stack). File PNG thì dùng thẳng byte của file.
 pub fn copy_file_image(path: &std::path::Path) -> Result<(), String> {
-    let bytes = std::fs::read(path).map_err(|e| format!("Không đọc được ảnh: {e}"))?;
-    let img = image::load_from_memory(&bytes).map_err(|e| format!("Không đọc được ảnh: {e}"))?.to_rgba8();
+    let bytes = std::fs::read(path).map_err(|e| crate::i18n::fill(crate::i18n::t().err_read_image, &[&e]))?;
+    let img = image::load_from_memory(&bytes).map_err(|e| crate::i18n::fill(crate::i18n::t().err_read_image, &[&e]))?.to_rgba8();
     copy_image(&img, is_png(&bytes).then_some(&bytes[..]))
 }
 
@@ -127,11 +127,11 @@ mod win {
 
     impl Global {
         fn new(len: usize, fill: impl FnOnce(&mut [u8])) -> Result<Self, String> {
-            let h = unsafe { GlobalAlloc(GMEM_MOVEABLE, len) }.map_err(|e| format!("Thiếu bộ nhớ: {e}"))?;
+            let h = unsafe { GlobalAlloc(GMEM_MOVEABLE, len) }.map_err(|e| crate::i18n::fill(crate::i18n::t().err_out_of_memory, &[&e]))?;
             let g = Global(Some(h));
             let p = unsafe { GlobalLock(h) } as *mut u8;
             if p.is_null() {
-                return Err("Không khoá được bộ nhớ".into());
+                return Err(crate::i18n::t().err_lock_memory.into());
             }
             // SAFETY: GlobalLock trả về vùng ghi được dài ít nhất `len` byte, chỉ ta đang giữ.
             fill(unsafe { std::slice::from_raw_parts_mut(p, len) });
@@ -172,7 +172,7 @@ mod win {
                 }
                 std::thread::sleep(std::time::Duration::from_millis(5));
             }
-            Err("Clipboard đang bị app khác giữ".into())
+            Err(crate::i18n::t().err_clipboard_busy.into())
         }
     }
 
@@ -190,8 +190,8 @@ mod win {
             }
         })?;
         let _open = Open::new()?;
-        unsafe { EmptyClipboard() }.map_err(|e| format!("Không xoá được clipboard: {e}"))?;
-        mem.give(CF_UNICODETEXT).map_err(|e| format!("Không đặt được text vào clipboard: {e}"))
+        unsafe { EmptyClipboard() }.map_err(|e| crate::i18n::fill(crate::i18n::t().err_clipboard_empty, &[&e]))?;
+        mem.give(CF_UNICODETEXT).map_err(|e| crate::i18n::fill(crate::i18n::t().err_clipboard_text, &[&e]))
     }
 
     pub fn copy(img: &RgbaImage, png: Option<&[u8]>) -> Result<(), String> {
@@ -205,14 +205,14 @@ mod win {
         let t_prep = t0.elapsed();
 
         let _open = Open::new()?;
-        unsafe { EmptyClipboard() }.map_err(|e| format!("Không xoá được clipboard: {e}"))?;
+        unsafe { EmptyClipboard() }.map_err(|e| crate::i18n::fill(crate::i18n::t().err_clipboard_empty, &[&e]))?;
         if let Some(m) = png_mem.as_mut().filter(|_| png_fmt != 0) {
             // Thiếu PNG vẫn còn DIB: chỉ ghi log.
             if let Err(e) = m.give(png_fmt) {
                 log::warn!("clipboard: không đặt được PNG: {e}");
             }
         }
-        dib.give(CF_DIBV5).map_err(|e| format!("Không đặt được ảnh vào clipboard: {e}"))?;
+        dib.give(CF_DIBV5).map_err(|e| crate::i18n::fill(crate::i18n::t().err_clipboard_image, &[&e]))?;
         log::debug!(
             "clipboard {}×{}: chuẩn bị {t_prep:?}, giữ clipboard {:?}, PNG {}",
             img.width(),

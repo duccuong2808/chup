@@ -1,5 +1,6 @@
 //! Load / save / migrate `config.json` (SPEC 6.10).
 
+use crate::i18n::{fill, t, UiLanguage};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -7,7 +8,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-pub const CONFIG_VERSION: u32 = 3;
+pub const CONFIG_VERSION: u32 = 4;
 /// Mặc định cũ (v1, v2) của hotkey "Chụp". Hay bị app khác giữ, v3 đổi sang [`DEFAULT_CAPTURE`].
 const OLD_DEFAULT_CAPTURE: &str = "Ctrl+Alt+S";
 pub const DEFAULT_CAPTURE: &str = "Ctrl+Alt+X";
@@ -191,6 +192,8 @@ pub struct Config {
     pub ocr: OcrConfig,
     /// Phase 2.4 (tự động chọn vùng), cũng không tăng version.
     pub auto_detect: AutoDetectConfig,
+    /// Ngôn ngữ giao diện (v4, chup-81y). Cài mới: theo hệ điều hành; config cũ: tiếng Việt (xem `normalize`).
+    pub ui_language: UiLanguage,
 }
 
 impl Default for Config {
@@ -208,6 +211,7 @@ impl Default for Config {
             preview: PreviewConfig::default(),
             ocr: OcrConfig::default(),
             auto_detect: AutoDetectConfig::default(),
+            ui_language: UiLanguage::System,
         }
     }
 }
@@ -242,6 +246,11 @@ impl Config {
                 self.hotkeys.capture = DEFAULT_CAPTURE.into();
             }
         }
+        if self.version < 4 {
+            // v4 thêm ngôn ngữ giao diện. Người đã dùng Chup (giao diện chỉ có tiếng Việt) giữ tiếng Việt,
+            // không tự đổi sang tiếng Anh chỉ vì Windows của họ là tiếng Anh. Cài mới thì theo hệ điều hành.
+            self.ui_language = UiLanguage::Vi;
+        }
         self.version = CONFIG_VERSION;
         self.preview.clamp();
         self
@@ -275,10 +284,7 @@ pub fn load(path: &Path, default_save_dir: &Path) -> LoadOutcome {
             let _ = fs::rename(path, &bak);
             LoadOutcome {
                 config: defaults(),
-                warning: Some(format!(
-                    "File cấu hình bị lỗi ({e}). Đã lưu bản cũ thành {} và dùng cấu hình mặc định.",
-                    bak.display()
-                )),
+                warning: Some(fill(t().config_corrupt, &[&e, &bak.display()])),
             }
         }
     }
@@ -287,12 +293,12 @@ pub fn load(path: &Path, default_save_dir: &Path) -> LoadOutcome {
 /// Ghi nguyên tử: ghi file tạm rồi rename.
 pub fn save(path: &Path, cfg: &Config) -> Result<(), String> {
     if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir).map_err(|e| format!("Không tạo được thư mục cấu hình: {e}"))?;
+        fs::create_dir_all(dir).map_err(|e| fill(t().err_config_dir, &[&e]))?;
     }
     let json = serde_json::to_string_pretty(cfg).map_err(|e| e.to_string())?;
     let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, json).map_err(|e| format!("Không ghi được cấu hình: {e}"))?;
-    fs::rename(&tmp, path).map_err(|e| format!("Không ghi được cấu hình: {e}"))
+    fs::write(&tmp, json).map_err(|e| fill(t().err_config_write, &[&e]))?;
+    fs::rename(&tmp, path).map_err(|e| fill(t().err_config_write, &[&e]))
 }
 
 /// Merge sâu `patch` vào `base` (object JSON).
@@ -311,16 +317,16 @@ pub fn merge_json(base: &mut serde_json::Value, patch: &serde_json::Value) {
 pub fn apply_patch(cfg: &Config, patch: &serde_json::Value) -> Result<Config, String> {
     let mut v = serde_json::to_value(cfg).map_err(|e| e.to_string())?;
     merge_json(&mut v, patch);
-    let mut next: Config = serde_json::from_value(v).map_err(|e| format!("Giá trị không hợp lệ: {e}"))?;
+    let mut next: Config = serde_json::from_value(v).map_err(|e| fill(t().err_config_value, &[&e]))?;
     next.version = CONFIG_VERSION;
     next.preview.clamp();
     if next.file_name_pattern.trim().is_empty() {
-        return Err("Pattern tên file không được để trống".into());
+        return Err(t().err_pattern_empty.into());
     }
     let used = next.hotkeys.assigned();
     for (i, a) in used.iter().enumerate() {
         if used[i + 1..].iter().any(|b| a.eq_ignore_ascii_case(b)) {
-            return Err("Hai phím tắt đang trùng nhau".into());
+            return Err(t().err_hotkeys_duplicate.into());
         }
     }
     Ok(next)
@@ -388,6 +394,23 @@ mod tests {
         );
         // Đã là v3: người dùng chủ động chọn lại Ctrl+Alt+S thì giữ.
         assert_eq!(load_capture(r#"{ "version": 3, "hotkeys": { "capture": "Ctrl+Alt+S" } }"#), "Ctrl+Alt+S");
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn ui_language_new_follows_system_old_keeps_vietnamese() {
+        assert_eq!(Config::default().ui_language, UiLanguage::System);
+        let dir = std::env::temp_dir().join(format!("chup-cfg-{}", ulid::Ulid::generate()));
+        fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("config.json");
+        assert_eq!(load(&p, Path::new("/pics")).config.ui_language, UiLanguage::System, "chưa có file: cài mới");
+        fs::write(&p, r#"{ "version": 3 }"#).unwrap();
+        assert_eq!(load(&p, Path::new("/pics")).config.ui_language, UiLanguage::Vi);
+        fs::write(&p, r#"{ "version": 4, "uiLanguage": "en" }"#).unwrap();
+        assert_eq!(load(&p, Path::new("/pics")).config.ui_language, UiLanguage::En);
+        let cfg = Config::with_save_dir(Path::new("/x"));
+        assert_eq!(apply_patch(&cfg, &json!({ "uiLanguage": "vi" })).unwrap().ui_language, UiLanguage::Vi);
+        assert!(apply_patch(&cfg, &json!({ "uiLanguage": "fr" })).is_err());
         fs::remove_dir_all(dir).unwrap();
     }
 

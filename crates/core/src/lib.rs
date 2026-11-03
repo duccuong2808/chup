@@ -9,6 +9,7 @@ pub mod coords;
 pub mod edges;
 pub mod freeze;
 pub mod hotkey_name;
+pub mod i18n;
 pub mod icons;
 pub mod model;
 pub mod ocr;

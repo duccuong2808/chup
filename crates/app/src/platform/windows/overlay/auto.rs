@@ -119,6 +119,14 @@ impl Overlay {
         }
     }
 
+    /// Bỏ khung đang tô (chuột đã sang màn hình khác: overlay này không còn nhận WM_MOUSEMOVE).
+    pub fn auto_clear(&self) {
+        let mut st = self.st.borrow_mut();
+        let Some(a) = st.auto.as_mut() else { return };
+        a.at = None;
+        self.auto_show(&mut st, None);
+    }
+
     /// Như `auto_hover` tại vị trí con trỏ hiện tại (vừa mở overlay, nhấn / nhả Shift).
     pub fn auto_refresh(&self) {
         let (cx, cy) = cursor_pos();

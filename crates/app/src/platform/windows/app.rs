@@ -335,6 +335,10 @@ impl App {
             Action::AutoHover { p, win, mon } => {
                 if self.auto_on {
                     self.auto.query(self.auto_gen, p, win, mon);
+                    // Chuột vừa sang màn hình này: overlay màn hình kia không nhận WM_MOUSEMOVE nữa, tự xoá khung.
+                    for o in self.overlays.iter().filter(|o| o.mon.rect != mon) {
+                        o.auto_clear();
+                    }
                 }
                 vec![]
             }
@@ -579,6 +583,7 @@ impl App {
                 .overlays
                 .iter()
                 .all(|o| unsafe { SetWindowDisplayAffinity(o.hwnd, WDA_EXCLUDEFROMCAPTURE) }.is_ok());
+        log::info!("overlay: {} màn hình, loại khỏi ảnh chụp: {}", self.overlays.len(), self.overlay_excluded);
     }
 
     /// Bắt đầu phiên tự chọn vùng cho các overlay vừa hiện. `wins`: danh sách cửa sổ chụp trước đó.
@@ -614,17 +619,18 @@ impl App {
             self.apply(fx.into_iter().filter(|e| *e != Effect::HideOverlays).collect());
             self.model.selecting = true;
         }
+        let auto = self.model.config.auto_detect.enabled;
         self.sync_overlays();
         let (cx, cy) = cursor_pos();
         let focus = self.overlays.iter().position(|o| o.mon.rect.contains_point(cx, cy)).unwrap_or(0);
         // Hiện overlay không lấy focus trước, overlay dưới con trỏ sau cùng (nhận phím Esc).
         for (i, o) in self.overlays.iter().enumerate() {
             if i != focus {
-                o.show(false);
+                o.show(false, auto);
             }
         }
         if let Some(o) = self.overlays.get(focus) {
-            o.show(true);
+            o.show(true, auto);
         }
         if self.model.config.auto_detect.enabled {
             let wins = Rc::new(autoselect::snapshot_windows());
@@ -810,7 +816,7 @@ impl App {
             if img.is_none() {
                 log::warn!("freeze: không có ảnh cho màn hình {}", o.mon.key);
             }
-            shown |= o.show_frozen(i == focus, img, self.model.freeze_ocr);
+            shown |= o.show_frozen(i == focus, img, self.model.freeze_ocr, self.model.config.auto_detect.enabled);
         }
         if let Some(t0) = self.freeze_t0.take() {
             log::info!("freeze: từ nhấn hotkey tới lúc ảnh hiện {:?}", t0.elapsed());

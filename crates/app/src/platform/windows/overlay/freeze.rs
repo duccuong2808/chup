@@ -40,6 +40,7 @@ use super::{
 };
 
 const HINT_FROZEN: &str = "Ảnh đã đóng băng · Kéo để chọn vùng · Enter để lưu · Esc để huỷ";
+const HINT_FROZEN_AUTO: &str = "Ảnh đã đóng băng · Click chọn khung hoặc kéo chọn vùng · Enter để lưu · Esc để huỷ";
 const HINT_FAILED: &str = "Không chụp được màn hình này · Esc để huỷ";
 const HINT_OCR: &str = "Chụp text · Kéo để chọn vùng có chữ · Esc để huỷ";
 /// Handle vẽ 8 DIP, vùng bắt chuột 14 DIP cho dễ trúng.
@@ -190,13 +191,14 @@ fn extent(st: &State) -> Rect {
 impl Overlay {
     /// Hiện overlay ở chế độ Freeze. `img = None`: màn hình này chụp hỏng. `ocr_only`: "Chụp text".
     /// Trả về `false` nếu không hiện được (không cấp được DIB).
-    pub fn show_frozen(&self, focus: bool, img: Option<RgbaImage>, ocr_only: bool) -> bool {
+    pub fn show_frozen(&self, focus: bool, img: Option<RgbaImage>, ocr_only: bool, auto: bool) -> bool {
         let (w, h) = (self.mon.rect.w as i32, self.mon.rect.h as i32);
         let t0 = std::time::Instant::now();
         let k = self.mon.scale as f32;
         let text = match (img.is_some(), ocr_only) {
             (false, _) => HINT_FAILED,
             (true, true) => HINT_OCR,
+            (true, false) if auto => HINT_FROZEN_AUTO,
             (true, false) => HINT_FROZEN,
         };
         let white = Color::rgba(255, 255, 255, 1.0);

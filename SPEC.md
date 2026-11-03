@@ -658,7 +658,7 @@ Lấy theo thứ tự ưu tiên. Khung được tô là **khung nhỏ nhất ch�
 - **Khung từ ảnh**: Freeze dùng ảnh đóng băng; Live chụp ngầm màn hình sau khi overlay hiện, nên overlay được loại khỏi ảnh chụp (`WDA_EXCLUDEFROMCAPTURE`, như frame / toolbar / stack; hệ quả: app chia sẻ màn hình không thấy overlay). Máy không hỗ trợ thì Live không có khung từ ảnh. Bản đồ cạnh dựng lười theo màn hình (4K: ~63 ms, 33 MB), giải phóng khi overlay đóng.
 - **Không để UIA làm chậm việc vẽ**: overlay tô ngay khung cửa sổ (đã có sẵn), rồi thay bằng khung UIA khi kết quả về.
 - **Action bổ sung**:
-  - Overlay gửi điểm dưới con trỏ cho thread UIA, nhận lại `{ rect, kind, depth }` (physical px).
+  - Overlay gửi điểm dưới con trỏ qua App cho thread UIA (`Action::AutoHover`), nhận lại chuỗi khung `{ rect, kind }` từ ngoài vào trong (physical px, `Action::AutoFrames`).
   - Cuộn chuột hoặc phím mũi tên đổi `depth` (lên khung cha / xuống khung con).
   - Click chọn khung dùng lại `Action::RegionSelected(rect)` của Phase 1.
 - **Config**: thêm `autoDetect: { enabled: true, imageEdges: true }` (serde default, không tăng `version`). Cài đặt có 2 ô tương ứng.

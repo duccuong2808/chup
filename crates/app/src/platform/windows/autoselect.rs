@@ -36,7 +36,11 @@ use windows::{
                 CUIAutomation8, IUIAutomation, IUIAutomation2, IUIAutomationCacheRequest, IUIAutomationCondition,
                 IUIAutomationElement, TreeScope_Children, UIA_BoundingRectanglePropertyId, UIA_ControlTypePropertyId,
             },
-            WindowsAndMessaging::{EnumWindows, GetWindowThreadProcessId, IsIconic, IsWindowVisible},
+            WindowsAndMessaging::{
+                EnumWindows, GetLayeredWindowAttributes, GetWindowLongW, GetWindowThreadProcessId, IsIconic,
+                IsWindowVisible, GWL_EXSTYLE, LAYERED_WINDOW_ATTRIBUTES_FLAGS, LWA_ALPHA, WS_EX_LAYERED,
+                WS_EX_TRANSPARENT,
+            },
         },
     },
 };
@@ -51,7 +55,9 @@ unsafe extern "system" fn collect(h: HWND, l: LPARAM) -> BOOL {
     BOOL(1)
 }
 
-/// Cửa sổ top-level theo z-order (trên cùng trước): bỏ ẩn, thu nhỏ, cloak (desktop ảo khác...), cửa sổ của Chup.
+/// Cửa sổ top-level theo z-order (trên cùng trước): bỏ ẩn, thu nhỏ, cloak (desktop ảo khác...), cửa sổ của Chup,
+/// và cửa sổ không nhìn thấy dù "visible" (spike: Raycast có cửa sổ 938×594 không ai thấy): chuột đi xuyên qua
+/// (`WS_EX_TRANSPARENT`) hoặc layered với alpha 0.
 /// Khung lấy bằng `DWMWA_EXTENDED_FRAME_BOUNDS`: không dính viền resize vô hình (SPEC 16.3).
 pub fn snapshot_windows() -> Vec<WinFrame> {
     let t0 = Instant::now();
@@ -68,7 +74,7 @@ pub fn snapshot_windows() -> Vec<WinFrame> {
             }
             let mut pid = 0u32;
             GetWindowThreadProcessId(h, Some(&mut pid));
-            if pid == me {
+            if pid == me || invisible(h) {
                 return None;
             }
             let mut cloaked = 0u32;
@@ -85,6 +91,20 @@ pub fn snapshot_windows() -> Vec<WinFrame> {
         .collect();
     log::debug!("autoselect: {} cửa sổ, {:?}", out.len(), t0.elapsed());
     out
+}
+
+fn invisible(h: HWND) -> bool {
+    let ex = unsafe { GetWindowLongW(h, GWL_EXSTYLE) } as u32;
+    if ex & WS_EX_TRANSPARENT.0 != 0 {
+        return true;
+    }
+    if ex & WS_EX_LAYERED.0 == 0 {
+        return false;
+    }
+    // Cửa sổ dùng UpdateLayeredWindow không có thuộc tính này (hàm lỗi): không biết, coi như nhìn thấy.
+    let (mut alpha, mut flags) = (255u8, LAYERED_WINDOW_ATTRIBUTES_FLAGS(0));
+    let ok = unsafe { GetLayeredWindowAttributes(h, None, Some(&mut alpha), Some(&mut flags)) }.is_ok();
+    ok && flags.0 & LWA_ALPHA.0 != 0 && alpha == 0
 }
 
 fn rect_of(r: &RECT) -> Option<Rect> {

@@ -40,6 +40,7 @@ const DIM: Color = Color::rgba(0, 0, 0, 0.4);
 /// Gần như trong suốt nhưng vẫn nhận chuột.
 const HOLE_PX: u32 = 0x0100_0000;
 const HINT: &str = "Kéo để chọn vùng · Esc hoặc chuột phải để huỷ";
+const HINT_AUTO: &str = "Click để chọn khung đang tô · Kéo để chọn vùng · Lăn chuột đổi cỡ khung · Esc để huỷ";
 
 struct Sprite {
     s: Surface,
@@ -55,6 +56,8 @@ struct State {
     dragging: bool,
     sel: Option<Rect>,
     hint: Option<Sprite>,
+    /// Dòng gợi ý đang giữ là bản có tự động chọn vùng.
+    hint_auto: bool,
     /// Nhãn "W × H": vẽ lại vào cùng 1 bộ đệm, `label_at` là chỗ đặt trên overlay.
     label: Option<PillPainter>,
     label_at: Option<Rect>,
@@ -105,7 +108,7 @@ impl Overlay {
 
     /// Hiện overlay; `focus` = overlay dưới con trỏ (nhận phím Esc).
     /// DIB và dòng gợi ý được giữ lại giữa các lần chọn vùng liên tiếp; `release` mới giải phóng.
-    pub fn show(&self, focus: bool) {
+    pub fn show(&self, focus: bool, auto: bool) {
         let (w, h) = (self.mon.rect.w as i32, self.mon.rect.h as i32);
         let t0 = std::time::Instant::now();
         {
@@ -119,10 +122,12 @@ impl Overlay {
             }
         }
         let t_alloc = t0.elapsed();
-        if self.st.borrow().hint.is_none() {
+        if self.st.borrow().hint.is_none() || self.st.borrow().hint_auto != auto {
             let k = self.mon.scale as f32;
             let white = Color::rgba(255, 255, 255, 1.0);
-            let hint = pill(HINT, 13.0 * k, 12.0 * k, 6.0 * k, 999.0, Color::rgba(0, 0, 0, 0.7), white).map(|s| {
+            let text = if auto { HINT_AUTO } else { HINT };
+            self.st.borrow_mut().hint_auto = auto;
+            let hint = pill(text, 13.0 * k, 12.0 * k, 6.0 * k, 999.0, Color::rgba(0, 0, 0, 0.7), white).map(|s| {
                 let at = Rect::new((w - s.w) / 2, self.s(24.0), s.w as u32, s.h as u32);
                 Sprite { s, at }
             });
@@ -212,8 +217,8 @@ impl Overlay {
         }
         // Giữ lại sprite gợi ý (vài trăm KB): tạo lại cần Direct2D, chậm khi vừa trim xong.
         let mut st = self.st.borrow_mut();
-        let hint = st.hint.take();
-        *st = State { hint, ..State::default() };
+        let (hint, hint_auto) = (st.hint.take(), st.hint_auto);
+        *st = State { hint, hint_auto, ..State::default() };
     }
 
     /// Vẽ nhãn "W × H" (physical px) cho `sel`, trả về chỗ đặt: dưới vùng chọn, sát đáy thì lên trên.

@@ -467,6 +467,7 @@ impl App {
     /// Rảnh đủ lâu: giải phóng DIB của overlay và trả working set lại cho Windows.
     /// Trang nhớ chỉ bị đưa ra khỏi RAM (không mất dữ liệu); lần dùng sau nạp lại rất nhanh.
     pub fn trim(&self) {
+        win::log_ui_stats();
         util::log_memory("trước khi trả RAM");
         for o in &self.overlays {
             o.release();

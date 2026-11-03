@@ -567,7 +567,7 @@ pub trait OcrEngine {
 - **Chọn engine khi chạy**: `chup-ocr.exe` cạnh `chup.exe` (bộ cài Full) trước; không có, hoặc khác PROTO, thì bản đã tải.
 - **`chup.exe --install-ocr`**: tải những gì còn thiếu, cửa sổ tải (tiến trình, Huỷ), exit code 0 xong / 1 lỗi / 2 huỷ.
   Bộ cài Lite và app dùng chung.
-- **Lazy-load**: exe phụ chỉ chạy khi cần, giữ sống giữa các lần OCR, **tắt sau 5 phút không dùng** để trả RAM.
+- **Lazy-load**: exe phụ chỉ chạy khi cần, giữ sống giữa các lần OCR, **tắt sau 2 phút không dùng** để trả RAM (trước 2026-11-03 là 5 phút; đo lúc dùng thật các lần OCR cách nhau < 1 phút).
   Huỷ job đang chạy = kill process. Crash hoặc quá 15 s = kill, báo lỗi.
 - **Luồng chạy**: 1 worker thread giữ cả 2 engine. Hàng đợi chỉ giữ 1 job; job mới tới thì thay job đang chờ.
 - **Cache**: nhớ kết quả cuối theo (file, ngôn ngữ). Copy lần 2 không OCR lại.
@@ -622,7 +622,7 @@ pub trait OcrEngine {
 - [ ] Dán text vào Word, Zalo, VS Code: dấu hiển thị đúng, tìm kiếm được (đã NFC).
 - [ ] Ảnh không có chữ: báo "không tìm thấy chữ", clipboard không đổi.
 - [ ] Mất mạng lúc tải gói OCR: báo lỗi, thử lại được, không để lại file hỏng.
-- [ ] Sau 5 phút không dùng: RAM giảm về mức Phase 1.
+- [ ] Sau 2 phút không dùng: RAM giảm về mức Phase 1.
 - [ ] "Chụp text" không tạo file, không thêm vào stack.
 - [ ] Bộ cài: không tích "OCR tiếng Việt" thì không tải gì; tích thì tải xong và OCR tiếng Việt dùng được ngay;
   mất mạng lúc cài vẫn cài xong app. Gỡ cài đặt xoá gói.

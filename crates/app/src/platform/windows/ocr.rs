@@ -44,8 +44,9 @@ use windows::{
 
 use super::{app::Action, win::emit};
 
-/// Không OCR trong khoảng này thì tắt exe phụ.
-const IDLE: Duration = Duration::from_secs(5 * 60);
+/// Không OCR trong khoảng này thì tắt exe phụ (giữ ~40 MB khi rảnh). Đo 2026-11-03 (chup-3p3): lúc đang dùng, các lần
+/// OCR cách nhau < 1 phút, nên 2 phút vẫn giữ engine nóng mà trả RAM sớm hơn 3 phút so với 5 phút trước đây.
+const IDLE: Duration = Duration::from_secs(2 * 60);
 /// Một job (kể cả nạp model lần đầu) lâu hơn thì coi như treo (cộng thêm theo cỡ ảnh, xem `job_timeout`).
 const JOB_TIMEOUT: Duration = Duration::from_secs(15);
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;

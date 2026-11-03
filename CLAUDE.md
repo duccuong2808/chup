@@ -13,10 +13,10 @@ Rust thuần, **không WebView**: giao diện Win32 + Direct2D/DirectWrite. Lõi
 - Preview chọn chữ trên ảnh kiểu Live Text (SPEC 15.2, 17.2; thiết kế `docs/plans/2026-11-01-live-text-design.md`,
   beads `chup-4fx`) xong, đã test trên VM. Chọn theo ký tự; tự nhận diện khi mở Preview (mặc định bật).
 - 2.4 Tự động chọn vùng (SPEC mục 16; spike `docs/plans/2026-11-03-autoselect-spike.md`, thiết kế
-  `docs/plans/2026-11-03-autoselect-design.md`, epic beads `chup-pwn`): code xong trên nhánh `phase2-autoselect`,
-  **chưa chạy thử trong app thật**. Công cụ spike ở `tools/` (ngoài workspace).
-- Cài đặt chia trang kiểu Windows 11 (SPEC 5.6, beads `chup-ck1`): nhánh `phase2-settings`, đã chụp màn hình kiểm tra
-  5 trang trên Windows 11 (125%); chưa thử tay từng control.
+  `docs/plans/2026-11-03-autoselect-design.md`, epic beads `chup-pwn`): xong, đã vào main, user dùng trên máy thật.
+  Công cụ spike ở `tools/` (ngoài workspace).
+- Cài đặt chia trang kiểu Windows 11 (SPEC 5.6, `chup-ck1`), trang Giới thiệu, đa ngôn ngữ vi/en (`chup-81y`), bộ cài
+  Full/Lite (`chup-0oa`): đã vào main, thử trên Windows 11 x64 thật.
 
 ## Lệnh
 

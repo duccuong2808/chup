@@ -286,9 +286,9 @@ tự đặt ảnh, nên không do Chup. Muốn kiểm tra clipboard thì phải 
 5. Preview: nhiều màn hình (mở trên màn của stack, kéo sang màn khác DPI), ảnh 4K, cảm giác mượt khi kéo mép ở 4K.
 6. OCR: bấm Huỷ giữa lúc đang tải gói (mạng VM tải 4,4 MB quá nhanh, không kịp bấm);
    máy x64 thật (VM là ARM64 chạy giả lập); user Windows có tên tiếng Việt (đường dẫn có dấu).
-7. **Tự động chọn vùng (Phase 2.4) chưa chạy thử trong app thật**: mới có unit test core, clippy và build
-   release. Spike UIA / khung từ ảnh đo trên Windows 11 x64 thật, xem
-   `docs/plans/2026-11-03-autoselect-spike.md`. Checklist test: thiết kế mục 7.
+7. **Tự động chọn vùng (Phase 2.4)**: user dùng trên Windows 11 x64 thật 2026-11-03, ổn. `↑` `↓` lúc đầu không tới
+   được các khung thấy khi rê chuột; đã sửa (chup-4q9) và thử lại ổn. Chưa thử: app quyền admin, app treo, cửa sổ vắt
+   2 màn hình (checklist thiết kế mục 7).
 8. **Cài đặt chia trang** (chup-ck1): mới chụp màn hình 5 trang trên Windows 11 x64 thật (125%), đổi trang không còn
    sót control. Chưa thử tay: Tab/phím mũi tên, ghi phím tắt, danh sách xổ của combobox, đổi DPI khi kéo sang màn khác.
 9. **Bộ cài Full / Lite** (chup-0oa): `chup.exe --install-ocr` trên Windows 11 x64 thật tải engine từ Release

@@ -646,7 +646,11 @@ pub trait OcrEngine {
 3. **Đổi cấp khung** (ví dụ đang tô nút, muốn lấy cả toolbar chứa nút đó):
    - Cuộn chuột lên: lên khung cha. Cuộn xuống: về khung con.
    - Phím tương đương: `↑` lên cha, `↓` xuống con.
-   - Cấp đã chọn **được giữ** khi di chuột trong cùng cửa sổ (đang tô thanh công cụ thì rê sang nút bên cạnh vẫn tô thanh công cụ); sang cửa sổ khác thì về khung trong cùng.
+   - Các cấp gồm khung của app (UI Automation) và **mọi lớp khung đoán từ ảnh** lồng nhau quanh con trỏ (tối đa 6 lớp
+     trong phần tử sâu nhất, ví dụ ảnh → thẻ → cột), để `↑` `↓` tới được các khung thấy khi rê chuột (chup-4q9).
+   - Khung đã chọn bằng cuộn / `↑` `↓` **được giữ nguyên khi con trỏ còn trong nó** (rê qua chữ, ảnh bên trong thẻ
+     vẫn tô thẻ). Ra khỏi khung đó: cấp đã lên **được giữ** khi di chuột trong cùng cửa sổ (đang tô thanh công cụ thì
+     rê sang nút bên cạnh vẫn tô thanh công cụ); sang cửa sổ khác thì về khung trong cùng.
 4. **Chọn**:
    - Click trái mà không di chuột quá 4px: lấy khung đang tô làm region. Từ đây giống hệt bước 4 của mục 5.1 (Live mode: hiện frame và toolbar; Freeze: hiện handle và toolbar trong overlay; "Chụp text": OCR luôn).
    - Freeze khi đã có vùng chọn: rê ra **ngoài** vùng vẫn tô khung, click là chọn khung mới. Trong vùng, trên handle, trên toolbar thì không tô.

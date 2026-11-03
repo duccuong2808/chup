@@ -24,7 +24,7 @@ use windows::{
                     D2D_SIZE_U,
                 },
                 D2D1CreateFactory, ID2D1Bitmap, ID2D1BitmapBrush, ID2D1Brush, ID2D1DCRenderTarget, ID2D1Factory,
-                ID2D1Geometry, ID2D1SolidColorBrush, ID2D1StrokeStyle, D2D1_ARC_SEGMENT, D2D1_ARC_SIZE_LARGE,
+                ID2D1Geometry, ID2D1SolidColorBrush, ID2D1StrokeStyle, D2D1_ANTIALIAS_MODE_ALIASED, D2D1_ARC_SEGMENT, D2D1_ARC_SIZE_LARGE,
                 D2D1_ARC_SIZE_SMALL, D2D1_BITMAP_BRUSH_PROPERTIES, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
                 D2D1_BITMAP_PROPERTIES, D2D1_CAP_STYLE_ROUND, D2D1_DASH_STYLE_SOLID, D2D1_DRAW_TEXT_OPTIONS_NONE,
                 D2D1_ELLIPSE, D2D1_EXTEND_MODE_CLAMP, D2D1_FACTORY_OPTIONS, D2D1_FACTORY_TYPE_SINGLE_THREADED,
@@ -186,6 +186,23 @@ impl Surface {
     }
 
     /// Tô `r` (toạ độ trong surface) bằng 1 pixel premultiplied, cắt theo biên.
+    /// Chép vùng `r` từ `src` cùng kích thước.
+    pub fn copy_rect_from(&mut self, src: &mut Surface, r: Rect) {
+        let Some(r) = r.intersect(&Rect::new(0, 0, self.w as u32, self.h as u32)) else { return };
+        if (src.w, src.h) != (self.w, self.h) {
+            return;
+        }
+        let w = self.w as usize;
+        let s = src.pixels();
+        let (x0, x1) = (r.x as usize, r.right() as usize);
+        let rows: Vec<(usize, Vec<u32>)> =
+            (r.y..r.bottom()).map(|y| (y as usize, s[y as usize * w + x0..y as usize * w + x1].to_vec())).collect();
+        let d = self.pixels();
+        for (y, row) in rows {
+            d[y * w + x0..y * w + x1].copy_from_slice(&row);
+        }
+    }
+
     pub fn fill(&mut self, r: Rect, px: u32) {
         let Some(r) = r.intersect(&Rect::new(0, 0, self.w as u32, self.h as u32)) else { return };
         let w = self.w as usize;
@@ -489,6 +506,15 @@ impl Canvas {
             self.rt.BeginDraw();
             self.rt.SetTransform(&Matrix3x2::identity());
         }
+    }
+
+    /// Chỉ vẽ trong `r` cho tới `pop_clip` (vẽ lại một phần: ngoài vùng đó là khung cũ, vẽ chồng sẽ đậm dần).
+    pub fn push_clip(&self, r: D2D_RECT_F) {
+        unsafe { self.rt.PushAxisAlignedClip(&r, D2D1_ANTIALIAS_MODE_ALIASED) };
+    }
+
+    pub fn pop_clip(&self) {
+        unsafe { self.rt.PopAxisAlignedClip() };
     }
 
     pub fn end(&self) {

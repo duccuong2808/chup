@@ -96,6 +96,14 @@ const BUTTONS: [(Btn, Icon); 5] = [
     (Btn::Close, Icon::Close),
 ];
 
+/// Kết quả `compose`: khung đã vẽ, vị trí, độ đục, và vùng đổi (`None` = cả cửa sổ; rỗng = không đổi gì).
+struct Composed {
+    out: Surface,
+    pos: (i32, i32),
+    alpha: u8,
+    dirty: Option<Rect>,
+}
+
 #[derive(Default)]
 struct State {
     /// File vừa được yêu cầu mở, đang giải mã ở worker. Chỉ nhận ảnh khớp file này.
@@ -133,6 +141,8 @@ struct State {
     text: Option<Arc<TextLayout>>,
     /// Vùng chọn chữ: (vị trí neo, vị trí đang kéo tới).
     sel: Option<(Pos, Pos)>,
+    /// Khung bao vùng bôi đen đã vẽ ở lần vẽ trước (toạ độ cửa sổ), để lần sau chỉ vẽ lại phần đổi (chup-8nb).
+    sel_drawn: Option<Rect>,
     /// Đang bấm trên chữ: vị trí neo và điểm bấm (toạ độ cửa sổ). Kéo quá ngưỡng mới bắt đầu chọn.
     text_press: Option<(Pos, (i32, i32))>,
     /// Đã kéo quá ngưỡng (hoặc Shift + bấm): đang chọn chữ.
@@ -411,13 +421,24 @@ impl Preview {
     }
 
     /// Chép `base` sang `out`, vẽ toolbar và nhãn, đẩy lên cửa sổ.
+    ///
+    /// Bất biến: sau mỗi lần vẽ, `out` là đúng khung đang hiện, nên lần sau vẽ lại một phần được.
     /// `view.rect` phải là vị trí thật (gọi `repaint` nếu không chủ động đổi vị trí/cỡ).
     fn paint(&self) {
+        self.paint_ex(false);
+    }
+
+    /// `sel_only`: từ lần vẽ trước chỉ vùng bôi đen chữ đổi: chỉ vẽ lại và đẩy phần quanh vùng bôi đen cũ + mới
+    /// (kéo bôi đen vẽ lại rất nhiều lần; vẽ cả cửa sổ ~2,6 ms mỗi lần, chup-8nb).
+    fn paint_ex(&self, sel_only: bool) {
         let k = self.scale();
         // Lấy `out` ra khỏi state rồi mới đẩy lên cửa sổ: UpdateLayeredWindow có thể gửi ngược message
         // (WM_WINDOWPOSCHANGED, WM_DPICHANGED) vào wndproc, không được giữ borrow lúc đó.
-        let Some((out, pos, alpha)) = self.compose(k) else { return };
-        out.present(self.hwnd, pos, alpha, None);
+        let Some(Composed { out, pos, alpha, dirty }) = self.compose(k, sel_only) else { return };
+        // `dirty` rỗng: không có gì đổi trên màn hình.
+        if !dirty.is_some_and(|d| d.is_empty()) {
+            out.present(self.hwnd, pos, alpha, dirty);
+        }
         let mut st = self.st.borrow_mut();
         let same = st.base.as_ref().map(|b| (b.w, b.h)) == Some((out.w, out.h));
         if self.open.get() && st.out.is_none() && same {
@@ -432,7 +453,13 @@ impl Preview {
         self.paint();
     }
 
-    fn compose(&self, k: f32) -> Option<(Surface, (i32, i32), u8)> {
+    /// Như `repaint` khi chỉ vùng bôi đen chữ đổi.
+    fn repaint_sel(&self) {
+        self.sync_pos();
+        self.paint_ex(true);
+    }
+
+    fn compose(&self, k: f32, sel_only: bool) -> Option<Composed> {
         let mut st = self.st.borrow_mut();
         let st = &mut *st;
         let v = st.view?;
@@ -442,14 +469,21 @@ impl Preview {
             return None;
         };
         let out = &mut owned;
-        out.pixels().copy_from_slice(base.pixels());
 
         // Toolbar góc trên-phải (luôn tính vùng bấm; chỉ vẽ khi hover).
         let (w, h) = (out.w as f32, out.h as f32);
         let b = BTN * k;
         let n = BUTTONS.len() as f32;
         let x0 = w - BAR_PAD * k - n * b - (n - 1.0) * BTN_GAP * k;
-        st.hits.clear();
+        // Vùng bấm của toolbar: luôn tính (cả khi không vẽ, cả khi thoát sớm vì không có gì đổi).
+        st.hits = BUTTONS
+            .iter()
+            .enumerate()
+            .map(|(i, (btn, _))| {
+                let x = x0 + i as f32 * (b + BTN_GAP * k);
+                (*btn, Rect::new(x as i32, (BAR_PAD * k) as i32, b as u32, b as u32))
+            })
+            .collect();
         let draw_bar = st.hovering;
         let draw_pill = st.pill.is_some();
         // Vùng chọn chữ: rect theo toạ độ ảnh gốc -> toạ độ cửa sổ.
@@ -469,15 +503,41 @@ impl Preview {
             }
             _ => vec![],
         };
-        if (draw_bar || draw_pill || !sel_rects.is_empty()) && c.bind(out) {
+        // Khung bao vùng bôi đen (nới cho bo góc, khử răng cưa).
+        let sel_box = sel_rects.iter().fold(None::<Rect>, |acc, r| {
+            let ri = Rect::new(r.left.floor() as i32 - 2, r.top.floor() as i32 - 2, 0, 0);
+            let ri = Rect::new(ri.x, ri.y, (r.right.ceil() as i32 + 2 - ri.x) as u32, (r.bottom.ceil() as i32 + 2 - ri.y) as u32);
+            Some(acc.map_or(ri, |a| a.union(&ri)))
+        });
+        let full = Rect::new(0, 0, out.w as u32, out.h as u32);
+        // Vẽ lại một phần chỉ khi `out` đang là khung trước (cùng cỡ với base) và chỉ vùng bôi đen đổi.
+        let dirty = (sel_only && (out.w, out.h) == (base.w, base.h)).then(|| {
+            let changed = match (st.sel_drawn, sel_box) {
+                (Some(a), Some(b)) => Some(a.union(&b)),
+                (a, b) => a.or(b),
+            };
+            changed.and_then(|d| d.intersect(&full)).unwrap_or_default()
+        });
+        st.sel_drawn = sel_box;
+        let (pos, alpha) = ((v.rect.x, v.rect.y), preview::alpha(st.opacity));
+        if dirty.is_some_and(|d| d.is_empty()) {
+            return Some(Composed { out: owned, pos, alpha, dirty });
+        }
+        match dirty {
+            Some(d) => out.copy_rect_from(base, d),
+            None => out.pixels().copy_from_slice(base.pixels()),
+        }
+        if (draw_bar || draw_pill || !sel_rects.is_empty() || dirty.is_some()) && c.bind(out) {
             c.begin_over();
+            if let Some(d) = dirty {
+                c.push_clip(rectf(d.x as f32, d.y as f32, d.w as f32, d.h as f32));
+            }
             let sel_color = Theme::current().accent.with_alpha(SEL_ALPHA);
             for r in &sel_rects {
                 c.fill_round(*r, 2.0 * k, sel_color);
             }
             for (i, (btn, icon)) in BUTTONS.iter().enumerate() {
                 let r = rectf(x0 + i as f32 * (b + BTN_GAP * k), BAR_PAD * k, b, b);
-                st.hits.push((*btn, Rect::new(r.left as i32, r.top as i32, b as u32, b as u32)));
                 if !draw_bar {
                     continue;
                 }
@@ -500,14 +560,12 @@ impl Preview {
                 c.fill_round(r, ph / 2.0, Color::rgba(0, 0, 0, 0.7));
                 c.text(text, &f, r, Color::rgba(255, 255, 255, 1.0));
             }
-            c.end();
-        } else {
-            for (i, (btn, _)) in BUTTONS.iter().enumerate() {
-                let x = x0 + i as f32 * (b + BTN_GAP * k);
-                st.hits.push((*btn, Rect::new(x as i32, (BAR_PAD * k) as i32, b as u32, b as u32)));
+            if dirty.is_some() {
+                c.pop_clip();
             }
+            c.end();
         }
-        Some((owned, (v.rect.x, v.rect.y), preview::alpha(st.opacity)))
+        Some(Composed { out: owned, pos, alpha, dirty })
     }
 
     /// Báo App khung hiện tại (App lưu nếu đang chọn "như lần trước").
@@ -711,14 +769,14 @@ impl Preview {
             st.sel.replace((anchor, focus)) != Some((anchor, focus))
         };
         if changed {
-            self.repaint();
+            self.repaint_sel();
         }
     }
 
     fn set_sel(&self, sel: Option<(Pos, Pos)>) {
         let changed = std::mem::replace(&mut self.st.borrow_mut().sel, sel) != sel;
         if changed {
-            self.repaint();
+            self.repaint_sel();
         }
     }
 

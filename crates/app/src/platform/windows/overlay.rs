@@ -339,7 +339,8 @@ impl Handler for Overlay {
                 unsafe { SetCursor(LoadCursorW(None, IDC_CROSS).ok()) };
                 Some(LRESULT(1))
             }
-            WM_LBUTTONDOWN => {
+            // CS_DBLCLKS: nhấn lại nhanh (vd. vừa huỷ bằng chuột phải rồi nhấn) tới dưới dạng DBLCLK (chup-t8m).
+            WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => {
                 let (x, y) = (loword(lp.0), hiword(lp.0));
                 let dirty = {
                     let mut st = self.st.borrow_mut();

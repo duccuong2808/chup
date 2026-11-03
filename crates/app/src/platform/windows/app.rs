@@ -294,6 +294,8 @@ impl App {
                     if let Some(s) = &self.settings {
                         s.set_status(&e, true);
                     }
+                    // Dấu tick "Phím tắt chụp đóng băng" trên menu tray đã tự đảo khi bấm: vẽ lại theo config.
+                    self.apply_hotkeys();
                     vec![Effect::ConfigChanged]
                 }
             },

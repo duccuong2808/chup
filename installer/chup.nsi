@@ -49,7 +49,10 @@ BrandingText "Chup ${VERSION} (${EDITION})"
 !define MUI_UNICON "..\crates\app\icons\icon.ico"
 !define MUI_FINISHPAGE_RUN "$INSTDIR\chup.exe"
 !define MUI_FINISHPAGE_RUN_TEXT "Chạy Chup"
+!ifdef LITE
+; Chỉ bản Lite có lựa chọn (ô OCR tiếng Việt); bản Full chỉ có một mục bắt buộc nên bỏ trang này.
 !insertmacro MUI_PAGE_COMPONENTS
+!endif
 !insertmacro MUI_PAGE_INSTFILES
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM

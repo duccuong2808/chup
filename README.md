@@ -275,6 +275,9 @@ tự đặt ảnh, nên không do Chup. Muốn kiểm tra clipboard thì phải 
    `ocr-engine-v1` (WinHTTP theo redirect 302 của GitHub), đúng SHA-256, `chup-ocr.exe --version` chạy được từ
    `%LOCALAPPDATA%` (Symantec không chặn). Chưa chạy: 2 bộ cài NSIS (máy dev không có makensis, CI build), Lite cài
    có tick OCR, Full chạy không mạng.
+10. **Phím tắt** (chup-289): `Ctrl+Alt+X` đăng ký được trên máy thật (`Ctrl+Alt+S/D/T` có app khác giữ); trang Phím tắt
+    có ô bật/tắt F1 (đã chụp). **Menu tray hai phần chưa ai nhìn thấy**: tiêu đề mờ "Chụp" / "Tuỳ chọn", dấu tick
+    "Phím tắt chụp đóng băng (F1)", bấm vào thì F1 tắt/bật.
 
 **Vấn đề đang theo dõi:** kéo thumbnail đôi khi không bắt đầu kéo. Trên VM, nhấn chuột ngay khi
 vừa rê vào thumbnail thì không kéo được (0/4); dừng ≥ 0,15 s thì 9/9. Có 1 lần lỗi dù đã dừng

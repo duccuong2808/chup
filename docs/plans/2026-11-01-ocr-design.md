@@ -38,6 +38,8 @@ Apache-2.0, Leptonica BSD-2 và các thư viện ảnh kèm theo). Artifact CI c
 - **"Đã có gói"** = thư mục `vi-1` có đủ file đúng kích thước (rẻ, kiểm tra mỗi lần OCR). SHA-256 chỉ kiểm tra lúc cài.
   **"Dùng được tiếng Việt"** = đã có gói **và** có `chup-ocr.exe` cạnh `chup.exe` (chạy `chup.exe` rời không qua bộ
   cài thì báo "Thiếu chup-ocr.exe, hãy cài Chup bằng bộ cài").
+  *(2026-11-03: `chup.exe` của CI nhúng sẵn engine, thông báo này chỉ còn với bản build tay;
+  xem `2026-11-03-ocr-embed-design.md`.)*
 - **Dọn**: khởi động thì xoá các thư mục `ocr\vi-*` khác bản hiện tại (gói cũ sau khi nâng cấp).
 - **Tải bằng WinHTTP** (crate `windows`, không thêm thư viện TLS), theo redirect. SHA-256 bằng crate `sha2` (Rust thuần;
   logic cài nằm ở core nên test được trên macOS với fetcher giả).

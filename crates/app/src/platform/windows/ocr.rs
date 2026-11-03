@@ -1,6 +1,7 @@
 //! Worker OCR (SPEC 15.4): 1 thread giữ 2 engine.
 //! - Tiếng Anh: `Windows.Media.Ocr` (WinRT) ngay trong process.
-//! - Tiếng Việt + Anh: exe phụ `chup-ocr.exe` (Tesseract) cạnh `chup.exe`, nói chuyện qua pipe (`chup-ocr-proto`).
+//! - Tiếng Việt + Anh: exe phụ `chup-ocr.exe` (Tesseract), nói chuyện qua pipe (`chup-ocr-proto`). Exe phụ lấy ở
+//!   cạnh `chup.exe` (bộ cài đặt vào), không có hoặc là bản cũ thì dùng bản nhúng trong `chup.exe` (`ocr::helper`).
 //!
 //! Exe phụ được giữ sống giữa các lần OCR và bị kill sau `IDLE` không dùng (trả RAM). Huỷ / thay job tiếng Việt,
 //! hoặc job quá thời gian, là kill process; lần sau chạy lại. Process gắn Job Object `KILL_ON_JOB_CLOSE` nên Chup chết
@@ -18,7 +19,7 @@ use std::{
 use chup_core::{
     config::OcrLanguage,
     model::OcrViState,
-    ocr::{self, pack, Line, LineWord, TextLayout},
+    ocr::{self, helper, pack, Line, LineWord, TextLayout},
 };
 use chup_ocr_proto::{read_json, write_frame, Hello, Request, Response, PROTO};
 use image::{GrayImage, RgbaImage};
@@ -47,20 +48,28 @@ const IDLE: Duration = Duration::from_secs(5 * 60);
 /// Một job (kể cả nạp model lần đầu) lâu hơn thì coi như treo (cộng thêm theo cỡ ảnh, xem `job_timeout`).
 const JOB_TIMEOUT: Duration = Duration::from_secs(15);
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-const HELPER_EXE: &str = "chup-ocr.exe";
+
+// `EMBEDDED: Option<helper::Embedded>`, sinh bởi build.rs (có khi CI đặt `CHUP_OCR_DIR`).
+include!(concat!(env!("OUT_DIR"), "/ocr_embed.rs"));
 
 /// Thư mục chứa gói dữ liệu OCR (`%LOCALAPPDATA%\app.chup.desktop\ocr`).
 pub fn ocr_root(cache_dir: &Path) -> PathBuf {
     cache_dir.join("ocr")
 }
 
-fn helper_path() -> Option<PathBuf> {
-    Some(std::env::current_exe().ok()?.parent()?.join(HELPER_EXE))
+/// `chup-ocr.exe` cạnh `chup.exe` (bộ cài đặt vào), nếu có.
+fn installed_helper() -> Option<PathBuf> {
+    Some(std::env::current_exe().ok()?.parent()?.join(helper::EXE_NAME)).filter(|p| p.is_file())
 }
 
-/// OCR tiếng Việt dùng được chưa (kiểm tra file, rẻ).
+/// Thư mục engine nhúng cần giữ lại khi dọn thư mục OCR (`pack::cleanup_old`).
+pub fn embedded_dir_name() -> Option<String> {
+    EMBEDDED.map(|e| e.dir_name())
+}
+
+/// OCR tiếng Việt dùng được chưa (kiểm tra file, rẻ). Có bản nhúng thì coi như có engine: giải nén lúc cần.
 pub fn vi_state(ocr_root: &Path) -> OcrViState {
-    if !helper_path().is_some_and(|p| p.is_file()) {
+    if installed_helper().is_none() && EMBEDDED.is_none() {
         OcrViState::NoHelper
     } else if !pack::is_installed(ocr_root) {
         OcrViState::NoPack
@@ -339,12 +348,49 @@ fn watchdog(shared: &SharedRef, id: u32, timeout: Duration) {
     });
 }
 
+/// Chạy exe phụ: bản cạnh `chup.exe` trước; không có, hoặc là bản cũ (khác PROTO, do chỉ thay `chup.exe`),
+/// thì giải nén và chạy bản nhúng.
 fn start_tess(shared: &SharedRef, ocr_root: &Path) -> Result<Tess, OcrError> {
-    let reinstall = "Hãy cài lại Chup bằng bộ cài.";
-    let exe = helper_path().filter(|p| p.is_file()).ok_or_else(|| err(reinstall, "không thấy chup-ocr.exe"))?;
+    let installed = installed_helper();
+    let mut last = None;
+    if let Some(exe) = &installed {
+        match spawn_tess(shared, ocr_root, exe) {
+            Err(StartError::Proto(e)) if EMBEDDED.is_some() => {
+                log::warn!("ocr: {}, dùng bản nhúng trong chup.exe", e.log);
+                last = Some(e);
+            }
+            r => return r.map_err(StartError::into_ocr),
+        }
+    }
+    let Some(emb) = EMBEDDED else {
+        return Err(last.unwrap_or_else(|| err(REINSTALL, "không thấy chup-ocr.exe")));
+    };
+    let exe = emb.ensure(ocr_root).map_err(|e| {
+        err("Không giải nén được engine OCR tiếng Việt. Phần mềm diệt virus có thể đã chặn, hãy thử lại.", e)
+    })?;
+    spawn_tess(shared, ocr_root, &exe).map_err(StartError::into_ocr)
+}
+
+const REINSTALL: &str = "Hãy cài lại Chup bằng bộ cài.";
+
+enum StartError {
+    /// Exe phụ khác PROTO: thử bản khác được.
+    Proto(OcrError),
+    Other(OcrError),
+}
+
+impl StartError {
+    fn into_ocr(self) -> OcrError {
+        match self {
+            StartError::Proto(e) | StartError::Other(e) => e,
+        }
+    }
+}
+
+fn spawn_tess(shared: &SharedRef, ocr_root: &Path, exe: &Path) -> Result<Tess, StartError> {
     // Tesseract mở traineddata bằng fopen (ANSI): đường dẫn có dấu (tên user tiếng Việt) sẽ hỏng. Chạy với thư mục
     // hiện tại là thư mục gói (CreateProcessW đặt bằng Unicode) và truyền đường dẫn tương đối ".".
-    let mut child = Command::new(&exe)
+    let mut child = Command::new(exe)
         .current_dir(pack::dir(ocr_root))
         .arg("--tessdata")
         .arg(".")
@@ -355,7 +401,7 @@ fn start_tess(shared: &SharedRef, ocr_root: &Path) -> Result<Tess, OcrError> {
         .stderr(Stdio::null())
         .creation_flags(CREATE_NO_WINDOW)
         .spawn()
-        .map_err(|e| err(reinstall, format!("chạy {}: {e}", exe.display())))?;
+        .map_err(|e| StartError::Other(err(REINSTALL, format!("chạy {}: {e}", exe.display()))))?;
     if let Some(job) = kill_on_close_job() {
         if let Err(e) = unsafe { AssignProcessToJobObject(job, HANDLE(child.as_raw_handle())) } {
             log::warn!("ocr: AssignProcessToJobObject: {e}");
@@ -369,17 +415,20 @@ fn start_tess(shared: &SharedRef, ocr_root: &Path) -> Result<Tess, OcrError> {
         // Exe phụ thoát ngay (exit 2): thường do dữ liệu tessdata hỏng.
         other => {
             lock(shared).kill();
-            return Err(err(
+            return Err(StartError::Other(err(
                 "Gói OCR tiếng Việt bị lỗi. Hãy xoá gói rồi tải lại trong Cài đặt.",
                 format!("chup-ocr.exe không chào: {:?}", other.err()),
-            ));
+            )));
         }
     };
     if hello.proto != PROTO {
         lock(shared).kill();
-        return Err(err(reinstall, format!("chup-ocr.exe proto {} khác {PROTO}", hello.proto)));
+        return Err(StartError::Proto(err(
+            REINSTALL,
+            format!("{} proto {} khác {PROTO}", exe.display(), hello.proto),
+        )));
     }
-    log::info!("ocr: chup-ocr.exe sẵn sàng (tesseract {})", hello.tesseract);
+    log::info!("ocr: {} sẵn sàng (tesseract {})", exe.display(), hello.tesseract);
     Ok(Tess { stdin, stdout })
 }
 

@@ -68,11 +68,13 @@ pub fn is_installed(ocr_root: &Path) -> bool {
     FILES.iter().all(|f| fs::metadata(d.join(f.name)).map(|m| m.is_file() && m.len() == f.size).unwrap_or(false))
 }
 
-/// Xoá mọi thứ trong thư mục OCR trừ gói hiện tại (gói cũ sau khi nâng cấp, thư mục tạm bị bỏ dở).
-pub fn cleanup_old(ocr_root: &Path) {
+/// Xoá mọi thứ trong thư mục OCR trừ gói hiện tại và các mục trong `keep` (engine giải nén của bản `chup.exe`
+/// đang chạy, xem [`super::helper`]): gói và engine cũ sau khi nâng cấp, thư mục tạm bị bỏ dở.
+pub fn cleanup_old(ocr_root: &Path, keep: &[&str]) {
     let Ok(entries) = fs::read_dir(ocr_root) else { return };
     for e in entries.flatten() {
-        if e.file_name() != PACK_DIR {
+        let name = e.file_name();
+        if name != PACK_DIR && !keep.iter().any(|k| name == *k) {
             let p = e.path();
             let r = if p.is_dir() { fs::remove_dir_all(&p) } else { fs::remove_file(&p) };
             if let Err(err) = r {
@@ -308,12 +310,15 @@ mod tests {
         fs::create_dir_all(tmp_dir(&r)).unwrap();
         fs::write(tmp_dir(&r).join("vie.traineddata"), b"cut").unwrap();
         fs::create_dir_all(r.join("vi-0")).unwrap();
+        fs::create_dir_all(r.join("helper-old")).unwrap();
+        fs::create_dir_all(r.join("helper-new")).unwrap();
         let mut f = Fake { files, fail: None, requested: vec![] };
         install(&mut f, &r, &mut |_, _| {}, &AtomicBool::new(false)).unwrap();
         assert!(is_installed(&r));
         assert_eq!(f.requested.len(), 2);
-        cleanup_old(&r);
+        cleanup_old(&r, &["helper-new"]);
         assert!(!r.join("vi-0").exists() && dir(&r).exists());
+        assert!(!r.join("helper-old").exists() && r.join("helper-new").exists());
         // Thiếu một file = chưa có gói.
         fs::remove_file(dir(&r).join("eng.traineddata")).unwrap();
         assert!(!is_installed(&r));

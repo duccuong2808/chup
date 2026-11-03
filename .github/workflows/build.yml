@@ -2,7 +2,8 @@
 # - Mỗi lần push / PR: test + clippy trên Windows, build bản release, đóng gói installer NSIS.
 #   Installer và file exe được đính kèm vào run dưới dạng artifact.
 # - Push tag dạng v* (vd: v0.2.0): tạo thêm GitHub Release (draft) kèm installer.
-# - chup-ocr.exe (Tesseract link tĩnh, OCR tiếng Việt) build riêng bằng vcpkg rồi đưa vào installer.
+# - chup-ocr.exe (Tesseract link tĩnh, OCR tiếng Việt) build riêng bằng vcpkg rồi đưa vào installer,
+#   đồng thời nhúng vào chup.exe (CHUP_OCR_DIR) để chạy chup.exe rời không cần cài lại.
 #   Dữ liệu tiếng Việt KHÔNG nằm trong installer: app tải từ tesseract-ocr/tessdata_fast (xem core::ocr::pack).
 name: Build
 
@@ -143,8 +144,13 @@ jobs:
           name: chup-ocr
           path: ocr-dist
 
+      # Nhúng chup-ocr.exe vào chup.exe (crates/app/build.rs): chạy chup.exe rời vẫn OCR tiếng Việt được.
       - name: cargo build --release
-        run: cargo build --release -p chup
+        shell: pwsh
+        run: |
+          $env:CHUP_OCR_DIR = "$PWD\ocr-dist"
+          cargo build --release -p chup
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Đóng gói NSIS
         shell: pwsh

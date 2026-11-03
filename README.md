@@ -23,6 +23,8 @@ và kéo thả thẳng được sang app khác. Đặc tả đầy đủ ở [SP
 cargo build --release -p chup        # target\release\chup.exe
 # chup-ocr.exe (OCR tiếng Việt): cần vcpkg `tesseract:x64-windows-static` và biến VCPKG_ROOT
 cargo build --release --manifest-path crates\ocr-helper\Cargo.toml
+# Nhúng chup-ocr.exe vào chup.exe (CI làm vậy): đặt CHUP_OCR_DIR = thư mục có chup-ocr.exe + NOTICE-ocr.txt (đường dẫn tuyệt đối)
+$env:CHUP_OCR_DIR = "<thư mục>"; cargo build --release -p chup
 makensis /DVERSION=0.2.0 /DEXE=target\release\chup.exe /DOCR_DIR=<thư mục có chup-ocr.exe + NOTICE-ocr.txt> installer\chup.nsi
 ```
 
@@ -31,6 +33,9 @@ makensis /DVERSION=0.2.0 /DEXE=target\release\chup.exe /DOCR_DIR=<thư mục có
 - Mục **"OCR tiếng Việt"** trong installer (mặc định bỏ trống) tải dữ liệu `vie`/`eng` (~4,4 MB) từ
   [tesseract-ocr/tessdata_fast](https://github.com/tesseract-ocr/tessdata_fast) bằng `chup.exe --install-ocr`.
   Không tích thì tải sau trong Cài đặt. Engine `chup-ocr.exe` luôn nằm trong installer.
+- `chup.exe` của CI còn **nhúng sẵn `chup-ocr.exe`**: chạy `chup.exe` rời (không qua installer) hoặc chỉ thay mỗi
+  `chup.exe` mới vẫn OCR tiếng Việt được, không phải cài lại. Lần đầu cần, app giải nén engine vào
+  `%LOCALAPPDATA%\app.chup.desktop\ocr\helper-<hash>\` (thiết kế: `docs/plans/2026-11-03-ocr-embed-design.md`).
 - Chup chạy nền ở khay hệ thống, **không mở cửa sổ nào khi khởi động**.
   - Nhấn `Ctrl+Alt+A` hoặc click trái icon tray để chọn vùng.
   - Click phải icon tray để mở menu (Cài đặt, Thoát…).
@@ -52,7 +57,7 @@ Workflow `.github/workflows/build.yml` chạy trên `windows-latest`:
 
 - Mỗi lần push / PR: job `check` (`cargo test`, `cargo clippy -D warnings`), job `ocr-helper`
   (vcpkg `tesseract:x64-windows-static`, build + test `chup-ocr.exe` với ảnh của spike, gom license),
-  rồi job `build` (`cargo build --release` + NSIS kèm `chup-ocr.exe`). Kết quả là artifact
+  rồi job `build` (`cargo build --release` nhúng `chup-ocr.exe` + NSIS kèm `chup-ocr.exe`). Kết quả là artifact
   `chup-windows-<sha>` gồm installer, `chup.exe`, `chup-ocr.exe` (tab Actions → chọn run → Artifacts).
 - Push tag `v*` (vd: `git tag v0.2.0 && git push origin v0.2.0`): tạo thêm GitHub Release dạng
   draft kèm installer. Nhớ đổi `version` trong `Cargo.toml` (workspace) cho khớp tag trước.

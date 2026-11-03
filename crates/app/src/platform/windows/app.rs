@@ -171,7 +171,8 @@ impl App {
             freeze_wins: None,
             overlay_excluded: false,
         };
-        pack::cleanup_old(&app.ocr_root);
+        let keep = ocr::embedded_dir_name();
+        pack::cleanup_old(&app.ocr_root, keep.as_deref().as_slice());
         let st = ocr::vi_state(&app.ocr_root);
         app.model.set_ocr_vi(st);
 

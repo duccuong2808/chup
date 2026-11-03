@@ -7,7 +7,8 @@ Rust thuần, **không WebView**: giao diện Win32 + Direct2D/DirectWrite. Lõi
 - Trạng thái: Phase 1 xong và đã test trên Windows 11 thật; bước 1.5 (bỏ Tauri, UI native) xong; 2.1 Freeze (SPEC mục 14, thiết kế ở `docs/plans/2026-11-01-freeze-design.md`) xong và đã test trên VM. Kết quả test ở README, mục "Đã kiểm chứng và chưa kiểm chứng".
 - 2.2 Preview khi bấm thumbnail (SPEC mục 17, thiết kế `docs/plans/2026-11-01-preview-design.md`) xong, đã test trên VM.
 - 2.3 OCR (SPEC mục 15, thiết kế `docs/plans/2026-11-01-ocr-design.md`) xong, đã test trên VM (epic beads `chup-2fy`).
-  Tiếng Anh = Windows OCR; tiếng Việt = `chup-ocr.exe` (Tesseract link tĩnh, nằm trong installer) + dữ liệu tessdata_fast
+  Tiếng Anh = Windows OCR; tiếng Việt = `chup-ocr.exe` (Tesseract link tĩnh, nằm trong installer và nhúng trong
+  `chup.exe` của CI qua `CHUP_OCR_DIR`, giải nén khi chạy exe rời; chup-7bc) + dữ liệu tessdata_fast
   tải từ GitHub cộng đồng (repo này private, không phát file OCR).
 - Preview chọn chữ trên ảnh kiểu Live Text (SPEC 15.2, 17.2; thiết kế `docs/plans/2026-11-01-live-text-design.md`,
   beads `chup-4fx`) xong, đã test trên VM. Chọn theo ký tự; tự nhận diện khi mở Preview (mặc định bật).

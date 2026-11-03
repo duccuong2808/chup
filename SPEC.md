@@ -541,6 +541,10 @@ pub trait OcrEngine {
   (`tesseract-ocr/tessdata_fast`, ghim commit; repo Chup không phát hành file OCR). `chup.exe` ghi cứng tên, kích thước,
   SHA-256 từng file. Cài vào `%LOCALAPPDATA%\app.chup.desktop\ocr\vi-<N>\` qua thư mục tạm rồi rename; lỗi thì xoá
   phần dở dang. Tải bằng WinHTTP. Logic cài ở `core::ocr::pack` (test được).
+- **Engine nhúng** (chup-7bc, thiết kế `docs/plans/2026-11-03-ocr-embed-design.md`): `chup.exe` của CI nhúng sẵn
+  `chup-ocr.exe` + `NOTICE-ocr.txt`. Không có `chup-ocr.exe` cạnh `chup.exe` (chạy exe rời), hoặc bản cạnh đó khác PROTO
+  (chỉ thay `chup.exe`), thì app giải nén bản nhúng vào `%LOCALAPPDATA%\app.chup.desktop\ocr\helper-<hash>\` (lúc cần,
+  qua thư mục tạm, kiểm SHA-256) rồi chạy nó. Không cần tải exe: repo private nên không có nguồn công khai để tải.
 - **`chup.exe --install-ocr`**: cửa sổ tải (tiến trình, Huỷ), exit code 0 xong / 1 lỗi / 2 huỷ. Bộ cài và app dùng chung.
 - **Lazy-load**: exe phụ chỉ chạy khi cần, giữ sống giữa các lần OCR, **tắt sau 5 phút không dùng** để trả RAM.
   Huỷ job đang chạy = kill process. Crash hoặc quá 15 s = kill, báo lỗi.
@@ -589,7 +593,7 @@ pub trait OcrEngine {
 | Vùng nhỏ (khoảng 5 dòng) | ≤ 500 ms |
 | Vùng 1920×1080 dày chữ | ≤ 2 s |
 | RAM thêm khi model đang load | ≤ 150 MB, về mức Phase 1 sau khi giải phóng |
-| Dung lượng installer | Không tăng so với Phase 1 (chỉ thêm `chup-ocr.exe` ~1,5–2 MB nén; dữ liệu tiếng Việt ~4,4 MB tải riêng) |
+| Dung lượng installer | Không tăng so với Phase 1 (chỉ thêm `chup-ocr.exe` ~1,5–2 MB nén; dữ liệu tiếng Việt ~4,4 MB tải riêng). `chup.exe` nặng thêm ~6,4 MB do nhúng engine |
 
 ### 15.8 Nghiệm thu
 

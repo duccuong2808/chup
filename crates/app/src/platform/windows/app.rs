@@ -897,6 +897,15 @@ impl App {
         self.model.hotkey_errors = h.apply(&self.model.config.hotkeys);
         if let Some(t) = &self.tray {
             t.set_hotkey_errors(self.model.hotkey_errors.len());
+            let hk = &self.model.config.hotkeys;
+            let errs = &self.model.hotkey_errors;
+            let show = |name: &str, key: &str| if errs.contains_key(name) { String::new() } else { key.trim().to_string() };
+            let keys = [
+                show("selectRegion", &hk.select_region),
+                show("capture", &hk.capture),
+                show("freeze", &hk.freeze),
+            ];
+            t.set_shortcuts([&keys[0], &keys[1], &keys[2]]);
         }
         self.refresh_settings();
     }

@@ -61,7 +61,7 @@ Workflow `.github/workflows/build.yml` chạy trên `windows-latest`:
 
 | Thao tác | Cách làm |
 |---|---|
-| Chọn vùng | `Ctrl+Alt+A`, hoặc click trái icon tray |
+| Chọn vùng | `Ctrl+Alt+A`, hoặc click trái icon tray. Menu tray (click phải) hiện phím tắt đang gán cạnh từng mục |
 | Tự động chọn vùng | Trong lúc chọn vùng (cả Freeze), rê chuột là tô sẵn khung cửa sổ / nút / ảnh dưới con trỏ, click để chọn khung đó. Lăn chuột hoặc `↑` `↓` đổi sang khung lớn hơn / nhỏ hơn; giữ `Shift` để tạm tắt; kéo vẫn chọn vùng tự do. Tắt trong Cài đặt |
 | Huỷ chọn vùng | `Esc`, hoặc click phải |
 | Chụp | Nút **Chụp** trên toolbar, hoặc `Ctrl+Alt+S` |

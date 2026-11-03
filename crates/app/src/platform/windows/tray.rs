@@ -9,8 +9,16 @@ use tray_icon::{
 
 use super::{app::Action, win::emit};
 
+/// Mục menu có phím tắt: (mục, tên gốc). Phím tắt hiện ở cột phải của menu.
+struct Shortcut {
+    item: MenuItem,
+    text: &'static str,
+}
+
 pub struct Tray {
     icon: TrayIcon,
+    /// Chọn vùng, Chụp lại vùng cuối, Chụp đóng băng.
+    shortcuts: [Shortcut; 3],
     normal: Option<Icon>,
     waiting: Option<Icon>,
     hotkey_errors: Cell<usize>,
@@ -31,10 +39,12 @@ fn app_icons() -> Option<(Icon, Icon)> {
 impl Tray {
     pub fn create() -> Result<Tray, String> {
         let menu = Menu::new();
+        let shortcuts = [("select", "Chọn vùng"), ("recapture", "Chụp lại vùng cuối"), ("freeze", "Chụp đóng băng")]
+            .map(|(id, text)| Shortcut { item: MenuItem::with_id(id, text, true, None), text });
         let items: [&dyn tray_icon::menu::IsMenuItem; 9] = [
-            &MenuItem::with_id("select", "Chọn vùng", true, None),
-            &MenuItem::with_id("recapture", "Chụp lại vùng cuối", true, None),
-            &MenuItem::with_id("freeze", "Chụp đóng băng", true, None),
+            &shortcuts[0].item,
+            &shortcuts[1].item,
+            &shortcuts[2].item,
             &MenuItem::with_id("freeze_delayed", "Chụp đóng băng sau 3 giây", true, None),
             &MenuItem::with_id("open_folder", "Mở folder ảnh", true, None),
             &PredefinedMenuItem::separator(),
@@ -60,7 +70,17 @@ impl Tray {
             b = b.with_icon(i);
         }
         let icon = b.build().map_err(|e| format!("Không tạo được icon khay: {e}"))?;
-        Ok(Tray { icon, normal, waiting, hotkey_errors: Cell::new(0), waiting_on: Cell::new(false) })
+        Ok(Tray { icon, shortcuts, normal, waiting, hotkey_errors: Cell::new(0), waiting_on: Cell::new(false) })
+    }
+
+    /// Hiện phím tắt cạnh mục menu, theo thứ tự Chọn vùng, Chụp (cũng là "Chụp lại vùng cuối"), Chụp đóng băng.
+    /// Chuỗi rỗng = không hiện (chưa gán, hoặc đăng ký lỗi nên bấm cũng không chạy).
+    pub fn set_shortcuts(&self, keys: [&str; 3]) {
+        for (s, k) in self.shortcuts.iter().zip(keys) {
+            // Windows vẽ phần sau tab ở cột phải của menu, như phím tắt chuẩn.
+            let text = if k.is_empty() { s.text.to_string() } else { format!("{}\t{k}", s.text) };
+            s.item.set_text(text);
+        }
     }
 
     /// Đang đếm ngược "Chụp đóng băng sau 3 giây": đổi icon và tooltip, không hiện gì lên màn hình (SPEC 14.4).

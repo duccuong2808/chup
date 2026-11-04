@@ -2,10 +2,13 @@
 //! ảnh, DIB và bitmap Direct2D chỉ tồn tại khi đang mở.
 //!
 //! Layered window: opacity là `SourceConstantAlpha`. Vẽ 2 lớp:
-//! - `base`: ảnh đã scale + nền + viền, chỉ vẽ lại khi kích thước đổi.
+//! - `base`: bóng đổ + ảnh đã scale + nền + viền, vẽ lại khi kích thước, mức phóng to hoặc chỗ kéo ảnh đổi.
 //! - `out`: chép `base` rồi vẽ vùng chọn chữ, toolbar (khi hover) và nhãn zoom/opacity, đẩy lên cửa sổ.
 //!
 //! Chọn chữ (SPEC 17.2): App gửi các từ OCR nhận diện được (`set_text`), kéo trên chữ để chọn theo ký tự như Live Text.
+//!
+//! Cửa sổ thật rộng hơn `view.rect` một lề `margin` mỗi phía để vẽ bóng đổ. Toạ độ "cục bộ" trong file này là
+//! toạ độ so với góc trên-trái của `view.rect` (toạ độ client trừ `margin`).
 
 use std::{
     cell::{Cell, RefCell},
@@ -35,7 +38,7 @@ use windows::Win32::{
             AppendMenuW, CreatePopupMenu, DestroyMenu, GetMessageTime, GetSystemMetrics, GetWindowRect, KillTimer, LoadCursorW,
             SendMessageW, SetCursor, SetForegroundWindow, SetTimer, SetWindowPos, SetWindowTextW, ShowWindow,
             TrackPopupMenu, HTCAPTION, HWND_NOTOPMOST, HWND_TOPMOST, IDC_HAND, IDC_IBEAM, IDC_SIZENESW, IDC_SIZENS,
-            IDC_SIZENWSE, IDC_SIZEWE, MF_GRAYED, MF_SEPARATOR, MF_STRING, SM_CXDOUBLECLK, SM_CXDRAG, SM_CYDOUBLECLK, SM_CYDRAG, SWP_NOACTIVATE,
+            IDC_SIZEALL, IDC_SIZENWSE, IDC_SIZEWE, MF_GRAYED, MF_SEPARATOR, MF_STRING, SM_CXDOUBLECLK, SM_CXDRAG, SM_CYDOUBLECLK, SM_CYDRAG, SWP_NOACTIVATE,
             SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOW, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_CAPTURECHANGED,
             WM_CLOSE, WM_CONTEXTMENU, WM_DPICHANGED, WM_KEYDOWN, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP,
             WM_MOUSEMOVE, WM_MOUSEWHEEL, WM_NCLBUTTONDOWN, WM_SETCURSOR, WM_TIMER, WS_EX_LAYERED, WS_POPUP,
@@ -63,6 +66,9 @@ const EDGE: f32 = 6.0;
 const TEXT_PAD: f32 = 4.0;
 /// Độ đục của màu tô vùng chọn chữ.
 const SEL_ALPHA: f32 = 0.35;
+/// Bóng đổ quanh khung: độ loang và độ lệch xuống (DIP). Lề cửa sổ = tổng hai số.
+const SHADOW_SPREAD: f32 = 8.0;
+const SHADOW_DY: f32 = 2.0;
 
 // Lệnh của menu chuột phải.
 const CMD_COPY_TEXT: usize = 1;
@@ -71,11 +77,8 @@ const CMD_COPY_IMAGE: usize = 3;
 
 const TIMER_PILL: usize = 1;
 const PILL_MS: u32 = 1200;
-/// Zoom bằng lăn chuột xong một lúc thì mới báo App lưu khung (không ghi file mỗi nấc).
-const TIMER_SAVE: usize = 2;
 /// Đổi DPI: vẽ lại sau, không vẽ ngay trong message Windows gửi giữa lúc đang đẩy ảnh lên cửa sổ.
 const TIMER_DPI: usize = 3;
-const SAVE_MS: u32 = 700;
 const MK_CONTROL: usize = 0x0008;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -112,8 +115,8 @@ struct State {
     img: Option<RgbaImage>,
     /// `None` = đang ẩn.
     view: Option<View>,
-    /// View lúc mở (phím 0 quay về).
-    home_zoom: f64,
+    /// Lề bóng đổ quanh `view.rect` (physical px) của khung đang hiện.
+    margin: i32,
     work: Rect,
     topmost: bool,
     opacity: u8,
@@ -133,8 +136,8 @@ struct State {
     wheel: i32,
     /// Đang kéo mép để đổi cỡ: mép nào, view lúc bắt đầu, điểm bắt đầu (toạ độ màn hình).
     resize: Option<(Grip, View, (i32, i32))>,
-    /// Đã zoom, chưa báo App lưu khung (đợi `TIMER_SAVE`).
-    save_pending: bool,
+    /// Đang kéo ảnh (đã phóng to): view lúc bấm, điểm bấm (toạ độ màn hình).
+    pan: Option<(View, (i32, i32))>,
     /// File đang được OCR (nút [T] vẽ "bận" khi trùng file đang xem).
     ocr_busy: Option<PathBuf>,
     /// Chữ nhận diện được của ảnh đang xem.
@@ -238,10 +241,10 @@ impl Preview {
         {
             let mut st = self.st.borrow_mut();
             st.pending = None;
-            st.home_zoom = view.zoom;
             st.view = Some(view);
             st.work = work;
             st.resize = None;
+            st.pan = None;
             st.path = path;
             st.img = Some(img);
             // Ảnh mới: bitmap cũ không dùng được nữa.
@@ -296,20 +299,9 @@ impl Preview {
 
     /// Ẩn và bỏ ảnh, DIB, bitmap.
     pub fn close(&self) {
-        // Khung đang chờ lưu (vừa zoom xong) thì lưu luôn trước khi đóng.
-        self.sync_pos();
-        let unsaved = {
-            let mut st = self.st.borrow_mut();
-            let pending = std::mem::take(&mut st.save_pending);
-            st.view.filter(|_| pending).map(|v| v.rect)
-        };
-        if let Some(r) = unsaved {
-            emit(Action::PreviewBox(r));
-        }
         let was_open = self.open.replace(false);
         unsafe {
             let _ = KillTimer(Some(self.hwnd), TIMER_PILL);
-            let _ = KillTimer(Some(self.hwnd), TIMER_SAVE);
             let _ = KillTimer(Some(self.hwnd), TIMER_DPI);
             let _ = ShowWindow(self.hwnd, SW_HIDE);
         }
@@ -329,6 +321,7 @@ impl Preview {
             st.tracking = false;
             st.press = None;
             st.resize = None;
+            st.pan = None;
             st.pill = None;
             st.hits.clear();
             st.clear_text();
@@ -361,10 +354,18 @@ impl Preview {
         if unsafe { GetWindowRect(self.hwnd, &mut r) }.is_err() {
             return;
         }
-        if let Some(v) = self.st.borrow_mut().view.as_mut() {
-            v.rect.x = r.left;
-            v.rect.y = r.top;
+        let mut st = self.st.borrow_mut();
+        let m = st.margin;
+        if let Some(v) = st.view.as_mut() {
+            v.rect.x = r.left + m;
+            v.rect.y = r.top + m;
         }
+    }
+
+    /// Toạ độ client của chuột (lParam) -> toạ độ cục bộ.
+    fn local(&self, lp: LPARAM) -> (i32, i32) {
+        let m = self.st.borrow().margin;
+        (loword(lp.0) - m, hiword(lp.0) - m)
     }
 
     /// Vẽ lại `base` theo kích thước của view. `false` = không cấp được bộ nhớ.
@@ -374,7 +375,9 @@ impl Preview {
         let mut st = self.st.borrow_mut();
         let st = &mut *st;
         let (Some(v), Some(img)) = (st.view, st.img.as_ref()) else { return false };
-        let (w, h) = (v.rect.w as i32, v.rect.h as i32);
+        let m = ((SHADOW_SPREAD + SHADOW_DY) * k).ceil() as i32;
+        st.margin = m;
+        let (w, h) = (v.rect.w as i32 + 2 * m, v.rect.h as i32 + 2 * m);
         if st.base.as_ref().map(|s| (s.w, s.h)) != Some((w, h)) {
             st.base = None;
             st.out = None;
@@ -402,19 +405,24 @@ impl Preview {
         }
         let t0 = std::time::Instant::now();
         let rad = RADIUS * k;
-        let full = rectf(0.0, 0.0, w as f32, h as f32);
+        let (mf, vw, vh) = (m as f32, v.rect.w as f32, v.rect.h as f32);
+        let full = rectf(mf, mf, vw, vh);
+        c.begin(Color::rgba(0, 0, 0, 0.0));
+        c.shadow(full, rad, SHADOW_SPREAD * k, SHADOW_DY * k, theme.shadow);
         // Alpha 1/255 thay vì 0: pixel alpha 0 của layered window không nhận chuột, mà góc bo tròn
         // vẫn phải kéo được để đổi cỡ.
-        c.begin(Color::rgba(0, 0, 0, 1.0 / 255.0));
-        let ir = v.image_rect(img.dimensions());
-        let fills = ir.w as i32 == w && ir.h as i32 == h;
+        c.fill_round(full, rad, Color::rgba(0, 0, 0, 1.0 / 255.0));
+        let dims = img.dimensions();
+        let fr = v.frame(dims);
+        let fills = fr.w == v.rect.w && fr.h == v.rect.h;
         if !fills {
             // Ảnh nhỏ hơn cỡ tối thiểu: nằm giữa trên nền tối.
             c.fill_round(full, rad, Color::rgba(24, 24, 27, 1.0));
         }
-        let img_r = rectf(ir.x as f32, ir.y as f32, ir.w as f32, ir.h as f32);
-        c.image_cover(bmp, img_r, if fills { rad } else { 0.0 });
-        c.stroke_round(rectf(0.5, 0.5, w as f32 - 1.0, h as f32 - 1.0), rad, 1.0, theme.line);
+        let img_r = rectf(fr.x as f32 + mf, fr.y as f32 + mf, fr.w as f32, fr.h as f32);
+        let (ox, oy) = v.origin(dims);
+        c.image_at(bmp, img_r, if fills { rad } else { 0.0 }, (ox as f32 + mf, oy as f32 + mf), v.scale() as f32);
+        c.stroke_round(rectf(mf + 0.5, mf + 0.5, vw - 1.0, vh - 1.0), rad, 1.0, theme.line);
         c.end();
         log::debug!("preview: vẽ ảnh {}×{} mất {:?}", w, h, t0.elapsed());
         true
@@ -469,9 +477,12 @@ impl Preview {
             return None;
         };
         let out = &mut owned;
+        // Vẽ theo toạ độ surface = toạ độ cục bộ + lề bóng đổ.
+        let m = st.margin;
+        let mf = m as f32;
 
         // Toolbar góc trên-phải (luôn tính vùng bấm; chỉ vẽ khi hover).
-        let (w, h) = (out.w as f32, out.h as f32);
+        let (w, h) = (v.rect.w as f32, v.rect.h as f32);
         let b = BTN * k;
         let n = BUTTONS.len() as f32;
         let x0 = w - BAR_PAD * k - n * b - (n - 1.0) * BTN_GAP * k;
@@ -486,18 +497,25 @@ impl Preview {
             .collect();
         let draw_bar = st.hovering;
         let draw_pill = st.pill.is_some();
-        // Vùng chọn chữ: rect theo toạ độ ảnh gốc -> toạ độ cửa sổ.
+        // Vùng chọn chữ: rect theo toạ độ ảnh gốc -> toạ độ surface, cắt theo khung ảnh (đang phóng to thì
+        // phần chữ ngoài khung không vẽ).
         let sel_rects: Vec<_> = match (st.text.as_ref(), st.sel, st.img.as_ref()) {
             (Some(t), Some((a, b)), Some(img)) => {
-                let ir = v.image_rect(img.dimensions());
-                let z = v.zoom as f32;
+                let dims = img.dimensions();
+                let fr = v.frame(dims);
+                let (fl, ft) = (fr.x as f32 + mf, fr.y as f32 + mf);
+                let (fr_, fb) = (fl + fr.w as f32, ft + fr.h as f32);
+                let (ox, oy) = v.origin(dims);
+                let (ox, oy, z) = (ox as f32 + mf, oy as f32 + mf, v.scale() as f32);
                 let pad = k;
                 t.highlight(a, b)
                     .iter()
-                    .map(|r| {
-                        let x = ir.x as f32 + r.x as f32 * z - pad;
-                        let y = ir.y as f32 + r.y as f32 * z - pad;
-                        rectf(x, y, r.w as f32 * z + 2.0 * pad, r.h as f32 * z + 2.0 * pad)
+                    .filter_map(|r| {
+                        let l = (ox + r.x as f32 * z - pad).max(fl);
+                        let t = (oy + r.y as f32 * z - pad).max(ft);
+                        let rt = (ox + (r.x + r.w as i32) as f32 * z + pad).min(fr_);
+                        let bt = (oy + (r.y + r.h as i32) as f32 * z + pad).min(fb);
+                        (rt > l && bt > t).then(|| rectf(l, t, rt - l, bt - t))
                     })
                     .collect()
             }
@@ -519,7 +537,7 @@ impl Preview {
             changed.and_then(|d| d.intersect(&full)).unwrap_or_default()
         });
         st.sel_drawn = sel_box;
-        let (pos, alpha) = ((v.rect.x, v.rect.y), preview::alpha(st.opacity));
+        let (pos, alpha) = ((v.rect.x - m, v.rect.y - m), preview::alpha(st.opacity));
         if dirty.is_some_and(|d| d.is_empty()) {
             return Some(Composed { out: owned, pos, alpha, dirty });
         }
@@ -537,7 +555,7 @@ impl Preview {
                 c.fill_round(*r, 2.0 * k, sel_color);
             }
             for (i, (btn, icon)) in BUTTONS.iter().enumerate() {
-                let r = rectf(x0 + i as f32 * (b + BTN_GAP * k), BAR_PAD * k, b, b);
+                let r = rectf(mf + x0 + i as f32 * (b + BTN_GAP * k), mf + BAR_PAD * k, b, b);
                 if !draw_bar {
                     continue;
                 }
@@ -556,7 +574,7 @@ impl Preview {
             if let (Some(text), Some(f)) = (st.pill.as_ref(), Font::new(12.0 * k, false, Align::Center, false)) {
                 let (tw, th) = f.measure(text, 10_000.0);
                 let (pw, ph) = (tw + 20.0 * k, th + 8.0 * k);
-                let r = rectf((w - pw) / 2.0, h - 12.0 * k - ph, pw, ph);
+                let r = rectf(mf + (w - pw) / 2.0, mf + h - 12.0 * k - ph, pw, ph);
                 c.fill_round(r, ph / 2.0, Color::rgba(0, 0, 0, 0.7));
                 c.text(text, &f, r, Color::rgba(255, 255, 255, 1.0));
             }
@@ -571,30 +589,18 @@ impl Preview {
     /// Báo App khung hiện tại (App lưu nếu đang chọn "như lần trước").
     fn save_box(&self) {
         self.sync_pos();
-        let r = {
-            let mut st = self.st.borrow_mut();
-            st.save_pending = false;
-            st.view.map(|v| v.rect)
-        };
-        unsafe {
-            let _ = KillTimer(Some(self.hwnd), TIMER_SAVE);
-        }
+        let r = self.st.borrow().view.map(|v| v.rect);
         if let Some(r) = r {
             emit(Action::PreviewBox(r));
         }
     }
 
-    fn schedule_save(&self) {
-        self.st.borrow_mut().save_pending = true;
-        unsafe { SetTimer(Some(self.hwnd), TIMER_SAVE, SAVE_MS, None) };
-    }
-
-    /// Mép để đổi cỡ dưới điểm (toạ độ cửa sổ). Nút toolbar được ưu tiên.
+    /// Mép để đổi cỡ dưới điểm (toạ độ cục bộ); lề bóng đổ cũng tính là mép. Nút toolbar được ưu tiên.
     fn edge(&self, x: i32, y: i32) -> Option<Grip> {
         let band = (EDGE * self.scale()).round() as i32;
         let st = self.st.borrow();
         let v = st.view?;
-        preview::edge_hit((v.rect.w, v.rect.h), (x, y), band)
+        preview::edge_hit((v.rect.w, v.rect.h), (x, y), band, st.margin)
     }
 
     fn hit(&self, x: i32, y: i32) -> Option<Btn> {
@@ -618,30 +624,51 @@ impl Preview {
         min_size(self.scale() as f64)
     }
 
-    /// Đổi zoom (`steps` nấc, hoặc về `to`) quanh `anchor`.
-    fn zoom(&self, steps: i32, to: Option<f64>, anchor: (i32, i32)) {
-        self.sync_pos();
-        let work = self.current_work();
-        let min = self.min_size();
-        let zoom = {
+    /// Phóng to/thu nhỏ ảnh trong khung `steps` nấc quanh `anchor` (toạ độ cục bộ); `None` = về vừa khung.
+    /// Cửa sổ giữ nguyên cỡ và chỗ.
+    fn magnify(&self, steps: Option<i32>, anchor: (i32, i32)) {
+        let scale = {
             let mut st = self.st.borrow_mut();
             let (Some(v), Some(img)) = (st.view, st.img.as_ref()) else { return };
-            let dims = img.dimensions();
-            let nv = match to {
-                Some(z) => preview::resize_to(v, dims, z, anchor, work, min),
-                None => preview::zoom_at(v, dims, steps, anchor, work, min),
+            let nv = match steps {
+                Some(n) => preview::magnify_at(v, img.dimensions(), n, anchor),
+                None => preview::unmagnify(v),
             };
             st.view = Some(nv);
-            st.work = work;
-            nv.zoom
+            nv.scale()
         };
-        self.show_pill(format!("{}%", (zoom * 100.0).round()));
+        self.show_pill(format!("{}%", (scale * 100.0).round()));
+        self.redraw();
+    }
+
+    /// Đang kéo ảnh: dời phần ảnh đang thấy theo con trỏ.
+    fn pan_move(&self) {
+        {
+            let mut st = self.st.borrow_mut();
+            let (Some((start, from)), Some(img)) = (st.pan, st.img.as_ref()) else { return };
+            let (cx, cy) = cursor_pos();
+            let nv = preview::pan(start, img.dimensions(), cx - from.0, cy - from.1);
+            if Some(nv) == st.view {
+                return;
+            }
+            st.view = Some(nv);
+        }
+        self.redraw();
+    }
+
+    /// Vẽ lại ảnh (cùng cỡ cửa sổ) sau khi phóng to hoặc kéo ảnh. Đọc lại vị trí thật trước (như `repaint`).
+    fn redraw(&self) {
+        self.sync_pos();
         if !self.rescale() {
             self.close();
             return;
         }
         self.paint();
-        self.schedule_save();
+    }
+
+    /// Cỡ khung cục bộ (để lấy tâm khi zoom bằng phím).
+    fn local_center(&self) -> (i32, i32) {
+        self.st.borrow().view.map(|v| (v.rect.w as i32 / 2, v.rect.h as i32 / 2)).unwrap_or_default()
     }
 
     /// Đang kéo mép: tính cỡ mới theo con trỏ.
@@ -671,11 +698,6 @@ impl Preview {
         }
         self.save_box();
         true
-    }
-
-    fn center(&self) -> (i32, i32) {
-        self.sync_pos();
-        self.st.borrow().view.map(|v| v.rect.center()).unwrap_or_default()
     }
 
     fn change_opacity(&self, steps: i32) {
@@ -728,7 +750,7 @@ impl Preview {
         }
     }
 
-    /// Điểm (toạ độ cửa sổ) -> toạ độ ảnh gốc, cùng chữ của ảnh và độ nới (px ảnh) cho `hit`.
+    /// Điểm (toạ độ cục bộ) -> toạ độ ảnh gốc, cùng chữ của ảnh và độ nới (px ảnh) cho `hit`.
     fn to_image(&self, x: i32, y: i32) -> Option<(Arc<TextLayout>, (i32, i32), i32)> {
         let k = self.scale();
         let st = self.st.borrow();
@@ -736,20 +758,25 @@ impl Preview {
         if t.is_empty() {
             return None;
         }
-        let ir = v.image_rect(img.dimensions());
-        let z = v.zoom.max(1e-6);
-        let p = (((x - ir.x) as f64 / z).floor() as i32, ((y - ir.y) as f64 / z).floor() as i32);
-        let pad = (TEXT_PAD as f64 * k as f64 / z).ceil() as i32;
+        let (ix, iy) = v.to_image(img.dimensions(), (x as f64, y as f64));
+        let p = (ix.floor() as i32, iy.floor() as i32);
+        let pad = (TEXT_PAD as f64 * k as f64 / v.scale().max(1e-6)).ceil() as i32;
         Some((t.clone(), p, pad))
     }
 
-    /// Vị trí chữ dưới con trỏ (toạ độ cửa sổ). Giữ `Alt` thì không tính là chữ (kéo để di chuyển).
+    /// Vị trí chữ dưới con trỏ (toạ độ cục bộ). Giữ `Alt` thì không tính là chữ (kéo để di chuyển).
     fn text_at(&self, x: i32, y: i32) -> Option<Pos> {
         if alt_down() {
             return None;
         }
         let (t, p, pad) = self.to_image(x, y)?;
         t.hit(p, pad)
+    }
+
+    /// Kéo (ngoài nút, mép, chữ) sẽ kéo ảnh: đang phóng to và không giữ `Alt`.
+    fn can_pan(&self) -> bool {
+        let st = self.st.borrow();
+        st.pan.is_some() || (st.view.is_some_and(|v| v.magnified()) && !alt_down())
     }
 
     /// Đang kéo chọn: đổi vị trí cuối của vùng chọn theo con trỏ.
@@ -894,15 +921,20 @@ impl Handler for Preview {
         }
         match msg {
             WM_MOUSEMOVE => {
+                let (x, y) = self.local(lp);
                 if self.st.borrow().resize.is_some() {
                     self.resize_move();
                     return Some(LRESULT(0));
                 }
-                if self.st.borrow().text_press.is_some() {
-                    self.drag_select(loword(lp.0), hiword(lp.0));
+                if self.st.borrow().pan.is_some() {
+                    self.pan_move();
                     return Some(LRESULT(0));
                 }
-                let h = self.hit(loword(lp.0), hiword(lp.0));
+                if self.st.borrow().text_press.is_some() {
+                    self.drag_select(x, y);
+                    return Some(LRESULT(0));
+                }
+                let h = self.hit(x, y);
                 let (changed, start_track) = {
                     let mut st = self.st.borrow_mut();
                     let entered = !std::mem::replace(&mut st.hovering, true);
@@ -939,7 +971,8 @@ impl Handler for Preview {
                 let mut r = RECT::default();
                 let _ = unsafe { GetWindowRect(hwnd, &mut r) };
                 let (cx, cy) = cursor_pos();
-                let (x, y) = (cx - r.left, cy - r.top);
+                let m = self.st.borrow().margin;
+                let (x, y) = (cx - r.left - m, cy - r.top - m);
                 let resizing = self.st.borrow().resize.map(|(g, _, _)| g);
                 let cursor = if let Some(g) = resizing.or_else(|| self.hit(x, y).is_none().then(|| self.edge(x, y)).flatten())
                 {
@@ -953,6 +986,8 @@ impl Handler for Preview {
                     IDC_HAND
                 } else if self.st.borrow().text_press.is_some() || self.text_at(x, y).is_some() {
                     IDC_IBEAM
+                } else if self.can_pan() {
+                    IDC_SIZEALL
                 } else {
                     return None;
                 };
@@ -962,7 +997,7 @@ impl Handler for Preview {
                 Some(LRESULT(1))
             }
             WM_LBUTTONDOWN => {
-                let (x, y) = (loword(lp.0), hiword(lp.0));
+                let (x, y) = self.local(lp);
                 if let Some(b) = self.hit(x, y) {
                     self.st.borrow_mut().press = Some(b);
                     unsafe { SetCapture(hwnd) };
@@ -979,6 +1014,17 @@ impl Handler for Preview {
                 } else if let Some(p) = self.text_at(x, y) {
                     // Bấm trên chữ: kéo để chọn (vùng chọn cũ giữ tới khi kéo hoặc thả).
                     self.text_down(p, x, y);
+                } else if self.can_pan() {
+                    // Đang phóng to: kéo để kéo ảnh (Alt + kéo vẫn di chuyển cửa sổ).
+                    self.set_sel(None);
+                    let start = {
+                        let mut st = self.st.borrow_mut();
+                        st.pan = st.view.map(|v| (v, cursor_pos()));
+                        st.pan.is_some()
+                    };
+                    if start {
+                        unsafe { SetCapture(hwnd) };
+                    }
                 } else {
                     self.set_sel(None);
                     // Kéo ở bất kỳ đâu ngoài nút và chữ: để Windows di chuyển cửa sổ.
@@ -996,7 +1042,7 @@ impl Handler for Preview {
             WM_LBUTTONDBLCLK => {
                 // Bấm đúp trên chữ: chọn từ đó. Trên nút: bỏ qua (không thành 2 lần bấm, vd. [T] bấm rồi huỷ).
                 // Chỗ khác: như bấm đơn (class có CS_DBLCLKS).
-                let (x, y) = (loword(lp.0), hiword(lp.0));
+                let (x, y) = self.local(lp);
                 if self.hit(x, y).is_some() {
                     return Some(LRESULT(0));
                 }
@@ -1036,13 +1082,14 @@ impl Handler for Preview {
                     }
                     return Some(LRESULT(0));
                 }
-                if self.resize_end() {
+                if self.resize_end() || self.st.borrow_mut().pan.take().is_some() {
                     unsafe {
                         let _ = ReleaseCapture();
                     }
                     return Some(LRESULT(0));
                 }
-                let up = self.hit(loword(lp.0), hiword(lp.0));
+                let (x, y) = self.local(lp);
+                let up = self.hit(x, y);
                 let press = self.st.borrow_mut().press.take();
                 unsafe {
                     let _ = ReleaseCapture();
@@ -1056,6 +1103,7 @@ impl Handler for Preview {
                 {
                     let mut st = self.st.borrow_mut();
                     st.press = None;
+                    st.pan = None;
                     st.text_press = None;
                     st.selecting = false;
                 }
@@ -1075,8 +1123,15 @@ impl Handler for Preview {
                     if wp.0 & MK_CONTROL != 0 {
                         self.change_opacity(steps);
                     } else {
-                        // lParam của WM_MOUSEWHEEL là toạ độ màn hình.
-                        self.zoom(steps, None, (loword(lp.0), hiword(lp.0)));
+                        // lParam của WM_MOUSEWHEEL là toạ độ màn hình. Đang kéo ảnh thì thôi (view lúc bấm đã cũ).
+                        self.sync_pos();
+                        let (r, panning) = {
+                            let st = self.st.borrow();
+                            (st.view.map(|v| v.rect).unwrap_or_default(), st.pan.is_some())
+                        };
+                        if !panning {
+                            self.magnify(Some(steps), (loword(lp.0) - r.x, hiword(lp.0) - r.y));
+                        }
                     }
                 }
                 Some(LRESULT(0))
@@ -1106,12 +1161,9 @@ impl Handler for Preview {
                     }
                     0x43 if ctrl => self.copy(),
                     0x41 if ctrl => self.select_all(),
-                    v if v == VK_OEM_PLUS.0 || v == VK_ADD.0 => self.zoom(1, None, self.center()),
-                    v if v == VK_OEM_MINUS.0 || v == VK_SUBTRACT.0 => self.zoom(-1, None, self.center()),
-                    v if v == 0x30 || v == VK_NUMPAD0.0 => {
-                        let z = self.st.borrow().home_zoom;
-                        self.zoom(0, Some(z), self.center());
-                    }
+                    v if v == VK_OEM_PLUS.0 || v == VK_ADD.0 => self.magnify(Some(1), self.local_center()),
+                    v if v == VK_OEM_MINUS.0 || v == VK_SUBTRACT.0 => self.magnify(Some(-1), self.local_center()),
+                    v if v == 0x30 || v == VK_NUMPAD0.0 => self.magnify(None, self.local_center()),
                     _ => return None,
                 }
                 Some(LRESULT(0))
@@ -1122,10 +1174,6 @@ impl Handler for Preview {
                 }
                 self.st.borrow_mut().pill = None;
                 self.repaint();
-                Some(LRESULT(0))
-            }
-            WM_TIMER if wp.0 == TIMER_SAVE => {
-                self.save_box();
                 Some(LRESULT(0))
             }
             WM_DPICHANGED => {

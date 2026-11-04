@@ -633,6 +633,15 @@ impl Canvas {
             let k = (dw / bw).max(dh / bh);
             let tx = r.left + (dw - bw * k) / 2.0;
             let ty = r.top + (dh - bh * k) / 2.0;
+            self.image_at(bmp, r, radius, (tx, ty), k);
+        }
+    }
+
+    /// Tô `r` (bo góc `radius`) bằng ảnh đặt góc trên-trái tại `origin`, phóng `scale` lần
+    /// (ảnh ngoài `r` bị cắt: dùng cho Preview phóng to trong khung).
+    pub fn image_at(&self, bmp: &ID2D1Bitmap, r: D2D_RECT_F, radius: f32, origin: (f32, f32), scale: f32) {
+        let (tx, ty, k) = (origin.0, origin.1, scale);
+        unsafe {
             let props = D2D1_BITMAP_BRUSH_PROPERTIES {
                 extendModeX: D2D1_EXTEND_MODE_CLAMP,
                 extendModeY: D2D1_EXTEND_MODE_CLAMP,

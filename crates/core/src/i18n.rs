@@ -332,12 +332,14 @@ strings! {
     st_pv_pos_stack: "Cạnh stack", "Next to the stack";
     st_pv_pos_center: "Giữa màn hình", "Center of the screen";
     st_pv_size: "Cỡ khi mở", "Size when opened";
-    st_pv_size_hint: "Kéo mép hoặc lăn chuột để đổi.", "Drag the edges or scroll to resize.";
+    st_pv_size_hint: "Kéo mép để đổi cỡ; lăn chuột phóng to ảnh trong khung.",
+        "Drag the edges to resize; scroll to zoom the image inside the frame.";
     st_pv_size_max: "Tối đa {}% màn hình", "Up to {}% of the screen";
     st_about_desc: "Chụp màn hình theo vùng cho Windows: stack ảnh kéo thả, chụp đóng băng, Preview, copy chữ từ ảnh.",
         "Region screenshots for Windows: a drag-and-drop stack, freeze capture, Preview, copy text from images.";
     st_about_version: "Phiên bản {}", "Version {}";
     st_about_local_build: "bản build tay", "local build";
+    st_about_built: "build lúc {} UTC", "built {} UTC";
     st_about_web: "Trang dự án", "Project page";
     st_about_log: "Mở thư mục log", "Open log folder";
     st_about_sec_ocr: "OCR tiếng Việt", "Vietnamese OCR";

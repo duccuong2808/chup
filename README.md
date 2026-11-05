@@ -29,7 +29,7 @@ Chup chạy nền ở khay hệ thống, không mở cửa sổ nào khi khởi 
 | Chỉnh vùng | Kéo phần lề quanh viền để di chuyển, kéo 8 ô vuông để đổi cỡ |
 | Chụp đóng băng | `F1`, hoặc menu tray (có hẹn giờ 3 giây). Lưu: `Enter`, double-click hoặc nút **Lưu**; nút **Copy** chỉ vào clipboard. Cần F1 cho app khác thì tắt trong Cài đặt > Phím tắt |
 | Dùng ảnh trong stack | Kéo thumbnail thả vào app khác; click để mở Preview; hover để copy / mở folder / bỏ khỏi stack. Nút `›` thu gọn stack |
-| Preview | Kéo để di chuyển, kéo mép để đổi cỡ, lăn chuột zoom, `Ctrl` + lăn chuột đổi opacity, nút ghim để luôn nằm trên. `Esc` đóng |
+| Preview | Kéo để di chuyển, kéo mép để đổi cỡ, lăn chuột phóng to ảnh trong khung (kéo để xem chỗ khác, `Alt` + kéo di chuyển cửa sổ), `Ctrl` + lăn chuột đổi opacity, nút ghim để luôn nằm trên. `Esc` đóng |
 | Copy chữ trong ảnh (OCR) | Nút **[T]** trên Preview / toolbar, nút **Chữ** khi Freeze, hoặc hotkey "Chụp text" (gán trong Cài đặt) |
 | Chọn chữ trên ảnh | Trong Preview kéo trên chữ để bôi đen, bấm đúp chọn từ, 3 lần chọn dòng, `Ctrl+C` hoặc chuột phải để copy. `Alt`+kéo luôn di chuyển cửa sổ |
 

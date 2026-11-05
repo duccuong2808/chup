@@ -382,15 +382,19 @@ fn current_mods() -> Mods {
     }
 }
 
-/// "Phiên bản 0.2.0 · commit 2f451f1" (commit chỉ có ở bản CI build).
+/// "Phiên bản 0.2.0 · commit 2f451f1 · build 2026-11-04 08:15 UTC"; build tay thêm "(bản build tay)",
+/// không có git thì không có commit.
 fn version_text() -> String {
-    let (t, commit) = (t(), env!("CHUP_COMMIT"));
-    let v = fill(t.st_about_version, &[&env!("CARGO_PKG_VERSION")]);
-    if commit.is_empty() {
-        format!("{v} ({})", t.st_about_local_build)
-    } else {
-        format!("{v} · commit {commit}")
+    let t = t();
+    let mut s = fill(t.st_about_version, &[&env!("CARGO_PKG_VERSION")]);
+    let commit = env!("CHUP_COMMIT");
+    if !commit.is_empty() {
+        s += &format!(" · commit {commit}");
     }
+    if !env!("CHUP_LOCAL_BUILD").is_empty() {
+        s += &format!(" ({})", t.st_about_local_build);
+    }
+    s + " · " + &fill(t.st_about_built, &[&env!("CHUP_BUILD_TIME")])
 }
 
 /// File giấy phép đi cùng engine đang dùng, nếu có.

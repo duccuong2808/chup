@@ -161,7 +161,7 @@ thẻ nền trắng trên nền xám. Cửa sổ cỡ cố định theo trang ca
 | Chụp ảnh | Tự động chọn vùng (SPEC 16); sau khi chụp (copy clipboard, giữ/đóng vùng chọn); ẩn toolbar/stack lúc chụp |
 | Copy chữ (OCR) | Ngôn ngữ, trạng thái + nút tải/xoá gói tiếng Việt, tự nhận diện khi mở Preview |
 | Stack và Preview | Cạnh và màn hình của stack; các mục Preview (SPEC 17.4) |
-| Giới thiệu | Tên, phiên bản (+ commit nếu CI build), mô tả; nút Trang dự án, Mở thư mục log; nguồn engine/dữ liệu OCR tiếng Việt, nút Giấy phép (`NOTICE-ocr.txt`) |
+| Giới thiệu | Tên, phiên bản, commit (7 ký tự đầu; build tay lấy từ git, đánh dấu "bản build tay"), thời điểm build (UTC), mô tả; nút Trang dự án, Mở thư mục log; nguồn engine/dữ liệu OCR tiếng Việt, nút Giấy phép (`NOTICE-ocr.txt`) |
 
 Các mục:
 - **Folder lưu ảnh**: nút chọn folder (dialog), kèm đường dẫn hiện tại.
@@ -739,7 +739,7 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-preview-design.md`.
 
 - **Một cửa sổ Preview**: bấm thumbnail khác thì thay ảnh.
 - **Chỗ và cỡ mở** (Cài đặt "Chỗ mở"):
-  - **Chỗ và cỡ lần trước** (mặc định): người dùng kéo, đổi cỡ, zoom là Chup nhớ khung. Lần sau ảnh vừa
+  - **Chỗ và cỡ lần trước** (mặc định): người dùng kéo, đổi cỡ là Chup nhớ khung. Lần sau ảnh vừa
     khung đó (tối đa 1:1) và bám cạnh khung gần cạnh màn hình hơn (khung ở góc dưới-phải thì ảnh mới cũng
     nằm sát góc đó). Chưa có khung, hoặc màn hình chứa khung đã bị rút: mở như "Cạnh stack".
   - **Cạnh stack**: sát mép trong của stack, căn đáy work area, cách 12 DIP.
@@ -749,23 +749,28 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-preview-design.md`.
   - Mở trên màn hình đang có stack.
 - **Chỉnh trực tiếp**:
   - Kéo bất kỳ đâu (ngoài nút) để di chuyển.
-  - Kéo mép hoặc góc (dải 6 DIP, góc 12 DIP) để đổi cỡ, luôn giữ tỉ lệ ảnh, mép đối diện đứng yên.
-  - Lăn chuột: zoom quanh con trỏ (×1,25 mỗi nấc), từ 5% tới vừa khít work area (tối đa 800%).
-  - `+`/`-` zoom, `0` về cỡ lúc mở.
-  - Cửa sổ luôn nằm trong work area khi zoom và đổi cỡ.
+  - Kéo mép hoặc góc (dải 6 DIP trong khung, cộng cả lề bóng đổ ngoài khung; góc 12 DIP) để đổi cỡ, luôn giữ
+    tỉ lệ ảnh, mép đối diện đứng yên. Đổi cỡ khi đang phóng to thì vẫn thấy đúng phần ảnh đó.
+  - Lăn chuột: phóng to/thu nhỏ ảnh **trong khung** quanh con trỏ (×1,25 mỗi nấc), cửa sổ giữ nguyên cỡ và chỗ.
+    Nhỏ nhất là vừa khung (thấy cả ảnh), lớn nhất 800% ảnh gốc.
+  - Đang phóng to: kéo (ngoài nút, mép, chữ) để kéo ảnh, con trỏ hình mũi tên 4 chiều; ảnh không kéo ra ngoài khung.
+    `Alt` + kéo vẫn di chuyển cửa sổ.
+  - `+`/`-` phóng to/thu nhỏ quanh tâm khung, `0` về vừa khung.
+  - Cửa sổ luôn nằm trong work area khi đổi cỡ.
+  - Bóng đổ nhẹ quanh khung (màu bóng của theme, loang 8 DIP, lệch xuống 2 DIP).
 - **Opacity**: mặc định theo Cài đặt (100%, chọn 100–20%). `Ctrl` + lăn chuột chỉnh ±10% cho cửa sổ đang mở
   (không lưu). Không thấp hơn 20%.
 - **Luôn nằm trên** cửa sổ khác: Cài đặt (mặc định bật). Nút ghim trên toolbar bật/tắt cho cửa sổ đang mở.
 - **Toolbar** góc trên-phải, chỉ hiện khi hover: [T] [Ghim] [Copy] [Folder] [✕] ([T] = OCR, mục 15.2).
 - **Chọn chữ** (khi đã nhận diện, mục 15.2):
   - Con trỏ I-beam trên chữ. Kéo bắt đầu trên chữ là chọn theo từng ký tự (qua nhiều dòng được); kéo bắt đầu ở
-    chỗ khác là di chuyển cửa sổ. `Alt` + kéo luôn di chuyển. Bấm đúp chọn một từ, bấm 3 lần chọn cả dòng.
+    chỗ khác là di chuyển cửa sổ (đang phóng to thì kéo ảnh). `Alt` + kéo luôn di chuyển cửa sổ. Bấm đúp chọn một từ, bấm 3 lần chọn cả dòng.
     `Shift` + bấm nới vùng chọn. Bấm (không kéo) bỏ vùng chọn.
   - Vùng chọn tô màu nhấn trong suốt, theo đúng zoom và cỡ cửa sổ.
   - `Ctrl+A` chọn tất cả chữ. `Ctrl+C` copy chữ đã chọn (chưa chọn thì copy ảnh). Toast như [T].
   - Chuột phải: menu "Copy chữ", "Chọn tất cả chữ", "Copy ảnh".
   - `Esc` bỏ vùng chọn trước, lần sau mới đóng.
-- Đổi zoom hoặc opacity: nhãn "75%" / "Opacity 60%" ở đáy trong 1,2 giây.
+- Đổi zoom hoặc opacity: nhãn "75%" (tỉ lệ so với ảnh gốc) / "Opacity 60%" ở đáy trong 1,2 giây.
 - `Esc` hoặc ✕: đóng. `Ctrl+C`: copy ảnh (khi chưa chọn chữ).
 - Preview lấy focus khi mở; có trên taskbar và Alt+Tab (tiêu đề là tên file).
 - Preview **không** bị loại khỏi ảnh chụp (khác stack, toolbar): người dùng có thể muốn chụp lại hoặc
@@ -798,7 +803,9 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-preview-design.md`.
 ### 17.6 Nghiệm thu
 
 - [ ] Click thumbnail: Preview mở sát stack, ảnh nét (1:1 khi vừa), lấy focus.
-- [ ] Kéo di chuyển, kéo 4 mép và 4 góc đổi cỡ giữ tỉ lệ, lăn chuột zoom quanh con trỏ.
+- [ ] Kéo di chuyển, kéo 4 mép và 4 góc đổi cỡ giữ tỉ lệ.
+- [ ] Lăn chuột phóng to quanh con trỏ, cửa sổ không đổi cỡ; đang phóng to thì kéo ảnh được, `Alt` + kéo di chuyển
+      cửa sổ; `0` về vừa khung. Chọn chữ vẫn đúng chỗ khi phóng to.
 - [ ] Đóng rồi mở ảnh khác: nằm đúng chỗ và vừa khung lần trước. Đổi "Chỗ mở" sang Cạnh stack / Giữa màn hình: đúng chỗ.
 - [ ] Ctrl + lăn chuột đổi opacity; Cài đặt đổi opacity và "luôn nằm trên" thì áp ngay cho Preview đang mở.
 - [ ] Ghim: tắt thì click app khác che được Preview; bật thì luôn nằm trên.

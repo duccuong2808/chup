@@ -146,6 +146,20 @@ impl Surface {
     }
 }
 
+/// Ảnh RGBA thẳng của cả surface (bỏ premultiply).
+pub fn to_rgba_image(s: &Surface) -> Option<RgbaImage> {
+    let mut out = Vec::with_capacity(s.buf.len() * 4);
+    for &p in &s.buf {
+        let a = p >> 24;
+        let ch = |shift: u32| {
+            let c = (p >> shift) & 0xFF;
+            if a == 0 { 0 } else { ((c * 255 + a / 2) / a).min(255) as u8 }
+        };
+        out.extend_from_slice(&[ch(16), ch(8), ch(0), a as u8]);
+    }
+    RgbaImage::from_raw(s.w as u32, s.h as u32, out)
+}
+
 // ---------- Font ----------
 
 pub struct Font {

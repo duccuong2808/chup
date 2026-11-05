@@ -163,6 +163,24 @@ pub fn run() -> i32 {
         eprintln!("Chup phải chạy trên main thread");
         return 1;
     };
+    // Lệnh dev: OCR một file ảnh bằng Vision rồi in kết quả.
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() == 3 && args[1] == "--ocr-file" {
+        let img = match image::open(&args[2]) {
+            Ok(i) => i.to_rgba8(),
+            Err(e) => {
+                eprintln!("{e}");
+                return 1;
+            }
+        };
+        eprintln!("ocr {}×{}...", img.width(), img.height());
+        let t0 = std::time::Instant::now();
+        match vision::recognize(&img, chup_core::config::OcrLanguage::Vi) {
+            Ok(lines) => println!("{} ({:?})", chup_core::ocr::TextLayout::build(lines, 1.0).all_text(), t0.elapsed()),
+            Err(e) => eprintln!("lỗi: {e}"),
+        }
+        return 0;
+    }
     let dirs = util::dirs();
     let Some(_lock) = single_instance(&dirs.cache_dir) else {
         let dist = NSDistributedNotificationCenter::defaultCenter();

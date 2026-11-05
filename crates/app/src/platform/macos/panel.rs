@@ -79,6 +79,7 @@ pub mod key {
     pub const DOWN: u16 = 0x7D;
     pub const A: u16 = 0x00;
     pub const C: u16 = 0x08;
+    pub const W: u16 = 0x0D;
     pub const EQUAL: u16 = 0x18;
     pub const MINUS: u16 = 0x1B;
     pub const ZERO: u16 = 0x1D;

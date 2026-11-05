@@ -850,6 +850,14 @@ impl App {
         self.toolbar.clone()
     }
 
+    pub(super) fn preview_ref(&self) -> Rc<Preview> {
+        self.preview.clone()
+    }
+
+    pub(super) fn open_preview_for_test(&mut self, path: std::path::PathBuf) {
+        self.open_preview(path);
+    }
+
     pub(super) fn settings_ref(&self) -> Option<Rc<Settings>> {
         self.settings.clone()
     }

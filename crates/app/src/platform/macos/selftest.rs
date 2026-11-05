@@ -152,7 +152,34 @@ impl App {
                     s.snapshot_tabs(&dir);
                     s.close();
                 }
-                next(9, 500);
+                ocr_test(&dir);
+                next(9, 3000);
+            }
+            9 => {
+                self.open_preview_for_test(dir.join("12-ocr-input.png"));
+                next(10, 1500);
+            }
+            10 => {
+                let p = self.preview_ref();
+                save(&dir, "13-preview.png", p.snapshot());
+                p.inject(Ev::Enter);
+                p.inject(Ev::Move { p: (40, 40) });
+                save(&dir, "14-preview-hover.png", p.snapshot());
+                // OCR nền khi mở Preview (SPEC 17.2).
+                next(11, 2500);
+            }
+            11 => {
+                let p = self.preview_ref();
+                // Bấm đúp lên từ thứ hai ("màn").
+                p.inject(Ev::Down { p: (190, 80), clicks: 2, mods: Mods::default() });
+                p.inject(Ev::Up { p: (190, 80) });
+                save(&dir, "15-preview-select-word.png", p.snapshot());
+                p.inject(Ev::Scroll { p: (300, 80), dy: 3.0, lines: true, mods: Mods::default() });
+                save(&dir, "16-preview-zoom.png", p.snapshot());
+                p.inject(Ev::Key { code: key::ESCAPE, mods: Mods::default() });
+                p.inject(Ev::Key { code: key::ESCAPE, mods: Mods::default() });
+                log::info!("selftest: Preview đóng: {}", !p.is_visible());
+                next(12, 500);
             }
             _ => {
                 log::info!("selftest: xong");
@@ -160,4 +187,30 @@ impl App {
             }
         }
     }
+}
+
+/// Câu tiếng Việt vẽ bằng CoreText -> Vision, so với câu gốc.
+fn ocr_test(dir: &Path) {
+    use chup_ui::Canvas as _;
+    const TEXT: &str = "Chụp màn hình tiếng Việt: ảnh, chữ, dấu hỏi ngã nặng";
+    let (w, h) = (1400, 120);
+    let Some(s) = super::gfx::Surface::new(w, h) else { return };
+    let Some(c) = super::gfx::Canvas::new(&s) else { return };
+    let Some(f) = super::gfx::Font::new(40.0, false, chup_ui::Align::Leading, false) else { return };
+    c.begin(chup_ui::Color::WHITE);
+    c.text(TEXT, &f, chup_ui::rectf(20.0, 0.0, w as f32 - 40.0, h as f32), chup_ui::Color::hex(0x111111));
+    c.end();
+    drop(c);
+    let Some(img) = super::gfx::to_rgba_image(&s) else { return };
+    let _ = img.save(dir.join("12-ocr-input.png"));
+    std::thread::spawn(move || {
+        let r = objc2::rc::autoreleasepool(|_| super::vision::recognize(&img, chup_core::config::OcrLanguage::Vi));
+        match r {
+            Ok(lines) => {
+                let got = chup_core::ocr::TextLayout::build(lines, 1.0).all_text();
+                log::info!("selftest: OCR {:?} (khớp: {})", got, got.trim() == TEXT);
+            }
+            Err(e) => log::error!("selftest: OCR lỗi: {e}"),
+        }
+    });
 }

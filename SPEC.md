@@ -40,8 +40,9 @@
 | OS Phase 1 | Windows 10 (64-bit) và Windows 11 |
 | Ngôn ngữ | Rust stable, **không WebView, không framework UI** |
 | Giao diện Windows | Win32 qua crate `windows`: layered window tự vẽ (overlay, frame, toolbar, stack) bằng thao tác pixel + Direct2D **software** + DirectWrite; Cài đặt dùng control gốc (Common Controls v6) |
-| Giao diện macOS, Linux (Phase 3) | AppKit (`objc2`), X11 (`x11rb`); dùng chung crate lõi |
-| Chụp màn hình | `xcap` |
+| Giao diện macOS, Linux (Phase 3) | AppKit (`objc2`), X11 (`x11rb`); dùng chung crate lõi và crate vẽ `ui` (trait `Canvas`: Direct2D / CoreGraphics + CoreText / Cairo) |
+| OS Phase 3.1 | macOS 26 Tahoe trở lên (chi tiết mục 11) |
+| Chụp màn hình | `xcap` (Windows, Linux); ScreenCaptureKit (macOS) |
 | Kéo file ra app khác | `drag` (CrabNebula) |
 | Phím tắt toàn cục | `global-hotkey` |
 | Tray | `tray-icon` (menu bằng `muda`) |
@@ -214,7 +215,7 @@ Toolbar hoặc stack có thể nằm đè lên region (ví dụ region sát cạ
   - Yêu cầu Windows 10 bản 2004 trở lên.
   - **Phải verify** cách này có tác dụng với cách `xcap` chụp trên Windows.
 - **Fallback** (OS cũ, hoặc verify thất bại): ẩn các cửa sổ đó, chờ 1 frame (~50ms), chụp, rồi hiện lại.
-- **macOS** (Phase 3): thử `NSWindow.sharingType = .none`. **Chưa chắc** cách này còn hiệu lực với API chụp mới; cần kiểm chứng, không được thì dùng fallback.
+- **macOS** (Phase 3): chụp bằng ScreenCaptureKit với `SCContentFilter(excludingApplications:)` loại mọi cửa sổ của Chup. Không dùng `sharingType = .none` (không còn tác dụng với API chụp mới). Spike phải kiểm chứng; không được thì dùng fallback.
 
 ### 6.5 Cấu trúc thư mục
 
@@ -360,11 +361,17 @@ Mục tiêu; đo thực tế ở bước 1.4 rồi chỉnh lại.
 
 ## 11. Mở rộng sang các OS khác (Phase 3)
 
-- **macOS**:
-  - Cần xin quyền Screen Recording: kiểm tra trước khi chụp, hướng dẫn mở System Settings nếu chưa có quyền.
-  - Tray thành icon trên menu bar. Hotkey mặc định dùng `Cmd` thay cho `Ctrl+Alt`.
-  - Màn hình Retina có scale 2.
-  - Kiểm chứng lại cách loại cửa sổ khỏi ảnh chụp (mục 6.4).
+- **macOS** (thiết kế chi tiết: `docs/plans/2026-11-05-macos-design.md`):
+  - Hỗ trợ **macOS 26 Tahoe trở lên**. Bản đầu ký bằng chứng chỉ tự tạo (dùng cá nhân, chưa notarize); đổi sang Developer ID sau.
+  - Cần xin quyền Screen Recording: kiểm tra trước khi mở overlay, chưa có quyền thì không mở overlay và hướng dẫn mở System Settings.
+  - Chụp bằng ScreenCaptureKit (`SCScreenshotManager`), loại cửa sổ của Chup khỏi ảnh (mục 6.4).
+  - Tray thành icon trên menu bar (icon template). App không có icon ở Dock (`LSUIElement`).
+  - Hotkey mặc định dùng `Ctrl+Cmd`: `Ctrl+Cmd+A` (chọn vùng), `Ctrl+Cmd+X` (chụp), `Ctrl+Cmd+Z` (Freeze). Tránh `Cmd+Shift+3/4/5` của hệ thống; không dùng F1 (phím độ sáng).
+  - Màn hình Retina có scale 2. `Rect` vẫn là physical px toàn desktop: gốc mỗi màn hình = gốc (point) × scale lớn nhất, kích thước = point × scale của chính màn hình đó (không bao giờ chồng nhau).
+  - Overlay, frame, toolbar, stack là `NSPanel` không lấy focus (overlay thành key window để nhận Esc mà không activate app), hiện trên mọi Space và trên app toàn màn hình.
+  - OCR dùng Apple Vision cho cả tiếng Việt và tiếng Anh: không có gói tải thêm, không có `chup-ocr.exe`.
+  - Tự chọn vùng: `CGWindowListCopyWindowInfo` cho cửa sổ, `AXUIElement` cho phần tử (cần quyền Accessibility; chưa có thì chỉ khung cửa sổ và khung từ ảnh).
+  - Mở cùng hệ thống bằng `SMAppService`. Phát hành `.app` trong `.dmg`.
 - **Giao diện native riêng từng OS** trên cùng crate lõi: macOS dùng AppKit (`NSPanel` không lấy focus, `ignoresMouseEvents` cho Faded), Linux X11 dùng `x11rb` (override-redirect window, ARGB visual), Cài đặt dùng control gốc (AppKit / GTK).
 - **Linux X11**: cài thêm dependency hệ thống theo README của `xcap`.
 - **Linux Wayland: không hỗ trợ.** Lý do:
@@ -391,7 +398,11 @@ Mục tiêu; đo thực tế ở bước 1.4 rồi chỉnh lại.
 | 2.5 | Spike tự động chọn vùng (mục 16.6) | Chốt có làm khung từ ảnh hay không |
 | 2.6 | Tự động chọn vùng (mục 16) | Pass mục 16.7 |
 | **Phase 3 — đa nền tảng** | | |
-| 3.1 | macOS | Pass mục 10 và 14.7 trên macOS |
+| 3.1.0 | Tách crate `ui` (trait `Canvas`), refactor vỏ Windows, không đổi hành vi | CI xanh, test hồi quy trên VM pass |
+| 3.1.1 | macOS MVP: spike, menu bar, hotkey, quyền, overlay, chụp, stack, frame/toolbar, Cài đặt, Freeze, `.app` tự ký | Pass mục 10 và 14.7 trên macOS |
+| 3.1.2 | macOS: Preview, OCR (Vision), Live Text | Pass mục 17.6 và 15.8 trên macOS |
+| 3.1.3 | macOS: tự động chọn vùng | Pass mục 16.7 trên macOS |
+| 3.1.4 | macOS: `.dmg`, CI macOS | Cài từ `.dmg` chạy được trên tài khoản macOS mới |
 | 3.2 | Linux X11 | Pass mục 10 trên X11 |
 
 ## 13. Quyết định đã chốt
@@ -411,6 +422,10 @@ Mục tiêu; đo thực tế ở bước 1.4 rồi chỉnh lại.
 | Q-OCR2 | Hotkey "Chụp text" mặc định chưa gán | Tránh xung đột, người dùng tự gán trong settings |
 | Q-OCR3 | "Chụp text" không lưu ảnh, không thêm vào stack | Mục đích là lấy chữ, không làm rác folder |
 | Q-OCR4 | Giữ xuống dòng như trong ảnh | Dễ đoán. Gộp đoạn sai còn khó sửa hơn |
+| Q-MAC1 | macOS: chia mốc, MVP (Phase 1 + Freeze) trước | Người dùng chốt (2026-11-05). Có bản dùng sớm, kiểm chứng kiến trúc trước khi port phần nặng |
+| Q-MAC2 | macOS 26 trở lên | Người dùng chốt. ScreenCaptureKit + Vision có tiếng Việt: bỏ được Tesseract trên Mac |
+| Q-MAC3 | Ký bằng chứng chỉ tự tạo, chưa notarize | Người dùng chốt. Miễn phí; chữ ký ổn định nên không mất quyền Screen Recording mỗi lần build |
+| Q-MAC4 | Code vẽ dùng chung qua trait `Canvas`, mỗi OS cài bằng API vẽ native; refactor Windows trước (3.1.0) | Người dùng chốt. Vẽ một lần cho mọi OS, Linux sau chỉ cần thêm một bản cài trait |
 
 ---
 

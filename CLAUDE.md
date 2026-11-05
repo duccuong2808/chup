@@ -17,6 +17,8 @@ Rust thuần, **không WebView**: giao diện Win32 + Direct2D/DirectWrite. Lõi
   Công cụ spike ở `tools/` (ngoài workspace).
 - Cài đặt chia trang kiểu Windows 11 (SPEC 5.6, `chup-ck1`), trang Giới thiệu, đa ngôn ngữ vi/en (`chup-81y`), bộ cài
   Full/Lite (`chup-0oa`): đã vào main, thử trên Windows 11 x64 thật.
+- Phase 3.1 macOS (SPEC 11, 12; thiết kế `docs/plans/2026-11-05-macos-design.md`, epic beads `chup-mac`): đã lên kế
+  hoạch, chưa code. Việc đầu tiên: Mốc 0 tách crate `ui` (trait `Canvas`) và refactor vỏ Windows (`chup-mac.1`).
 
 ## Lệnh
 

@@ -370,7 +370,7 @@ Mục tiêu; đo thực tế ở bước 1.4 rồi chỉnh lại.
   - Màn hình Retina có scale 2. `Rect` vẫn là physical px toàn desktop: gốc mỗi màn hình = gốc (point) × scale lớn nhất, kích thước = point × scale của chính màn hình đó (không bao giờ chồng nhau).
   - Overlay, frame, toolbar, stack là `NSPanel` không lấy focus (overlay thành key window để nhận Esc mà không activate app), hiện trên mọi Space và trên app toàn màn hình.
   - OCR dùng Apple Vision cho cả tiếng Việt và tiếng Anh: không có gói tải thêm, không có `chup-ocr.exe`.
-  - Tự chọn vùng: `CGWindowListCopyWindowInfo` cho cửa sổ, `AXUIElement` cho phần tử (cần quyền Accessibility; chưa có thì chỉ khung cửa sổ và khung từ ảnh).
+  - Tự chọn vùng: `CGWindowListCopyWindowInfo` cho cửa sổ, `AXUIElement` cho phần tử (cần quyền Accessibility; chưa có thì chỉ khung cửa sổ). Khung từ ảnh chỉ ở Freeze (Live chưa chụp ngầm màn hình).
   - Mở cùng hệ thống bằng `SMAppService`. Phát hành `.app` trong `.dmg`.
 - **Giao diện native riêng từng OS** trên cùng crate lõi: macOS dùng AppKit (`NSPanel` không lấy focus, `ignoresMouseEvents` cho Faded), Linux X11 dùng `x11rb` (override-redirect window, ARGB visual), Cài đặt dùng control gốc (AppKit / GTK).
 - **Linux X11**: cài thêm dependency hệ thống theo README của `xcap`.

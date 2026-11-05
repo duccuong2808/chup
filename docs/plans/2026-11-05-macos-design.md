@@ -273,3 +273,21 @@ Như SPEC 10, đổi các chỗ riêng Windows:
 - Mục 11: viết lại theo tài liệu này (cửa sổ, toạ độ, quyền, hotkey mặc định, đóng gói).
 - Mục 12: thay bước 3.1 bằng các mốc 3.1.0 – 3.1.4.
 - Mục 13: thêm các quyết định ngày 2026-11-05.
+
+## 10. Kết quả thực hiện (2026-11-05)
+
+Code của cả 5 mốc đã xong trên các nhánh `macos-ui-crate` (Mốc 0, PR #16) và `macos-mvp` (Mốc 1–4). Khác với kế hoạch:
+
+- **Không có spike riêng** (`tools/mac-spike/`): các câu hỏi ở mục 2.1 được trả lời ngay trong vỏ thật, kiểm bằng chế độ
+  tự kiểm tra `CHUP_SELFTEST` (bơm sự kiện vào handler của cửa sổ, xuất ảnh từng cửa sổ ra PNG). Câu hỏi cần quyền Ghi
+  màn hình / phím tắt thật / kéo thả thật vẫn mở (máy dev chạy từ terminal không có quyền Ghi màn hình).
+- **Toạ độ:** thêm `MacLayout::cg_to_px` / `px_to_cg` cho toạ độ CoreGraphics (gốc trên-trái, `kCGWindowBounds`,
+  Accessibility).
+- **Vẽ:** mỗi lần cập nhật cửa sổ chép cả surface thành `CGImage` rồi gán `layer.contents` (không theo vùng bẩn).
+  Overlay 3600×2338: hiện 76 ms, kéo chọn vẫn mượt trên M-series; chưa cần chia tile.
+- **Pixel trong suốt nhận chuột:** giữ mẹo alpha 1/255 như Windows cho lề frame; overlay luôn nhận chuột.
+- **Tự chọn vùng Live chưa có khung từ ảnh** (cần chụp ngầm từ worker; Freeze có).
+- **`logger`, `hotkeys`, `tray`** chuyển sang `platform/common/` dùng chung hai vỏ.
+- **Đo:** RAM rảnh ~70 MB, overlay mở ~235 MB (surface + ảnh của layer), Freeze 48 ms từ phím tắt tới lúc ảnh hiện,
+  OCR Vision ~0,2 s cho ảnh 1400×120 (lần đầu tiếng Việt ~50 s để macOS chuẩn bị model).
+

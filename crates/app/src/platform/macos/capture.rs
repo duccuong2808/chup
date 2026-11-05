@@ -67,9 +67,9 @@ pub fn to_rgba(img: &CGImage) -> Option<RgbaImage> {
     // Ảnh màn hình đục hoàn toàn; phòng trường hợp có alpha thì bỏ premultiply.
     for p in buf.chunks_exact_mut(4) {
         let a = p[3] as u32;
-        if a != 0 && a != 255 {
+        if a != 255 {
             for c in &mut p[..3] {
-                *c = ((*c as u32 * 255 + a / 2) / a).min(255) as u8;
+                *c = (*c as u32 * 255 + a / 2).checked_div(a).map_or(0, |v| v.min(255) as u8);
             }
         }
     }

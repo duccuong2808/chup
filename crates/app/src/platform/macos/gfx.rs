@@ -145,7 +145,7 @@ pub fn to_rgba_image(s: &Surface) -> Option<RgbaImage> {
         let a = p >> 24;
         let ch = |shift: u32| {
             let c = (p >> shift) & 0xFF;
-            if a == 0 { 0 } else { ((c * 255 + a / 2) / a).min(255) as u8 }
+            (c * 255 + a / 2).checked_div(a).map_or(0, |v| v.min(255) as u8)
         };
         out.extend_from_slice(&[ch(16), ch(8), ch(0), a as u8]);
     }

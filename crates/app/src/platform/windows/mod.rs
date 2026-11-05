@@ -4,7 +4,9 @@ mod app;
 mod autoselect;
 mod frame;
 mod gfx;
+#[path = "../common/hotkeys.rs"]
 mod hotkeys;
+#[path = "../common/logger.rs"]
 mod logger;
 mod ocr;
 mod ocr_download;
@@ -13,6 +15,7 @@ mod preview;
 mod settings;
 mod stack;
 mod toolbar;
+#[path = "../common/tray.rs"]
 mod tray;
 mod util;
 mod win;

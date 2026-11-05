@@ -20,11 +20,29 @@ chrono = "0.4"
 serde_json = "1"
 image = { version = "=0.25.10", default-features = false, features = ["png"] }
 
-[target.'cfg(windows)'.dependencies]
+# Dùng chung cho Windows và macOS.
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
 global-hotkey = "=0.8.0"
 tray-icon = { version = "=0.25.1", default-features = false }
 drag = "=2.1.1"
 raw-window-handle = "0.6"
+
+# macOS (SPEC 11, thiết kế docs/plans/2026-11-05-macos-design.md): AppKit + CoreGraphics/CoreText + ScreenCaptureKit.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "=0.6.5"
+objc2-foundation = "=0.3.2"
+objc2-app-kit = "=0.3.2"
+objc2-core-foundation = "=0.3.2"
+objc2-core-graphics = "=0.3.2"
+objc2-core-text = "=0.3.2"
+objc2-quartz-core = "=0.3.2"
+objc2-screen-capture-kit = "=0.3.2"
+objc2-service-management = "=0.3.2"
+block2 = "=0.6.2"
+dispatch2 = "=0.3.1"
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
 windows-numerics = "=0.3.1"
 windows = { version = "=0.62.2", features = [
   "Globalization",

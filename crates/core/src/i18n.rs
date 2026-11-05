@@ -215,6 +215,17 @@ strings! {
     err_open_explorer: "Không mở được Explorer: {}", "Couldn't open Explorer: {}";
     err_run_key: "Không mở được khoá Run: {}", "Couldn't open the Run registry key: {}";
     err_autostart: "Không đổi được chế độ khởi động cùng Windows: {}", "Couldn't change start with Windows: {}";
+
+    // ---- macOS (SPEC 11) ----
+    mac_err_autostart: "Không đổi được chế độ mở cùng macOS: {}", "Couldn't change open at login: {}";
+    mac_err_autostart_bundle: "Chỉ bật được khi chạy Chup.app (bản đóng gói)",
+        "Only available when running Chup.app (the packaged app)";
+    mac_perm_title: "Chup cần quyền ghi màn hình", "Chup needs Screen Recording permission";
+    mac_perm_body: "Mở Cài đặt hệ thống > Quyền riêng tư & Bảo mật > Ghi màn hình & âm thanh hệ thống, bật Chup. Nếu macOS yêu cầu thì thoát và mở lại Chup.",
+        "Open System Settings > Privacy & Security > Screen & System Audio Recording and turn on Chup. Quit and reopen Chup if macOS asks you to.";
+    mac_perm_open: "Mở Cài đặt hệ thống", "Open System Settings";
+    mac_perm_later: "Để sau", "Later";
+    mac_err_capture: "Không chụp được màn hình: {}", "Couldn't capture the screen: {}";
     err_hotkey_init: "Không khởi tạo được phím tắt: {}", "Couldn't set up shortcuts: {}";
     err_tray: "Không tạo được icon khay: {}", "Couldn't create the tray icon: {}";
     hotkey_taken: "Không dùng được {} vì app khác (hoặc Windows) đang dùng tổ hợp này. Hãy chọn tổ hợp khác.",

@@ -1,4 +1,5 @@
 //! Phím tắt toàn cục (SPEC 5.1, 7). Báo lỗi bằng câu tiếng Việt khi tổ hợp đã có chủ.
+//! Dùng chung cho Windows và macOS (`#[path]`): cần `super::app::Action` và `super::win::emit` của vỏ OS.
 
 use chup_core::i18n::{fill, t};
 use std::{collections::BTreeMap, str::FromStr};

@@ -133,6 +133,136 @@ pub fn monitor_at(mons: &[MonitorInfo], px: i32, py: i32) -> Option<&MonitorInfo
     mons.iter().find(|m| m.rect.contains_point(px, py))
 }
 
+// ---------- macOS: point <-> physical px toàn desktop (SPEC 11, thiết kế macOS mục 2.4) ----------
+
+/// Hình chữ nhật theo point của macOS: gốc ở góc dưới-trái màn hình chính, trục y hướng lên.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RectPt {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
+impl RectPt {
+    pub const fn new(x: f64, y: f64, w: f64, h: f64) -> Self {
+        Self { x, y, w, h }
+    }
+}
+
+/// Một `NSScreen`: `frame`, `visibleFrame` (trừ menu bar và Dock), `backingScaleFactor`.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScreenPt {
+    pub key: String,
+    pub frame: RectPt,
+    pub visible: RectPt,
+    pub scale: f64,
+}
+
+/// Bố cục desktop của macOS quy về physical px như Windows.
+///
+/// - Lật trục: `top = cao(màn hình chính) - (y + h)`.
+/// - `s` = scale lớn nhất. Gốc màn hình (px) = gốc (point, đã lật) × `s`; cỡ (px) = cỡ (point) × scale của chính nó.
+///   Hai màn hình không bao giờ chồng nhau trong toạ độ px; màn scale nhỏ hơn `s` để lại khoảng trống không có pixel
+///   (vô hại: vùng chọn luôn nằm trong một màn hình, SPEC 2).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MacLayout {
+    pub s: f64,
+    primary_h: f64,
+    screens: Vec<(ScreenPt, MonitorInfo)>,
+}
+
+impl MacLayout {
+    /// `screens[0]` là màn hình chính (thứ tự của `NSScreen.screens`).
+    pub fn new(screens: &[ScreenPt]) -> Self {
+        let s = screens.iter().map(|x| x.scale).fold(1.0, f64::max);
+        let primary_h = screens.first().map_or(0.0, |x| x.frame.h);
+        let mut out = MacLayout { s, primary_h, screens: vec![] };
+        for (i, sc) in screens.iter().enumerate() {
+            let rect = out.screen_px(&sc.frame, sc);
+            let work = out.rect_in_screen(&sc.visible, sc, rect);
+            let key = format!("{}@{},{}", sc.key, rect.x, rect.y);
+            let mon = MonitorInfo { key, rect, work, scale: sc.scale, primary: i == 0 };
+            out.screens.push((sc.clone(), mon));
+        }
+        out
+    }
+
+    pub fn monitors(&self) -> Vec<MonitorInfo> {
+        self.screens.iter().map(|(_, m)| m.clone()).collect()
+    }
+
+    fn top(&self, r: &RectPt) -> f64 {
+        self.primary_h - (r.y + r.h)
+    }
+
+    fn screen_px(&self, f: &RectPt, sc: &ScreenPt) -> Rect {
+        let (x, y) = ((f.x * self.s).round() as i32, (self.top(f) * self.s).round() as i32);
+        Rect::new(x, y, (f.w * sc.scale).round() as u32, (f.h * sc.scale).round() as u32)
+    }
+
+    /// Rect point `r` nằm trong màn hình `sc` (có rect px `mon`) -> px.
+    fn rect_in_screen(&self, r: &RectPt, sc: &ScreenPt, mon: Rect) -> Rect {
+        let k = sc.scale;
+        let x = mon.x + ((r.x - sc.frame.x) * k).round() as i32;
+        let y = mon.y + ((self.top(r) - self.top(&sc.frame)) * k).round() as i32;
+        Rect::new(x, y, (r.w * k).round().max(0.0) as u32, (r.h * k).round().max(0.0) as u32)
+    }
+
+    /// Màn hình chứa điểm point (x, y) (trục y lên), hoặc gần nhất.
+    fn screen_at_pt(&self, x: f64, y: f64) -> Option<&(ScreenPt, MonitorInfo)> {
+        let inside = |f: &RectPt| x >= f.x && x < f.x + f.w && y >= f.y && y < f.y + f.h;
+        let dist = |f: &RectPt| {
+            let dx = (f.x - x).max(0.0).max(x - (f.x + f.w));
+            let dy = (f.y - y).max(0.0).max(y - (f.y + f.h));
+            dx * dx + dy * dy
+        };
+        self.screens.iter().find(|(sc, _)| inside(&sc.frame)).or_else(|| {
+            self.screens.iter().min_by(|a, b| dist(&a.0.frame).total_cmp(&dist(&b.0.frame)))
+        })
+    }
+
+    /// Màn hình chứa điểm px, hoặc gần nhất.
+    fn screen_at_px(&self, x: i32, y: i32) -> Option<&(ScreenPt, MonitorInfo)> {
+        let dist = |r: &Rect| {
+            let dx = (r.x - x).max(0).max(x - r.right()) as i64;
+            let dy = (r.y - y).max(0).max(y - r.bottom()) as i64;
+            dx * dx + dy * dy
+        };
+        self.screens
+            .iter()
+            .find(|(_, m)| m.rect.contains_point(x, y))
+            .or_else(|| self.screens.iter().min_by_key(|(_, m)| dist(&m.rect)))
+    }
+
+    /// Điểm point toàn cục (`NSEvent.mouseLocation`) -> px toàn desktop.
+    pub fn pt_to_px(&self, x: f64, y: f64) -> (i32, i32) {
+        let Some((sc, m)) = self.screen_at_pt(x, y) else { return (x.round() as i32, y.round() as i32) };
+        let k = sc.scale;
+        let px = m.rect.x + ((x - sc.frame.x) * k).floor() as i32;
+        let py = m.rect.y + (((self.primary_h - y) - self.top(&sc.frame)) * k).floor() as i32;
+        (px, py)
+    }
+
+    /// Rect px -> rect point (frame của `NSWindow`), theo màn hình chứa tâm của nó. Trả về cả scale của màn hình đó.
+    pub fn px_to_pt(&self, r: Rect) -> (RectPt, f64) {
+        let (cx, cy) = r.center();
+        let Some((sc, m)) = self.screen_at_px(cx, cy) else {
+            return (RectPt::new(r.x as f64, r.y as f64, r.w as f64, r.h as f64), 1.0);
+        };
+        let k = sc.scale;
+        let (w, h) = (r.w as f64 / k, r.h as f64 / k);
+        let x = sc.frame.x + (r.x - m.rect.x) as f64 / k;
+        let top = self.top(&sc.frame) + (r.y - m.rect.y) as f64 / k;
+        (RectPt::new(x, self.primary_h - top - h, w, h), k)
+    }
+
+    /// Scale của màn hình chứa điểm px.
+    pub fn scale_at_px(&self, x: i32, y: i32) -> f64 {
+        self.screen_at_px(x, y).map_or(1.0, |(sc, _)| sc.scale)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -179,5 +309,66 @@ mod tests {
         assert_eq!(frame_margin(1.0), 12);
         assert_eq!(frame_margin(1.5), 18);
         assert_eq!(frame_margin(1.25), 15);
+    }
+
+    fn screen(key: &str, frame: RectPt, menu: f64, scale: f64) -> ScreenPt {
+        let visible = RectPt::new(frame.x, frame.y, frame.w, frame.h - menu);
+        ScreenPt { key: key.into(), frame, visible, scale }
+    }
+
+    #[test]
+    fn mac_single_retina() {
+        let l = MacLayout::new(&[screen("built-in", RectPt::new(0.0, 0.0, 1512.0, 982.0), 33.0, 2.0)]);
+        let m = &l.monitors()[0];
+        assert_eq!(m.rect, Rect::new(0, 0, 3024, 1964));
+        // Menu bar 33 pt ở trên: work area bắt đầu ở y = 66 px.
+        assert_eq!(m.work, Rect::new(0, 66, 3024, 1898));
+        assert!(m.primary);
+        // Góc trên-trái của màn hình (point: y = 982) -> (0, 0); góc dưới-phải -> cuối màn hình.
+        assert_eq!(l.pt_to_px(0.0, 981.75), (0, 0));
+        assert_eq!(l.pt_to_px(1511.5, 0.25), (3023, 1963));
+        // Rect px -> frame NSWindow: trục y lật lại.
+        let (r, k) = l.px_to_pt(Rect::new(200, 100, 400, 300));
+        assert_eq!((r, k), (RectPt::new(100.0, 982.0 - 50.0 - 150.0, 200.0, 150.0), 2.0));
+    }
+
+    #[test]
+    fn mac_retina_with_external_1x_on_right_and_above() {
+        let screens = [
+            screen("built-in", RectPt::new(0.0, 0.0, 1512.0, 982.0), 33.0, 2.0),
+            screen("dell", RectPt::new(1512.0, 0.0, 1920.0, 1080.0), 25.0, 1.0),
+            screen("top", RectPt::new(0.0, 982.0, 1920.0, 1080.0), 25.0, 1.0),
+        ];
+        let l = MacLayout::new(&screens);
+        assert_eq!(l.s, 2.0);
+        let mons = l.monitors();
+        // Màn phải: gốc = (1512, 982 - 1080) × 2 = (3024, -196); cỡ theo scale 1.
+        assert_eq!(mons[1].rect, Rect::new(3024, -196, 1920, 1080));
+        // Màn trên: gốc y = (982 - 2062) × 2.
+        assert_eq!(mons[2].rect, Rect::new(0, -2160, 1920, 1080));
+        // Không màn nào chồng lên màn khác.
+        for (i, a) in mons.iter().enumerate() {
+            for b in &mons[i + 1..] {
+                assert_eq!(a.rect.intersect(&b.rect), None, "{} chồng {}", a.key, b.key);
+            }
+        }
+        // Chuột trên màn phải, cách góc trên-trái (10, 20) pt -> (10, 20) px của màn đó.
+        assert_eq!(l.pt_to_px(1522.0, 1060.0), (3034, -176));
+        // Ngược lại: cửa sổ trên màn phải.
+        let (r, k) = l.px_to_pt(Rect::new(3034, -176, 100, 50));
+        assert_eq!((r, k), (RectPt::new(1522.0, 1010.0, 100.0, 50.0), 1.0));
+    }
+
+    #[test]
+    fn mac_primary_external_at_left_of_retina() {
+        // Màn chính 1x, Retina nằm bên trái (gốc âm).
+        let screens = [
+            screen("dell", RectPt::new(0.0, 0.0, 1920.0, 1080.0), 25.0, 1.0),
+            screen("built-in", RectPt::new(-1512.0, 0.0, 1512.0, 982.0), 33.0, 2.0),
+        ];
+        let mons = MacLayout::new(&screens).monitors();
+        assert_eq!(mons[0].rect, Rect::new(0, 0, 1920, 1080));
+        assert_eq!(mons[1].rect, Rect::new(-3024, 196, 3024, 1964));
+        assert_eq!(mons[0].rect.intersect(&mons[1].rect), None);
     }
 }

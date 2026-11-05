@@ -89,7 +89,8 @@ fn arm_trim() {
     TRIM.with(|c| *c.borrow_mut() = Some(t));
 }
 
-/// Hỏi quyền Screen Recording (chạy ngoài lúc App bận: hộp thoại modal có vòng lặp riêng).
+/// Hỏi quyền Screen Recording khi người dùng chụp mà chưa có quyền (chạy ngoài lúc App bận: hộp thoại modal có vòng
+/// lặp riêng). Lần đầu macOS cũng tự hiện hộp thoại của nó; hộp thoại này dẫn thẳng tới Cài đặt hệ thống.
 pub(crate) fn ask_permission() {
     if capture::request_permission() {
         return;
@@ -153,9 +154,11 @@ fn init(mtm: MainThreadMarker) {
     log::info!("sẵn sàng");
     util::log_memory("khởi động xong");
     selftest::start();
-    // Lần đầu chạy: hỏi quyền ngay để Chup có mặt trong danh sách của Cài đặt hệ thống.
+    // Lần đầu chạy: để macOS thêm Chup vào danh sách Ghi màn hình (hộp thoại của hệ thống, chỉ lần đầu). Hộp thoại
+    // hướng dẫn của Chup chỉ hiện khi người dùng chụp mà vẫn chưa có quyền.
     if !capture::has_permission() && selftest::dir().is_none() {
-        emit(Action::AskPermission);
+        let granted = capture::request_permission();
+        log::info!("quyền Ghi màn hình: {granted}");
     }
 }
 

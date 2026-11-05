@@ -97,9 +97,12 @@ impl Tray {
         menu.append_items(&items).map_err(|e| e.to_string())?;
 
         MenuEvent::set_event_handler(Some(|e: MenuEvent| emit(Action::Menu(e.id.0.clone()))));
+        // Windows: click trái icon tray = chọn vùng. macOS: click là mở menu (không chọn vùng cùng lúc).
         TrayIconEvent::set_event_handler(Some(|e: TrayIconEvent| {
             if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = e {
-                emit(Action::StartSelection);
+                if cfg!(windows) {
+                    emit(Action::StartSelection);
+                }
             }
         }));
 

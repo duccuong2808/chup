@@ -238,7 +238,13 @@ strings! {
         "Click a box and press the keys (needs ⌃, ⌥ or ⌘; F1–F20 work alone). Delete turns it off, Esc cancels.";
     mac_st_clear: "Xoá", "Clear";
     mac_st_ui_language_system: "Theo macOS", "Same as macOS";
-    mac_st_auto_later: "Tự động chọn vùng trên macOS sẽ có ở bản sau.", "Automatic region detection on macOS is coming in a later version.";
+    mac_st_auto_img_note: "Trên macOS, khung từ hình ảnh chỉ dùng khi chụp đóng băng.",
+        "On macOS, frames from the image are only used in freeze capture.";
+    mac_st_ax_ok: "Quyền Trợ năng: đã có (nhận được nút, ô nhập, đoạn chữ trong cửa sổ).",
+        "Accessibility permission: granted (buttons, fields and text inside windows are detected).";
+    mac_st_ax_missing: "Quyền Trợ năng: chưa có. Chỉ nhận được khung cửa sổ.",
+        "Accessibility permission: not granted. Only whole windows are detected.";
+    mac_st_ax_grant: "Cấp quyền Trợ năng…", "Grant Accessibility…";
     err_hotkey_init: "Không khởi tạo được phím tắt: {}", "Couldn't set up shortcuts: {}";
     err_tray: "Không tạo được icon khay: {}", "Couldn't create the tray icon: {}";
     hotkey_taken: "Không dùng được {} vì app khác (hoặc hệ thống) đang dùng tổ hợp này. Hãy chọn tổ hợp khác.",

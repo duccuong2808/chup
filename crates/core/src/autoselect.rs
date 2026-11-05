@@ -56,6 +56,32 @@ impl FrameKind {
         }
     }
 
+    /// Từ role của Accessibility macOS (`AXButton`, `AXTextField`...).
+    pub fn from_ax(role: &str) -> Self {
+        use FrameKind::*;
+        match role {
+            "AXButton" | "AXPopUpButton" | "AXMenuButton" | "AXCheckBox" | "AXRadioButton" | "AXDisclosureTriangle" => {
+                Button
+            }
+            "AXTextField" | "AXTextArea" | "AXComboBox" | "AXSearchField" => Edit,
+            "AXStaticText" | "AXHeading" => Text,
+            "AXImage" => Image,
+            "AXLink" => Link,
+            "AXList" | "AXOutline" | "AXBrowser" => List,
+            "AXRow" | "AXCell" | "AXListItem" => ListItem,
+            "AXMenu" | "AXMenuBar" => Menu,
+            "AXMenuItem" | "AXMenuBarItem" => MenuItem,
+            "AXTabGroup" | "AXTab" => Tab,
+            "AXToolbar" => ToolBar,
+            "AXWebArea" => Document,
+            "AXTable" | "AXGrid" => Table,
+            "AXGroup" | "AXRadioGroup" | "AXSplitGroup" => Group,
+            "AXScrollArea" | "AXSplitter" | "AXLayoutArea" => Pane,
+            "AXWindow" | "AXSheet" | "AXDrawer" => Window,
+            _ => Other,
+        }
+    }
+
     pub fn label(self) -> &'static str {
         use FrameKind::*;
         let t = crate::i18n::t();
@@ -102,7 +128,7 @@ impl Frame {
 /// Cửa sổ top-level chụp lúc mở overlay. Danh sách theo z-order: trên cùng trước.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WinFrame {
-    /// HWND (Windows).
+    /// HWND (Windows), số cửa sổ `kCGWindowNumber` (macOS).
     pub id: isize,
     /// Khung DWM, không gồm viền resize vô hình.
     pub rect: Rect,
@@ -199,6 +225,15 @@ pub fn is_click(down: (i32, i32), up: (i32, i32)) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ax_roles_map_to_kinds() {
+        assert_eq!(FrameKind::from_ax("AXButton"), FrameKind::Button);
+        assert_eq!(FrameKind::from_ax("AXTextField"), FrameKind::Edit);
+        assert_eq!(FrameKind::from_ax("AXWebArea"), FrameKind::Document);
+        assert_eq!(FrameKind::from_ax("AXMenuItem"), FrameKind::MenuItem);
+        assert_eq!(FrameKind::from_ax("AXUnknownThing"), FrameKind::Other);
+    }
+
     use super::*;
 
     fn f(x: i32, y: i32, w: u32, h: u32, kind: FrameKind) -> Frame {

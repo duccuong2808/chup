@@ -57,6 +57,9 @@ const ID_FREEZE_ON: isize = 30;
 const ID_COPY: isize = 40;
 const ID_AFTER: isize = 41;
 const ID_HIDEUI: isize = 42;
+const ID_AUTO_ON: isize = 43;
+const ID_AUTO_IMG: isize = 44;
+const ID_AX: isize = 45;
 const ID_OCR_LANG: isize = 50;
 const ID_OCR_AUTO: isize = 51;
 const ID_EDGE: isize = 60;
@@ -68,8 +71,11 @@ const ID_PV_SIZE: isize = 65;
 const ID_WEB: isize = 70;
 const ID_LOG: isize = 71;
 
+/// Chữ lấy theo ngôn ngữ giao diện hiện hành.
+type Text = fn(&Strings) -> &'static str;
+
 /// Tên phím tắt trong config và chữ của nó.
-const HOTKEYS: [(&str, fn(&Strings) -> &'static str); 4] = [
+const HOTKEYS: [(&str, Text); 4] = [
     ("selectRegion", |t| t.st_hk_select),
     ("capture", |t| t.st_hk_capture),
     ("freeze", |t| t.st_hk_freeze),
@@ -126,6 +132,9 @@ struct Controls {
     copy: Option<Retained<NSButton>>,
     after: Option<Retained<NSPopUpButton>>,
     hideui: Option<Retained<NSButton>>,
+    auto_on: Option<Retained<NSButton>>,
+    auto_img: Option<Retained<NSButton>>,
+    ax_status: Option<Retained<NSTextField>>,
     ocr_lang: Option<Retained<NSPopUpButton>>,
     ocr_auto: Option<Retained<NSButton>>,
     edge: Option<Retained<NSPopUpButton>>,
@@ -328,13 +337,11 @@ impl Settings {
         let holder = NSView::new(self.mtm);
         holder.addSubview(&content);
         content.setTranslatesAutoresizingMaskIntoConstraints(false);
-        unsafe {
-            let top = content.topAnchor().constraintEqualToAnchor(&holder.topAnchor());
-            let left = content.leadingAnchor().constraintEqualToAnchor(&holder.leadingAnchor());
-            let right = content.trailingAnchor().constraintLessThanOrEqualToAnchor(&holder.trailingAnchor());
-            for c in [top, left, right] {
-                c.setActive(true);
-            }
+        let top = content.topAnchor().constraintEqualToAnchor(&holder.topAnchor());
+        let left = content.leadingAnchor().constraintEqualToAnchor(&holder.leadingAnchor());
+        let right = content.trailingAnchor().constraintLessThanOrEqualToAnchor(&holder.trailingAnchor());
+        for c in [top, left, right] {
+            c.setActive(true);
         }
         item.setView(Some(&holder));
         tabs.addTabViewItem(&item);
@@ -413,12 +420,24 @@ impl Settings {
         let hideui = self.check(t.st_hide_ui, ID_HIDEUI);
         let hide_note = self.hint(t.mac_st_hide_ui_note);
         let sec_auto = self.section(t.st_sec_auto);
-        let auto_note = self.hint(t.mac_st_auto_later);
+        let auto_on = self.check(t.st_auto_on, ID_AUTO_ON);
+        let auto_img = self.check(t.st_auto_img, ID_AUTO_IMG);
+        let img_note = self.hint(t.mac_st_auto_img_note);
+        let auto_hint = self.hint(t.st_auto_hint);
+        let ax_status = self.hint("");
+        let ax_btn = self.button(t.mac_st_ax_grant, ID_AX);
+        let ax_row = self.stack(&[&ax_status, &ax_btn], false);
         self.page(
             &tabs,
             t.page_capture,
-            &[&sec_after, &copy, &row_after, &after_hint, &sec_during, &hideui, &hide_note, &sec_auto, &auto_note],
+            &[
+                &sec_auto, &auto_on, &auto_img, &img_note, &auto_hint, &ax_row, &sec_after, &copy, &row_after,
+                &after_hint, &sec_during, &hideui, &hide_note,
+            ],
         );
+        c.auto_on = Some(auto_on);
+        c.auto_img = Some(auto_img);
+        c.ax_status = Some(ax_status);
         c.copy = Some(copy);
         c.after = Some(after);
         c.hideui = Some(hideui);
@@ -484,10 +503,8 @@ impl Settings {
         let root = self.stack(&[&tabs, &status], true);
         root.setEdgeInsets(NSEdgeInsets { top: 12.0, left: 12.0, bottom: 12.0, right: 12.0 });
         tabs.setTranslatesAutoresizingMaskIntoConstraints(false);
-        unsafe {
-            tabs.widthAnchor().constraintEqualToConstant(596.0).setActive(true);
-            tabs.heightAnchor().constraintEqualToConstant(460.0).setActive(true);
-        }
+        tabs.widthAnchor().constraintEqualToConstant(596.0).setActive(true);
+        tabs.heightAnchor().constraintEqualToConstant(460.0).setActive(true);
         self.window.setContentView(Some(&root));
         *self.c.borrow_mut() = c;
         *self.tabs.borrow_mut() = Some(tabs);
@@ -529,6 +546,12 @@ impl Settings {
             set_on(&c.copy, cfg.copy_to_clipboard);
             select(&c.after, (cfg.after_capture_normal == AfterCapture::Keep) as usize);
             set_on(&c.hideui, cfg.hide_ui_during_capture);
+            set_on(&c.auto_on, cfg.auto_detect.enabled);
+            set_on(&c.auto_img, cfg.auto_detect.image_edges);
+            if let Some(a) = &c.ax_status {
+                let ok = super::autoselect::trusted();
+                a.setStringValue(&ns(if ok { t.mac_st_ax_ok } else { t.mac_st_ax_missing }));
+            }
             select(&c.ocr_lang, (cfg.ocr.language == OcrLanguage::Vi) as usize);
             set_on(&c.ocr_auto, cfg.ocr.auto_preview);
             select(&c.edge, (cfg.stack.edge == Edge::Left) as usize);
@@ -609,6 +632,14 @@ impl Settings {
             ID_COPY => self.patch(json!({ "copyToClipboard": is_on(sender) })),
             ID_AFTER => self.patch(json!({ "afterCaptureNormal": if selected(sender) == 1 { "keep" } else { "close" } })),
             ID_HIDEUI => self.patch(json!({ "hideUiDuringCapture": is_on(sender) })),
+            ID_AUTO_ON => self.patch(json!({ "autoDetect": { "enabled": is_on(sender) } })),
+            ID_AUTO_IMG => self.patch(json!({ "autoDetect": { "imageEdges": is_on(sender) } })),
+            ID_AX => {
+                if !super::autoselect::request_trust() {
+                    let url = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility";
+                    emit(Action::Open(url.into()));
+                }
+            }
             ID_OCR_LANG => self.patch(json!({ "ocr": { "language": if selected(sender) == 1 { "vi" } else { "en" } } })),
             ID_OCR_AUTO => self.patch(json!({ "ocr": { "autoPreview": is_on(sender) } })),
             ID_EDGE => self.patch(json!({ "stack": { "edge": if selected(sender) == 1 { "left" } else { "right" } } })),

@@ -101,7 +101,7 @@ pub fn recognize(img: &RgbaImage, lang: OcrLanguage) -> Result<Vec<Line>, String
     let cg = rgba_cgimage(img).ok_or("CGImage")?;
     let handler =
         unsafe { VNImageRequestHandler::initWithCGImage_options(VNImageRequestHandler::alloc(), &cg, &NSDictionary::new()) };
-    let req = unsafe { VNRecognizeTextRequest::new() };
+    let req = VNRecognizeTextRequest::new();
     req.setRecognitionLevel(VNRequestTextRecognitionLevel::Accurate);
     req.setUsesLanguageCorrection(true);
     let langs = languages(&req, lang);

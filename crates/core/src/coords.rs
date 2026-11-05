@@ -257,6 +257,26 @@ impl MacLayout {
         (RectPt::new(x, self.primary_h - top - h, w, h), k)
     }
 
+    /// Rect theo toạ độ CoreGraphics toàn cục (point, gốc trên-trái màn hình chính, y hướng xuống: `kCGWindowBounds`,
+    /// Accessibility) -> px, theo màn hình chứa tâm rect.
+    pub fn cg_to_px(&self, r: RectPt) -> Rect {
+        let (cx, cy) = (r.x + r.w / 2.0, self.primary_h - (r.y + r.h / 2.0));
+        let Some((sc, m)) = self.screen_at_pt(cx, cy) else {
+            return Rect::new(r.x.round() as i32, r.y.round() as i32, r.w.round() as u32, r.h.round() as u32);
+        };
+        let k = sc.scale;
+        let x = m.rect.x + ((r.x - sc.frame.x) * k).round() as i32;
+        let y = m.rect.y + ((r.y - self.top(&sc.frame)) * k).round() as i32;
+        Rect::new(x, y, (r.w * k).round().max(0.0) as u32, (r.h * k).round().max(0.0) as u32)
+    }
+
+    /// Điểm px -> point CoreGraphics toàn cục (gốc trên-trái, y xuống), cho Accessibility.
+    pub fn px_to_cg(&self, x: i32, y: i32) -> (f64, f64) {
+        let Some((sc, m)) = self.screen_at_px(x, y) else { return (x as f64, y as f64) };
+        let k = sc.scale;
+        (sc.frame.x + (x - m.rect.x) as f64 / k, self.top(&sc.frame) + (y - m.rect.y) as f64 / k)
+    }
+
     /// Scale của màn hình chứa điểm px.
     pub fn scale_at_px(&self, x: i32, y: i32) -> f64 {
         self.screen_at_px(x, y).map_or(1.0, |(sc, _)| sc.scale)
@@ -357,6 +377,21 @@ mod tests {
         // Ngược lại: cửa sổ trên màn phải.
         let (r, k) = l.px_to_pt(Rect::new(3034, -176, 100, 50));
         assert_eq!((r, k), (RectPt::new(1522.0, 1010.0, 100.0, 50.0), 1.0));
+    }
+
+    #[test]
+    fn mac_cg_rects_convert_both_ways() {
+        let screens = [
+            screen("built-in", RectPt::new(0.0, 0.0, 1512.0, 982.0), 33.0, 2.0),
+            screen("dell", RectPt::new(1512.0, 0.0, 1920.0, 1080.0), 25.0, 1.0),
+        ];
+        let l = MacLayout::new(&screens);
+        // Cửa sổ ở (100, 50) pt từ góc trên-trái màn hình chính.
+        assert_eq!(l.cg_to_px(RectPt::new(100.0, 50.0, 300.0, 200.0)), Rect::new(200, 100, 600, 400));
+        // Trên màn phải: y CG = -98 là mép trên của màn đó.
+        assert_eq!(l.cg_to_px(RectPt::new(1522.0, -78.0, 100.0, 50.0)), Rect::new(3034, -176, 100, 50));
+        assert_eq!(l.px_to_cg(200, 100), (100.0, 50.0));
+        assert_eq!(l.px_to_cg(3034, -176), (1522.0, -78.0));
     }
 
     #[test]

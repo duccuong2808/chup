@@ -74,6 +74,9 @@ impl App {
             1 => {
                 let o = self.focus_overlay();
                 if let Some(o) = &o {
+                    // Tự chọn vùng: rê chuột là tô khung cửa sổ dưới con trỏ.
+                    o.inject(Ev::Move { p: (600, 500) });
+                    save(&dir, "00-overlay-auto.png", o.snapshot().map(|i| image::imageops::resize(&i, i.width() / 3, i.height() / 3, image::imageops::FilterType::Triangle)));
                     o.inject(down((200, 200)));
                     o.inject(Ev::Drag { p: (500, 300) });
                     o.inject(Ev::Drag { p: (1000, 700) });

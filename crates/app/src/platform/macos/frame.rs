@@ -60,11 +60,7 @@ impl Frame {
         self.panel.show(false);
     }
 
-    /// Tự kiểm tra (`CHUP_SELFTEST`): bơm sự kiện như thật và lấy ảnh đang hiện.
-    pub fn inject(&self, ev: super::panel::Ev) {
-        super::panel::Handler::event(self, ev);
-    }
-
+    /// Tự kiểm tra (`CHUP_SELFTEST`): lấy ảnh đang hiện.
     pub fn snapshot(&self) -> Option<image::RgbaImage> {
         self.panel.snapshot()
     }

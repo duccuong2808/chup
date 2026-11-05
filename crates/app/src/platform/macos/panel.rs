@@ -63,11 +63,12 @@ pub enum Ev {
     Enter,
     Leave,
     RightDown { p: (i32, i32) },
-    RightUp { p: (i32, i32) },
+    RightUp,
     /// `dy` > 0: cuộn lên. `lines`: chuột có nấc (không phải trackpad).
     Scroll { p: (i32, i32), dy: f64, lines: bool, mods: Mods },
     Key { code: u16, mods: Mods },
-    Flags { mods: Mods },
+    /// Modifier đổi (Shift: tạm tắt tự chọn vùng).
+    Flags,
 }
 
 /// Mã phím ảo của macOS (kVK_*).
@@ -197,8 +198,8 @@ define_class!(
         }
 
         #[unsafe(method(rightMouseUp:))]
-        fn right_mouse_up(&self, e: &NSEvent) {
-            self.send(Ev::RightUp { p: self.px(e) });
+        fn right_mouse_up(&self, _e: &NSEvent) {
+            self.send(Ev::RightUp);
         }
 
         #[unsafe(method(scrollWheel:))]
@@ -213,8 +214,8 @@ define_class!(
         }
 
         #[unsafe(method(flagsChanged:))]
-        fn flags_changed(&self, e: &NSEvent) {
-            self.send(Ev::Flags { mods: Mods::from_flags(e.modifierFlags()) });
+        fn flags_changed(&self, _e: &NSEvent) {
+            self.send(Ev::Flags);
         }
 
         #[unsafe(method(cursorUpdate:))]
@@ -422,11 +423,6 @@ impl Panel {
 
     pub fn set_level(&self, level: NSWindowLevel) {
         self.window.setLevel(level);
-    }
-
-    /// Không cho app chia sẻ / chụp màn hình thấy cửa sổ (chỉ có tác dụng với API chụp cũ).
-    pub fn exclude_from_capture(&self) {
-        self.window.setSharingType(objc2_app_kit::NSWindowSharingType::None);
     }
 
     /// Ảnh đang hiện (RGBA), cho chế độ tự kiểm tra.

@@ -11,7 +11,7 @@ use std::{
 };
 
 use chup_core::{
-    autoselect::is_click,
+    autoselect::{is_click, normalize, window_at, Frame as AutoFrame, FrameKind, Picker, WinFrame},
     coords::{place_toolbar, MonitorInfo, Rect},
     freeze,
     model::FreezeAction,
@@ -20,7 +20,7 @@ use chup_core::{
 use chup_ui::{
     overlay::{
         self as ui_overlay, BAR_GAP_DIP, BAR_H_DIP, FAILED_DIM, HANDLE_DIP, HANDLE_HIT_DIP, HINT_BG, HINT_FONT_DIP,
-        HINT_PAD, HINT_TOP_DIP, LABEL_BG, LABEL_FONT_DIP, LABEL_PAD, LABEL_RADIUS_DIP,
+        HINT_PAD, HINT_TOP_DIP, LABEL_BG, LABEL_FONT_DIP, LABEL_PAD, LABEL_RADIUS_DIP, DASH_DIP, EDGE_DIP,
     },
     toolbar::{bar_width, freeze_items, paint_bar},
     Canvas as _,
@@ -31,7 +31,7 @@ use objc2::MainThreadMarker;
 use super::{
     app::Action,
     gfx::{self, pill, Align, Canvas, Color, Font, PillPainter, Surface},
-    panel::{key, Cursor, Ev, Handler, Opts, Panel, LEVEL_OVERLAY},
+    panel::{key, Cursor, Ev, Handler, Mods, Opts, Panel, LEVEL_OVERLAY},
     win::emit,
 };
 
@@ -133,6 +133,28 @@ enum Change {
     Sel,
 }
 
+/// Tự động chọn vùng (SPEC 16) trên overlay: như `windows/overlay/auto.rs`.
+struct Auto {
+    wins: Rc<Vec<WinFrame>>,
+    picker: Picker,
+    /// Điểm (desktop) của lần rê gần nhất và cửa sổ dưới nó.
+    at: Option<((i32, i32), WinFrame)>,
+    /// Chuỗi khung đã chuẩn hoá (desktop), từ ngoài vào trong.
+    chain: Vec<AutoFrame>,
+    /// Khung đang tô (toạ độ overlay).
+    shown: Option<AutoFrame>,
+    label: Option<PillPainter>,
+    label_at: Option<Rect>,
+    edge: i32,
+    dash: i32,
+    accent: u32,
+}
+
+fn keep_containing(chain: &mut Vec<AutoFrame>, p: (i32, i32)) {
+    let k = chain.iter().take_while(|f| f.rect.contains_point(p.0, p.1)).count();
+    chain.truncate(k);
+}
+
 #[derive(Default)]
 struct State {
     surface: Option<Surface>,
@@ -144,6 +166,7 @@ struct State {
     label_at: Option<Rect>,
     label_text: String,
     frozen: Option<Frozen>,
+    auto: Option<Auto>,
 }
 
 pub struct Overlay {
@@ -208,6 +231,7 @@ impl Overlay {
         {
             let mut st = self.st.borrow_mut();
             st.frozen = None;
+            st.auto = None;
             st.start = None;
             st.dragging = false;
             st.sel = None;
@@ -241,6 +265,7 @@ impl Overlay {
         st.start = None;
         st.dragging = false;
         st.sel = None;
+        st.auto = None;
         if st.frozen.take().is_some() {
             st.surface = None;
             st.label_at = None;
@@ -313,6 +338,11 @@ impl Overlay {
                     self.present();
                 }
             }
+            Ev::Move { p } => {
+                if self.st.borrow().start.is_none() {
+                    self.auto_hover(p, true);
+                }
+            }
             Ev::Drag { p } => {
                 let (start, dragging) = {
                     let st = self.st.borrow();
@@ -321,7 +351,10 @@ impl Overlay {
                 match start {
                     Some(s) if !dragging && is_click(s, p) => {}
                     Some(_) => {
-                        self.st.borrow_mut().dragging = true;
+                        if !dragging {
+                            self.st.borrow_mut().dragging = true;
+                            self.auto_hover(p, false);
+                        }
                         self.on_drag(p.0, p.1);
                     }
                     None => {}
@@ -333,10 +366,11 @@ impl Overlay {
                     let had = st.start.take().is_some();
                     let dragging = std::mem::take(&mut st.dragging);
                     let sel = st.sel.take();
-                    if had && dragging {
-                        sel
-                    } else {
-                        None
+                    match (had, dragging) {
+                        (true, true) => sel,
+                        // Click: lấy khung đang tô (SPEC 16.2 bước 4).
+                        (true, false) => st.auto.as_ref().and_then(|a| a.shown.map(|f| f.rect)),
+                        _ => None,
                     }
                 };
                 match sel {
@@ -344,10 +378,164 @@ impl Overlay {
                     None => emit(Action::CancelSelection),
                 }
             }
-            Ev::RightUp { .. } => emit(Action::CancelSelection),
+            Ev::RightUp => emit(Action::CancelSelection),
             Ev::Key { code: key::ESCAPE, .. } => emit(Action::CancelSelection),
             _ => {}
         }
+    }
+
+    // ---------- Tự động chọn vùng (SPEC 16) ----------
+
+    /// Bật tự chọn vùng cho phiên này (gọi sau `show` / `show_frozen`).
+    pub fn auto_begin(&self, wins: Rc<Vec<WinFrame>>) {
+        let k = self.mon.scale;
+        self.st.borrow_mut().auto = Some(Auto {
+            wins,
+            picker: Picker::default(),
+            at: None,
+            chain: vec![],
+            shown: None,
+            label: None,
+            label_at: None,
+            edge: (EDGE_DIP * k).round().max(1.0) as i32,
+            dash: (DASH_DIP * k).round().max(2.0) as i32,
+            accent: gfx::theme().accent.px(),
+        });
+    }
+
+    fn auto_frame(&self) -> Option<Rect> {
+        self.st.borrow().auto.as_ref().and_then(|a| a.shown.map(|f| f.rect))
+    }
+
+    /// Chuột ở `p` (toạ độ overlay). `allowed = false`: đang kéo, hoặc (Freeze) chuột trong vùng / trên toolbar.
+    /// Giữ Shift thì không tô (SPEC 16.2 bước 5).
+    fn auto_hover(&self, p: (i32, i32), allowed: bool) {
+        let dp = (p.0 + self.mon.rect.x, p.1 + self.mon.rect.y);
+        let shift = Mods::now().shift;
+        let mut query = None;
+        let target = {
+            let mut st = self.st.borrow_mut();
+            let Some(a) = st.auto.as_mut() else { return };
+            match (allowed && !shift).then(|| window_at(&a.wins, dp).copied()).flatten() {
+                None => {
+                    a.at = None;
+                    None
+                }
+                Some(w) => {
+                    if a.at.map(|(_, o)| o.id) == Some(w.id) {
+                        keep_containing(&mut a.chain, dp);
+                    } else {
+                        a.chain.clear();
+                    }
+                    if a.chain.is_empty() {
+                        a.chain = normalize(&[AutoFrame::new(w.rect, FrameKind::Window)], dp, self.mon.rect);
+                    }
+                    if a.at.map(|(q, _)| q) != Some(dp) {
+                        query = Some(w);
+                    }
+                    a.at = Some((dp, w));
+                    a.picker.pick(w.id, &a.chain).copied()
+                }
+            }
+        };
+        self.auto_show(target);
+        if let Some(win) = query {
+            emit(Action::AutoHover { p: dp, win, mon: self.mon.rect });
+        }
+    }
+
+    pub fn auto_clear(&self) {
+        {
+            let mut st = self.st.borrow_mut();
+            let Some(a) = st.auto.as_mut() else { return };
+            a.at = None;
+        }
+        self.auto_show(None);
+    }
+
+    /// Như `auto_hover` tại vị trí con trỏ hiện tại.
+    pub fn auto_refresh(&self) {
+        let (cx, cy) = super::util::cursor_pos();
+        if !self.mon.rect.contains_point(cx, cy) {
+            return;
+        }
+        let p = (cx - self.mon.rect.x, cy - self.mon.rect.y);
+        let allowed = if self.frozen_mode.get() { self.frozen_auto_allowed(p) } else { !self.st.borrow().dragging };
+        self.auto_hover(p, allowed);
+    }
+
+    /// Kết quả của worker cho điểm `p` (desktop) trong cửa sổ `window`.
+    pub fn auto_result(&self, p: (i32, i32), window: isize, raw: &[AutoFrame]) {
+        let target = {
+            let mut st = self.st.borrow_mut();
+            let Some(a) = st.auto.as_mut() else { return };
+            let Some((cur, w)) = a.at else { return };
+            if w.id != window {
+                return;
+            }
+            let mut chain = normalize(raw, p, self.mon.rect);
+            keep_containing(&mut chain, cur);
+            if p != cur && chain.len() <= a.chain.len() {
+                return;
+            }
+            a.chain = chain;
+            a.picker.pick(w.id, &a.chain).copied()
+        };
+        self.auto_show(target);
+    }
+
+    /// Cuộn chuột / ↑↓: `steps` dương = lên khung cha. `0` = vẽ lại theo con trỏ (nhấn / nhả Shift).
+    pub fn auto_level(&self, steps: i32) {
+        if steps == 0 {
+            return self.auto_refresh();
+        }
+        let target = {
+            let mut st = self.st.borrow_mut();
+            let Some(a) = st.auto.as_mut() else { return };
+            let Some((_, w)) = a.at else { return };
+            a.picker.wheel(steps, &a.chain);
+            a.picker.pick(w.id, &a.chain).copied()
+        };
+        self.auto_show(target);
+    }
+
+    /// Đổi khung đang tô thành `target` (desktop), vẽ lại phần đổi.
+    fn auto_show(&self, target: Option<AutoFrame>) {
+        let (mx, my) = (self.mon.rect.x, self.mon.rect.y);
+        let local = target.map(|f| AutoFrame::new(f.rect.offset(-mx, -my), f.kind));
+        let mon = self.size();
+        let gap = self.s(6.0);
+        let painter = self.label_painter(320.0);
+        {
+            let mut st = self.st.borrow_mut();
+            let Some(a) = st.auto.as_mut() else { return };
+            if a.shown == local {
+                return;
+            }
+            let pad = a.edge + 1;
+            let mut dirty = a.shown.map(|f| f.rect.expand(pad)).unwrap_or_default();
+            if let Some(at) = a.label_at.take() {
+                dirty = dirty.union(&at);
+            }
+            a.shown = local;
+            if let Some(f) = local {
+                dirty = dirty.union(&f.rect.expand(pad));
+                if a.label.is_none() {
+                    a.label = painter;
+                }
+                if let Some(lp) = a.label.as_mut() {
+                    let size = lp.paint(&f.label(), LABEL_BG, Color::WHITE);
+                    let at = ui_overlay::auto_label_rect(f.rect, size, mon, gap);
+                    a.label_at = Some(at);
+                    dirty = dirty.union(&at);
+                }
+            }
+            if dirty.is_empty() {
+                return;
+            }
+            paint(&mut st, dirty);
+        }
+        self.present();
     }
 
     // ---------- Freeze ----------
@@ -375,6 +563,7 @@ impl Overlay {
             }
             st.start = None;
             st.dragging = false;
+            st.auto = None;
             st.sel = None;
             st.label_at = None;
             st.label_text.clear();
@@ -396,12 +585,23 @@ impl Overlay {
         true
     }
 
-    pub fn take_frozen(&self) -> Option<Arc<RgbaImage>> {
-        self.st.borrow_mut().frozen.as_mut()?.img.take()
+    /// Ảnh đóng băng của màn hình này (dùng chung), cho worker tự chọn vùng.
+    pub fn frozen_image(&self) -> Option<Arc<RgbaImage>> {
+        self.st.borrow().frozen.as_ref()?.img.clone()
     }
 
-    pub fn is_frozen(&self) -> bool {
-        self.frozen_mode.get()
+    /// Có tô khung tự động ở `p` không: có ảnh, không đang kéo, không trong vùng chọn / handle / toolbar.
+    fn frozen_auto_allowed(&self, p: (i32, i32)) -> bool {
+        let st = self.st.borrow();
+        let Some(f) = st.frozen.as_ref() else { return false };
+        f.img.is_some()
+            && matches!(f.drag, Drag::Idle)
+            && f.bar_hit(p).is_none()
+            && f.sel.and_then(|s| selection::hit(s, p, self.s(HANDLE_HIT_DIP))).is_none()
+    }
+
+    pub fn take_frozen(&self) -> Option<Arc<RgbaImage>> {
+        self.st.borrow_mut().frozen.as_mut()?.img.take()
     }
 
     pub fn clear_frozen_selection(&self) {
@@ -499,9 +699,11 @@ impl Overlay {
     fn frozen_move(&self, p: (i32, i32)) {
         let b = self.bounds();
         let p = (p.0.clamp(0, b.right()), p.1.clamp(0, b.bottom()));
+        let mut hover = None;
         self.frozen_update(|f| match f.drag {
             Drag::New(start) if f.sel.is_none() && is_click(start, p) => Change::None,
             Drag::New(start) => {
+                hover = Some(false);
                 let r = Rect::from_points(start, p);
                 f.sel = (!r.is_empty()).then_some(r);
                 Change::Sel
@@ -511,6 +713,7 @@ impl Overlay {
                 Change::Sel
             }
             Drag::Idle => {
+                hover = Some(true);
                 if !f.bar_visible() {
                     return Change::None;
                 }
@@ -526,11 +729,17 @@ impl Overlay {
             }
             Drag::Button(_) => Change::None,
         });
+        match hover {
+            Some(true) => self.auto_hover(p, self.frozen_auto_allowed(p)),
+            Some(false) => self.auto_hover(p, false),
+            None => {}
+        }
     }
 
     fn frozen_end(&self, p: (i32, i32)) {
         let mut clicked = None;
         let mut auto_ocr = false;
+        let picked = self.auto_frame();
         self.frozen_update(|f| match std::mem::replace(&mut f.drag, Drag::Idle) {
             Drag::Button(i) => {
                 if f.bar_hit(p) == Some(i) {
@@ -542,7 +751,11 @@ impl Overlay {
                 }
                 Change::Bar
             }
-            Drag::New(_) => {
+            Drag::New(start) => {
+                // Click (chưa di quá 4 px): lấy khung đang tô (SPEC 16.2 bước 4).
+                if f.sel.is_none() && is_click(start, p) {
+                    f.sel = picked;
+                }
                 if f.sel.is_some_and(|s| s.w < 4 || s.h < 4) {
                     f.sel = None;
                 }
@@ -556,6 +769,8 @@ impl Overlay {
             self.frozen_confirm(ACTIONS[i]);
         } else if auto_ocr {
             self.frozen_confirm(Some(FreezeAction::Ocr));
+        } else {
+            self.auto_hover(p, self.frozen_auto_allowed(p));
         }
     }
 
@@ -591,7 +806,7 @@ impl Overlay {
             Ev::Down { p, clicks, .. } => self.frozen_down(p, clicks == 2),
             Ev::Drag { p } | Ev::Move { p } => self.frozen_move(p),
             Ev::Up { p } => self.frozen_end(p),
-            Ev::RightUp { .. } => emit(Action::FreezeCancel),
+            Ev::RightUp => emit(Action::FreezeCancel),
             Ev::Key { code: key::ESCAPE, .. } => emit(Action::FreezeCancel),
             Ev::Key { code: key::RETURN | key::KEYPAD_ENTER, .. } => {
                 let action = self.st.borrow().frozen.as_ref().map(Frozen::default_action);
@@ -604,6 +819,14 @@ impl Overlay {
 
 impl Handler for Overlay {
     fn event(&self, ev: Ev) {
+        // Đổi cấp khung (SPEC 16.2 bước 3) và Shift (bước 5): qua App để tới overlay đang chứa con trỏ.
+        match ev {
+            Ev::Scroll { dy, .. } if dy != 0.0 => return emit(Action::AutoLevel(if dy > 0.0 { 1 } else { -1 })),
+            Ev::Key { code: key::UP, .. } => return emit(Action::AutoLevel(1)),
+            Ev::Key { code: key::DOWN, .. } => return emit(Action::AutoLevel(-1)),
+            Ev::Flags => return emit(Action::AutoLevel(0)),
+            _ => {}
+        }
         if self.frozen_mode.get() {
             self.frozen_event(ev)
         } else {
@@ -635,11 +858,13 @@ fn extent(st: &State) -> Rect {
 /// Vẽ lại phần `dirty`.
 fn paint(st: &mut State, dirty: Rect) {
     if st.frozen.is_some() {
-        return paint_frozen(st, dirty);
+        paint_frozen(st, dirty);
+        return paint_auto_edges(st, dirty);
     }
+    let hl = st.auto.as_ref().and_then(|a| a.shown.map(|f| f.rect)).filter(|_| !st.dragging);
     let State { surface, sel, hint, label, label_at, start, .. } = st;
     let Some(s) = surface.as_mut() else { return };
-    ui_overlay::paint_live(&mut s.px(), dirty, None, *sel, HOLE_PX);
+    ui_overlay::paint_live(&mut s.px(), dirty, hl, *sel, HOLE_PX);
     if start.is_none() {
         if let Some(h) = hint.as_ref() {
             if h.at.intersect(&dirty).is_some() {
@@ -650,14 +875,35 @@ fn paint(st: &mut State, dirty: Rect) {
     if let (Some(p), Some(at)) = (label.as_ref(), label_at) {
         s.blend_part(&p.surface, (at.w as i32, at.h as i32), at.x, at.y, dirty);
     }
+    if hl.is_some() {
+        paint_auto_edges(st, dirty);
+    }
+}
+
+/// Viền nét đứt và nhãn của khung đang tô, trên cùng.
+fn paint_auto_edges(st: &mut State, dirty: Rect) {
+    let State { surface, auto, .. } = st;
+    let (Some(s), Some(a)) = (surface.as_mut(), auto.as_ref()) else { return };
+    let Some(f) = a.shown else { return };
+    s.px().outline_dashed_outside(f.rect, a.edge, a.dash, a.accent, 0xFFFF_FFFF);
+    if let (Some(p), Some(at)) = (a.label.as_ref(), a.label_at) {
+        s.blend_part(&p.surface, (at.w as i32, at.h as i32), at.x, at.y, dirty);
+    }
 }
 
 fn paint_frozen(st: &mut State, dirty: Rect) {
+    let hl = st.auto.as_ref().and_then(|a| a.shown.map(|f| f.rect));
     let State { surface, frozen, label, label_at, .. } = st;
     let (Some(s), Some(f)) = (surface.as_mut(), frozen.as_mut()) else { return };
     let sw = s.w as usize;
     match &f.img {
-        Some(img) => freeze::compose(img, s.pixels(), sw, dirty, f.sel),
+        Some(img) => {
+            freeze::compose(img, s.pixels(), sw, dirty, f.sel);
+            // Khung tự động: bên trong là ảnh gốc, không làm tối.
+            if let Some(inside) = hl.and_then(|h| h.intersect(&dirty)) {
+                freeze::compose(img, s.pixels(), sw, inside, hl);
+            }
+        }
         None => s.fill(dirty, FAILED_DIM.px()),
     }
     if let Some(sel) = f.sel {

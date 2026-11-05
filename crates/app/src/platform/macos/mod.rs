@@ -5,6 +5,7 @@
 //! - Một UI thread: mọi nơi `emit(Action)`, `drain` xử lý trên main thread (`win.rs`).
 
 mod app;
+mod autoselect;
 mod capture;
 mod frame;
 mod gfx;

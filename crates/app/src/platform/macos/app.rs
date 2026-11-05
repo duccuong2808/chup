@@ -4,6 +4,7 @@
 use std::{rc::Rc, sync::Arc};
 
 use chup_core::{
+    autoselect::{Frame as AutoFrame, WinFrame},
     capture::{self, MonitorShot, PersistOutcome},
     coords::{monitor_at, Rect},
     config::{Edge, StackMonitor},
@@ -14,6 +15,7 @@ use image::RgbaImage;
 use objc2::MainThreadMarker;
 
 use super::{
+    autoselect,
     capture as sck,
     frame::Frame,
     hotkeys::{Hotkeys, Kind},
@@ -68,6 +70,12 @@ pub enum Action {
     FreezeConfirm { rect: Rect, action: FreezeAction },
     FreezeCancel,
     FreezeCopied(Result<(), String>),
+    /// Overlay: chuột ở điểm `p` (desktop) trên cửa sổ `win`; hỏi worker chuỗi khung (SPEC 16).
+    AutoHover { p: (i32, i32), win: WinFrame, mon: Rect },
+    /// Worker: chuỗi khung thô cho điểm `p` của phiên `gen`.
+    AutoFrames { gen: u32, p: (i32, i32), window: isize, chain: Vec<AutoFrame> },
+    /// Cuộn chuột / ↑↓ (dương = lên khung cha); `0` = nhấn / nhả Shift.
+    AutoLevel(i32),
     PreviewLoaded(std::path::PathBuf, Result<RgbaImage, String>),
     PreviewCopy(std::path::PathBuf),
     PreviewReveal(std::path::PathBuf),
@@ -104,6 +112,11 @@ pub struct App {
     freeze_t0: Option<std::time::Instant>,
     ocr: vision::Worker,
     ocr_image: Option<RgbaImage>,
+    auto: autoselect::Worker,
+    auto_gen: u32,
+    auto_on: bool,
+    /// Danh sách cửa sổ chụp lúc bắt đầu Freeze (trước khi overlay hiện).
+    freeze_wins: Option<Rc<Vec<WinFrame>>>,
 }
 
 impl App {
@@ -126,6 +139,10 @@ impl App {
             freeze_t0: None,
             ocr: vision::Worker::start(),
             ocr_image: None,
+            auto: autoselect::Worker::start(),
+            auto_gen: 0,
+            auto_on: false,
+            freeze_wins: None,
         };
         // Apple Vision có sẵn cả tiếng Việt (macOS 26): không có gói tải thêm.
         app.model.set_ocr_vi(OcrViState::Ready);
@@ -311,6 +328,30 @@ impl App {
             }
             Action::FreezeCancel => self.model.freeze_cancel(),
             Action::FreezeCopied(r) => self.model.freeze_copied(r),
+            Action::AutoHover { p, win, mon } => {
+                if self.auto_on {
+                    self.auto.query(self.auto_gen, p, win, mon);
+                    for o in self.overlays.iter().filter(|o| o.mon.rect != mon) {
+                        o.auto_clear();
+                    }
+                }
+                vec![]
+            }
+            Action::AutoFrames { gen, p, window, chain } => {
+                if self.auto_on && gen == self.auto_gen {
+                    if let Some(o) = self.overlays.iter().find(|o| o.mon.rect.contains_point(p.0, p.1)) {
+                        o.auto_result(p, window, &chain);
+                    }
+                }
+                vec![]
+            }
+            Action::AutoLevel(steps) => {
+                let (cx, cy) = cursor_pos();
+                if let Some(o) = self.overlays.iter().find(|o| o.mon.rect.contains_point(cx, cy)) {
+                    o.auto_level(steps);
+                }
+                vec![]
+            }
             Action::PreviewLoaded(path, res) => self.on_preview_loaded(path, res),
             Action::PreviewCopy(path) => {
                 std::thread::spawn(move || {
@@ -410,7 +451,10 @@ impl App {
         for e in fx {
             match e {
                 Effect::ShowOverlays => self.show_overlays(),
-                Effect::HideOverlays => self.overlays.iter().for_each(|o| o.hide()),
+                Effect::HideOverlays => {
+                    self.auto_end();
+                    self.overlays.iter().for_each(|o| o.hide());
+                }
                 Effect::ShowFrame => {
                     if let Some(outer) = self.model.frame_outer() {
                         let faded = self.model.mode == FrameMode::Faded;
@@ -544,6 +588,32 @@ impl App {
         if let Some(o) = self.overlays.get(focus) {
             o.show(true);
         }
+        if self.model.config.auto_detect.enabled {
+            let wins = Rc::new(autoselect::snapshot_windows(&util::layout()));
+            self.auto_begin(wins, vec![]);
+        }
+    }
+
+    /// Bắt đầu phiên tự chọn vùng cho các overlay vừa hiện. `frozen`: ảnh Freeze (nhận khung từ ảnh).
+    fn auto_begin(&mut self, wins: Rc<Vec<WinFrame>>, frozen: Vec<(Rect, Arc<RgbaImage>)>) {
+        let image_edges = self.model.config.auto_detect.image_edges && !frozen.is_empty();
+        self.auto_gen = self.auto_gen.wrapping_add(1);
+        self.auto_on = true;
+        self.auto.begin(self.auto_gen, frozen, image_edges, util::layout());
+        for o in &self.overlays {
+            o.auto_begin(wins.clone());
+        }
+        let (cx, cy) = cursor_pos();
+        if let Some(o) = self.overlays.iter().find(|o| o.mon.rect.contains_point(cx, cy)) {
+            o.auto_refresh();
+        }
+    }
+
+    fn auto_end(&mut self) {
+        if std::mem::take(&mut self.auto_on) {
+            self.auto.end(self.auto_gen);
+        }
+        self.freeze_wins = None;
     }
 
     fn layout_stack_target(&mut self) -> Option<chup_core::coords::MonitorInfo> {
@@ -689,6 +759,9 @@ impl App {
             return;
         }
         self.freeze_t0 = Some(std::time::Instant::now());
+        // Trước khi overlay hiện: menu đang mở còn trong danh sách cửa sổ.
+        self.freeze_wins =
+            self.model.config.auto_detect.enabled.then(|| Rc::new(autoselect::snapshot_windows(&util::layout())));
         if self.model.config.hide_ui_during_capture {
             self.stack.set_hidden_for_capture(true);
         }
@@ -743,6 +816,10 @@ impl App {
         }
         if let Some(t0) = self.freeze_t0.take() {
             log::info!("freeze: từ nhấn hotkey tới lúc ảnh hiện {:?}", t0.elapsed());
+        }
+        if let (true, Some(wins)) = (shown, self.freeze_wins.take()) {
+            let frozen = self.overlays.iter().filter_map(|o| o.frozen_image().map(|i| (o.mon.rect, i))).collect();
+            self.auto_begin(wins, frozen);
         }
         if !shown {
             let mut fx = self.model.freeze_cancel();

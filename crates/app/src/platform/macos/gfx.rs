@@ -122,14 +122,6 @@ impl Surface {
         self.px().fill(r, px);
     }
 
-    /// Chép vùng `r` từ `src` cùng kích thước.
-    pub fn copy_rect_from(&mut self, src: &Surface, r: Rect) {
-        if (src.w, src.h) == (self.w, self.h) {
-            let s = &src.buf;
-            Pixels::new(&mut self.buf, self.w, self.h).copy_rect_from(s, r);
-        }
-    }
-
     /// Chép `src` lên (x, y) bằng phép "over", chỉ trong `clip`.
     pub fn blend_from(&mut self, src: &Surface, x: i32, y: i32, clip: Rect) {
         self.blend_part(src, (src.w, src.h), x, y, clip)
@@ -246,13 +238,6 @@ pub struct Canvas {
 impl Canvas {
     pub fn new(s: &Surface) -> Option<Canvas> {
         Some(Canvas { ctx: RefCell::new(s.ctx.clone()), h: std::cell::Cell::new(s.h as f64) })
-    }
-
-    /// Vẽ sang surface khác (ảnh đã tải lên vẫn dùng được).
-    pub fn bind(&self, s: &Surface) -> bool {
-        *self.ctx.borrow_mut() = s.ctx.clone();
-        self.h.set(s.h as f64);
-        true
     }
 
     fn c(&self) -> std::cell::Ref<'_, CFRetained<CGContext>> {

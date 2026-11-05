@@ -52,14 +52,8 @@ pub fn take_actions() -> Vec<Action> {
     std::mem::take(&mut *QUEUE.lock().unwrap_or_else(|e| e.into_inner()))
 }
 
-/// Hẹn giờ một lần trên main thread; thả `Timer` (hoặc gọi `cancel`) là huỷ.
+/// Hẹn giờ một lần trên main thread; thả `Timer` là huỷ.
 pub struct Timer(Retained<NSTimer>);
-
-impl Timer {
-    pub fn cancel(&self) {
-        self.0.invalidate();
-    }
-}
 
 impl Drop for Timer {
     fn drop(&mut self) {

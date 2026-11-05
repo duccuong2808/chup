@@ -850,6 +850,10 @@ impl App {
         self.toolbar.clone()
     }
 
+    pub(super) fn settings_ref(&self) -> Option<Rc<Settings>> {
+        self.settings.clone()
+    }
+
     pub(super) fn stack_ref(&self) -> Rc<StackWin> {
         self.stack.clone()
     }

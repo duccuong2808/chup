@@ -150,6 +150,7 @@ fn init(mtm: MainThreadMarker) {
 
     std::mem::forget(win::after(1000, gfx::warm_up));
     log::info!("sẵn sàng");
+    util::log_memory("khởi động xong");
     selftest::start();
     // Lần đầu chạy: hỏi quyền ngay để Chup có mặt trong danh sách của Cài đặt hệ thống.
     if !capture::has_permission() && selftest::dir().is_none() {

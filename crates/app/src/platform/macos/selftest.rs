@@ -144,7 +144,15 @@ impl App {
                 } else {
                     log::warn!("selftest: chưa có quyền ghi màn hình, bỏ qua chụp thật");
                 }
+                emit(Action::OpenSettings);
                 next(8, 1500);
+            }
+            8 => {
+                if let Some(s) = self.settings_ref() {
+                    s.snapshot_tabs(&dir);
+                    s.close();
+                }
+                next(9, 500);
             }
             _ => {
                 log::info!("selftest: xong");

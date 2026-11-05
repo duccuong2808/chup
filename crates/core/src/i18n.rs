@@ -226,14 +226,27 @@ strings! {
     mac_perm_open: "Mở Cài đặt hệ thống", "Open System Settings";
     mac_perm_later: "Để sau", "Later";
     mac_err_capture: "Không chụp được màn hình: {}", "Couldn't capture the screen: {}";
+    mac_st_autostart: "Mở cùng macOS (khi đăng nhập)", "Open at login";
+    mac_st_hide_ui_note: "Thường không cần bật: macOS đã loại cửa sổ của Chup khỏi ảnh chụp.",
+        "Usually not needed: macOS already keeps Chup's windows out of the screenshot.";
+    mac_st_ocr_en: "Tiếng Anh", "English";
+    mac_st_ocr_note: "Dùng Apple Vision có sẵn trong macOS, không cần tải thêm.",
+        "Uses Apple Vision built into macOS, nothing to download.";
+    mac_st_about_desc: "Chụp màn hình theo vùng cho macOS: stack ảnh kéo thả, chụp đóng băng, Preview, copy chữ từ ảnh.",
+        "Region screenshots for macOS: a drag-and-drop stack, freeze capture, Preview, copy text from images.";
+    mac_st_hotkeys_hint: "Bấm vào ô rồi nhấn tổ hợp phím (cần ⌃, ⌥ hoặc ⌘; F1–F20 dùng một mình được). Delete để tắt, Esc để huỷ.",
+        "Click a box and press the keys (needs ⌃, ⌥ or ⌘; F1–F20 work alone). Delete turns it off, Esc cancels.";
+    mac_st_clear: "Xoá", "Clear";
+    mac_st_ui_language_system: "Theo macOS", "Same as macOS";
+    mac_st_auto_later: "Tự động chọn vùng trên macOS sẽ có ở bản sau.", "Automatic region detection on macOS is coming in a later version.";
     err_hotkey_init: "Không khởi tạo được phím tắt: {}", "Couldn't set up shortcuts: {}";
     err_tray: "Không tạo được icon khay: {}", "Couldn't create the tray icon: {}";
-    hotkey_taken: "Không dùng được {} vì app khác (hoặc Windows) đang dùng tổ hợp này. Hãy chọn tổ hợp khác.",
-        "Can't use {} because another app (or Windows) uses it. Choose a different shortcut.";
+    hotkey_taken: "Không dùng được {} vì app khác (hoặc hệ thống) đang dùng tổ hợp này. Hãy chọn tổ hợp khác.",
+        "Can't use {} because another app (or the system) uses it. Choose a different shortcut.";
     hotkey_invalid: "Phím tắt \"{}\" không hợp lệ. Hãy bấm vào ô và nhấn lại tổ hợp phím.",
         "Shortcut \"{}\" is invalid. Click the box and press the keys again.";
-    hotkey_taken_recording: "{} đang được app khác (hoặc Windows) dùng nên Chup không đăng ký được. Hãy chọn tổ hợp khác.",
-        "{} is used by another app (or Windows), so Chup can't register it. Choose a different shortcut.";
+    hotkey_taken_recording: "{} đang được app khác (hoặc hệ thống) dùng nên Chup không đăng ký được. Hãy chọn tổ hợp khác.",
+        "{} is used by another app (or the system), so Chup can't register it. Choose a different shortcut.";
 
     // ---- Overlay, toolbar, stack, Preview ----
     hint_select: "Kéo để chọn vùng · Esc hoặc chuột phải để huỷ", "Drag to select a region · Esc or right-click to cancel";

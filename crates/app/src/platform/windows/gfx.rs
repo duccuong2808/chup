@@ -56,78 +56,20 @@ use super::util::win_rect;
 
 // ---------- màu ----------
 
-/// Màu thẳng (chưa premultiply), 0..1.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Color {
-    pub r: f32,
-    pub g: f32,
-    pub b: f32,
-    pub a: f32,
+pub use chup_ui::{rectf, Align, Color, FontSpec, RectF, Theme};
+use chup_ui::{FontMetrics, Pixels, PixelsRef};
+
+/// Bảng màu sáng/tối theo Windows.
+pub fn theme() -> Theme {
+    Theme::new(super::util::dark_mode())
 }
 
-impl Color {
-    pub const fn rgba(r: u8, g: u8, b: u8, a: f32) -> Self {
-        Self { r: r as f32 / 255.0, g: g as f32 / 255.0, b: b as f32 / 255.0, a }
-    }
-    pub const fn hex(v: u32) -> Self {
-        Self::rgba((v >> 16) as u8, (v >> 8) as u8, v as u8, 1.0)
-    }
-    pub fn with_alpha(self, a: f32) -> Self {
-        Self { a, ..self }
-    }
-    fn d2d(self) -> D2D1_COLOR_F {
-        D2D1_COLOR_F { r: self.r, g: self.g, b: self.b, a: self.a }
-    }
-    /// Pixel premultiplied BGRA (u32 little-endian = 0xAARRGGBB).
-    pub fn px(self) -> u32 {
-        let a = (self.a.clamp(0.0, 1.0) * 255.0).round() as u32;
-        let c = |v: f32| ((v.clamp(0.0, 1.0) * a as f32).round() as u32).min(a);
-        (a << 24) | (c(self.r) << 16) | (c(self.g) << 8) | c(self.b)
-    }
+fn d2d(c: Color) -> D2D1_COLOR_F {
+    D2D1_COLOR_F { r: c.r, g: c.g, b: c.b, a: c.a }
 }
 
-/// Bảng màu (giống design token của bản web cũ). Sáng/tối theo Windows.
-#[derive(Clone, Copy)]
-pub struct Theme {
-    pub accent: Color,
-    pub accent_strong: Color,
-    pub danger: Color,
-    pub surface: Color,
-    pub surface2: Color,
-    pub text: Color,
-    pub line: Color,
-    pub shadow: Color,
-}
-
-impl Theme {
-    pub fn current() -> Self {
-        let accent = Color::hex(0x1f6feb);
-        let accent_strong = Color::hex(0x1858c4);
-        let danger = Color::hex(0xd1242f);
-        if super::util::dark_mode() {
-            Theme {
-                accent,
-                accent_strong,
-                danger,
-                surface: Color::rgba(32, 34, 38, 0.96),
-                surface2: Color::hex(0x2a2d33),
-                text: Color::hex(0xe8eaed),
-                line: Color::rgba(255, 255, 255, 0.12),
-                shadow: Color::rgba(0, 0, 0, 0.5),
-            }
-        } else {
-            Theme {
-                accent,
-                accent_strong,
-                danger,
-                surface: Color::rgba(255, 255, 255, 0.96),
-                surface2: Color::hex(0xf3f4f6),
-                text: Color::hex(0x1b1f24),
-                line: Color::rgba(27, 31, 36, 0.12),
-                shadow: Color::rgba(0, 0, 0, 0.18),
-            }
-        }
-    }
+fn d2r(r: RectF) -> D2D_RECT_F {
+    D2D_RECT_F { left: r.left, top: r.top, right: r.right, bottom: r.bottom }
 }
 
 // ---------- Surface ----------
@@ -185,66 +127,28 @@ impl Surface {
         }
     }
 
-    /// Tô `r` (toạ độ trong surface) bằng 1 pixel premultiplied, cắt theo biên.
+    /// View pixel để vẽ trực tiếp (overlay, frame).
+    pub fn px(&mut self) -> Pixels<'_> {
+        let (w, h) = (self.w, self.h);
+        Pixels::new(self.pixels(), w, h)
+    }
+
     /// Chép vùng `r` từ `src` cùng kích thước.
     pub fn copy_rect_from(&mut self, src: &mut Surface, r: Rect) {
-        let Some(r) = r.intersect(&Rect::new(0, 0, self.w as u32, self.h as u32)) else { return };
         if (src.w, src.h) != (self.w, self.h) {
             return;
         }
-        let w = self.w as usize;
         let s = src.pixels();
-        let (x0, x1) = (r.x as usize, r.right() as usize);
-        let rows: Vec<(usize, Vec<u32>)> =
-            (r.y..r.bottom()).map(|y| (y as usize, s[y as usize * w + x0..y as usize * w + x1].to_vec())).collect();
-        let d = self.pixels();
-        for (y, row) in rows {
-            d[y * w + x0..y * w + x1].copy_from_slice(&row);
-        }
+        self.px().copy_rect_from(s, r);
     }
 
     pub fn fill(&mut self, r: Rect, px: u32) {
-        let Some(r) = r.intersect(&Rect::new(0, 0, self.w as u32, self.h as u32)) else { return };
-        let w = self.w as usize;
-        let buf = self.pixels();
-        for y in r.y..r.bottom() {
-            let row = y as usize * w;
-            buf[row + r.x as usize..row + r.right() as usize].fill(px);
-        }
+        self.px().fill(r, px);
     }
 
-    /// Viền hình chữ nhật dày `t` nằm **bên ngoài** `r`.
-    pub fn outline_outside(&mut self, r: Rect, t: i32, px: u32) {
-        let o = r.expand(t);
-        self.fill(Rect::new(o.x, o.y, o.w, t as u32), px);
-        self.fill(Rect::new(o.x, r.bottom(), o.w, t as u32), px);
-        self.fill(Rect::new(o.x, r.y, t as u32, r.h), px);
-        self.fill(Rect::new(r.right(), r.y, t as u32, r.h), px);
-    }
-
-    /// Viền nét đứt dày `t` nằm bên ngoài `r`: các đoạn dài `dash` xen kẽ màu `a` và `b`
-    /// (2 màu tương phản để nhìn rõ trên mọi nền).
+    /// Viền nét đứt dày `t` nằm bên ngoài `r` (xem `chup_ui::Pixels::outline_dashed_outside`).
     pub fn outline_dashed_outside(&mut self, r: Rect, t: i32, dash: i32, a: u32, b: u32) {
-        let o = r.expand(t);
-        let dash = dash.max(1);
-        let (mut x, mut i) = (o.x, 0);
-        while x < o.right() {
-            let len = dash.min(o.right() - x) as u32;
-            let c = if i % 2 == 0 { a } else { b };
-            self.fill(Rect::new(x, o.y, len, t as u32), c);
-            self.fill(Rect::new(x, r.bottom(), len, t as u32), c);
-            x += dash;
-            i += 1;
-        }
-        let (mut y, mut i) = (r.y, 1);
-        while y < r.bottom() {
-            let len = dash.min(r.bottom() - y) as u32;
-            let c = if i % 2 == 0 { a } else { b };
-            self.fill(Rect::new(o.x, y, t as u32, len), c);
-            self.fill(Rect::new(r.right(), y, t as u32, len), c);
-            y += dash;
-            i += 1;
-        }
+        self.px().outline_dashed_outside(r, t, dash, a, b);
     }
 
     /// Chép `src` (premultiplied) lên vị trí (x, y) bằng phép "over", chỉ trong `clip`.
@@ -253,32 +157,11 @@ impl Surface {
         self.blend_part(src, (w, h), x, y, clip)
     }
 
-    /// Như `blend_from` nhưng chỉ lấy góc trên-trái cỡ `size` của `src`.
-    ///
-    /// `clip` là vùng vừa được tô lại (dirty): "over" không lặp lại được, nên blend ra ngoài vùng đó là chồng lên
-    /// pixel đã blend lần trước (sprite bán trong suốt đậm dần) (chup-71a.12).
+    /// Như `blend_from` nhưng chỉ lấy góc trên-trái cỡ `size` của `src` (xem `chup_ui::Pixels::blend_part`).
     pub fn blend_part(&mut self, src: &mut Surface, size: (i32, i32), x: i32, y: i32, clip: Rect) {
-        let dst_bounds = Rect::new(0, 0, self.w as u32, self.h as u32);
-        let (pw, ph) = (size.0.min(src.w), size.1.min(src.h));
-        let Some(area) =
-            Rect::new(x, y, pw as u32, ph as u32).intersect(&dst_bounds).and_then(|a| a.intersect(&clip))
-        else {
-            return;
-        };
-        let (sw, dw) = (src.w as usize, self.w as usize);
-        let s = src.pixels().to_vec();
-        let d = self.pixels();
-        for yy in area.y..area.bottom() {
-            for xx in area.x..area.right() {
-                let sp = s[(yy - y) as usize * sw + (xx - x) as usize];
-                let sa = sp >> 24;
-                if sa == 0 {
-                    continue;
-                }
-                let di = yy as usize * dw + xx as usize;
-                d[di] = if sa == 255 { sp } else { over(sp, d[di]) };
-            }
-        }
+        let (sw, sh) = (src.w, src.h);
+        let data = src.pixels();
+        self.px().blend_part(PixelsRef { data, w: sw, h: sh }, size, (x, y), clip);
     }
 
     /// Đẩy lên layered window. `dirty` (toạ độ surface) = chỉ cập nhật phần đó.
@@ -333,17 +216,6 @@ impl Drop for Surface {
     }
 }
 
-/// src over dst, cả hai premultiplied.
-fn over(s: u32, d: u32) -> u32 {
-    let inv = 255 - (s >> 24);
-    let ch = |shift: u32| {
-        let sc = (s >> shift) & 0xFF;
-        let dc = (d >> shift) & 0xFF;
-        (sc + (dc * inv + 127) / 255).min(255) << shift
-    };
-    ch(24) | ch(16) | ch(8) | ch(0)
-}
-
 // ---------- Direct2D ----------
 
 struct Factories {
@@ -394,6 +266,7 @@ fn with_factories<T>(f: impl FnOnce(&Factories) -> T) -> Option<T> {
 
 /// Tạo sẵn factory Direct2D/DirectWrite và nạp font, để lần hiện overlay đầu tiên không chậm.
 pub fn warm_up() {
+    use chup_ui::FontMetrics as _;
     let t0 = std::time::Instant::now();
     if let Some(f) = Font::new(13.0, false, Align::Leading, false) {
         let _ = f.measure("Chụp", 100.0);
@@ -401,19 +274,9 @@ pub fn warm_up() {
     log::debug!("làm nóng Direct2D/DirectWrite mất {:?}", t0.elapsed());
 }
 
-pub fn rectf(x: f32, y: f32, w: f32, h: f32) -> D2D_RECT_F {
-    D2D_RECT_F { left: x, top: y, right: x + w, bottom: y + h }
-}
-
 /// Font chữ (DirectWrite). Kích thước theo physical px.
 pub struct Font {
     fmt: IDWriteTextFormat,
-}
-
-#[derive(Clone, Copy)]
-pub enum Align {
-    Leading,
-    Center,
 }
 
 impl Font {
@@ -443,13 +306,20 @@ impl Font {
         .flatten()
     }
 
+    pub fn from_spec(s: FontSpec) -> Option<Font> {
+        Self::new(s.px, s.semibold, s.align, s.wrap)
+    }
+
     fn layout(&self, text: &str, max_w: f32, max_h: f32) -> Option<IDWriteTextLayout> {
         let t: Vec<u16> = text.encode_utf16().collect();
         with_factories(|f| unsafe { f.dw.CreateTextLayout(&t, &self.fmt, max_w, max_h).ok() }).flatten()
     }
 
+}
+
+impl FontMetrics for Font {
     /// (rộng, cao) của chữ khi giới hạn bề rộng `max_w`.
-    pub fn measure(&self, text: &str, max_w: f32) -> (f32, f32) {
+    fn measure(&self, text: &str, max_w: f32) -> (f32, f32) {
         let Some(l) = self.layout(text, max_w, 10_000.0) else { return (0.0, 0.0) };
         let mut m = DWRITE_TEXT_METRICS::default();
         if unsafe { l.GetMetrics(&mut m) }.is_err() {
@@ -492,83 +362,88 @@ impl Canvas {
         unsafe { self.rt.BindDC(s.dc(), &RECT { left: 0, top: 0, right: s.w, bottom: s.h }).is_ok() }
     }
 
-    pub fn begin(&self, clear: Color) {
+    fn brush(&self, c: Color) -> Option<ID2D1SolidColorBrush> {
+        unsafe { self.rt.CreateSolidColorBrush(&d2d(c), None).ok() }
+    }
+}
+
+impl chup_ui::Canvas for Canvas {
+    type Font = Font;
+    type Image = ID2D1Bitmap;
+
+    /// Bitmap Direct2D từ ảnh RGBA thẳng (đổi sang BGRA premultiplied).
+    fn image(&self, img: &image::RgbaImage) -> Option<ID2D1Bitmap> {
+        let (w, h) = img.dimensions();
+        let buf = chup_ui::pixels::premultiply(img);
+        let props = D2D1_BITMAP_PROPERTIES {
+            pixelFormat: D2D1_PIXEL_FORMAT { format: DXGI_FORMAT_B8G8R8A8_UNORM, alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED },
+            dpiX: 96.0,
+            dpiY: 96.0,
+        };
         unsafe {
-            self.rt.BeginDraw();
-            self.rt.SetTransform(&Matrix3x2::identity());
-            self.rt.Clear(Some(&clear.d2d()));
+            self.rt
+                .CreateBitmap(D2D_SIZE_U { width: w, height: h }, Some(buf.as_ptr() as *const _), w * 4, &props)
+                .ok()
         }
     }
 
-    /// Như `begin` nhưng giữ nguyên pixel đang có (vẽ chồng lên).
-    pub fn begin_over(&self) {
+    fn image_size(&self, img: &ID2D1Bitmap) -> (f32, f32) {
+        let D2D_SIZE_F { width, height } = unsafe { img.GetSize() };
+        (width, height)
+    }
+
+    fn begin(&self, clear: Color) {
+        unsafe {
+            self.rt.BeginDraw();
+            self.rt.SetTransform(&Matrix3x2::identity());
+            self.rt.Clear(Some(&d2d(clear)));
+        }
+    }
+
+    fn begin_over(&self) {
         unsafe {
             self.rt.BeginDraw();
             self.rt.SetTransform(&Matrix3x2::identity());
         }
     }
 
-    /// Chỉ vẽ trong `r` cho tới `pop_clip` (vẽ lại một phần: ngoài vùng đó là khung cũ, vẽ chồng sẽ đậm dần).
-    pub fn push_clip(&self, r: D2D_RECT_F) {
-        unsafe { self.rt.PushAxisAlignedClip(&r, D2D1_ANTIALIAS_MODE_ALIASED) };
+    fn push_clip(&self, r: RectF) {
+        unsafe { self.rt.PushAxisAlignedClip(&d2r(r), D2D1_ANTIALIAS_MODE_ALIASED) };
     }
 
-    pub fn pop_clip(&self) {
+    fn pop_clip(&self) {
         unsafe { self.rt.PopAxisAlignedClip() };
     }
 
-    pub fn end(&self) {
+    fn end(&self) {
         if let Err(e) = unsafe { self.rt.EndDraw(None, None) } {
             log::warn!("Direct2D EndDraw: {e}");
         }
     }
 
-    fn brush(&self, c: Color) -> Option<ID2D1SolidColorBrush> {
-        unsafe { self.rt.CreateSolidColorBrush(&c.d2d(), None).ok() }
-    }
-
-    pub fn fill_round(&self, r: D2D_RECT_F, radius: f32, c: Color) {
+    fn fill_round(&self, r: RectF, radius: f32, c: Color) {
         if let Some(b) = self.brush(c) {
-            let rr = D2D1_ROUNDED_RECT { rect: r, radiusX: radius, radiusY: radius };
+            let rr = D2D1_ROUNDED_RECT { rect: d2r(r), radiusX: radius, radiusY: radius };
             unsafe { self.rt.FillRoundedRectangle(&rr, &b) };
         }
     }
 
-    pub fn stroke_round(&self, r: D2D_RECT_F, radius: f32, width: f32, c: Color) {
+    fn stroke_round(&self, r: RectF, radius: f32, width: f32, c: Color) {
         if let Some(b) = self.brush(c) {
-            let rr = D2D1_ROUNDED_RECT { rect: r, radiusX: radius, radiusY: radius };
+            let rr = D2D1_ROUNDED_RECT { rect: d2r(r), radiusX: radius, radiusY: radius };
             unsafe { self.rt.DrawRoundedRectangle(&rr, &b, width, None) };
         }
     }
 
-    /// Bóng đổ giả: vài lớp viền mờ dần quanh hình (Direct2D software không có blur rẻ).
-    pub fn shadow(&self, r: D2D_RECT_F, radius: f32, spread: f32, dy: f32, c: Color) {
-        let steps = spread.max(1.0).round() as i32;
-        for i in (1..=steps).rev() {
-            let k = i as f32;
-            let a = c.a * (1.0 - k / (steps as f32 + 1.0)) / steps as f32 * 2.0;
-            let rr = D2D_RECT_F { left: r.left - k, top: r.top - k + dy, right: r.right + k, bottom: r.bottom + k + dy };
-            self.fill_round(rr, radius + k, c.with_alpha(a));
-        }
-    }
-
-    pub fn text(&self, text: &str, font: &Font, r: D2D_RECT_F, c: Color) {
+    fn text(&self, text: &str, font: &Font, r: RectF, c: Color) {
         let Some(b) = self.brush(c) else { return };
         let t: Vec<u16> = text.encode_utf16().collect();
         unsafe {
-            self.rt.DrawText(
-                &t,
-                &font.fmt,
-                &r,
-                &b,
-                D2D1_DRAW_TEXT_OPTIONS_NONE,
-                DWRITE_MEASURING_MODE_NATURAL,
-            )
+            self.rt.DrawText(&t, &font.fmt, &d2r(r), &b, D2D1_DRAW_TEXT_OPTIONS_NONE, DWRITE_MEASURING_MODE_NATURAL)
         };
     }
 
-    /// Vẽ icon 24×24 vào ô vuông cạnh `size` tại (x, y).
-    pub fn icon(&self, icon: Icon, x: f32, y: f32, size: f32, c: Color) {
+    fn icon(&self, icon: Icon, x: f32, y: f32, size: f32, c: Color) {
         let Some(b) = self.brush(c) else { return };
         let k = size / 24.0;
         let m = Matrix3x2 { M11: k, M12: 0.0, M21: 0.0, M22: k, M31: x, M32: y };
@@ -581,7 +456,7 @@ impl Canvas {
                         self.rt.DrawEllipse(&e, &b, 2.0, &f.round);
                     }
                     Shape::Rect { x, y, w, h, rx } => {
-                        let rr = D2D1_ROUNDED_RECT { rect: rectf(x, y, w, h), radiusX: rx, radiusY: rx };
+                        let rr = D2D1_ROUNDED_RECT { rect: d2r(rectf(x, y, w, h)), radiusX: rx, radiusY: rx };
                         self.rt.DrawRoundedRectangle(&rr, &b, 2.0, &f.round);
                     }
                     Shape::Stroke(cmds) => {
@@ -601,45 +476,7 @@ impl Canvas {
         });
     }
 
-    /// Bitmap Direct2D từ ảnh RGBA thẳng (đổi sang BGRA premultiplied).
-    pub fn bitmap(&self, img: &image::RgbaImage) -> Option<ID2D1Bitmap> {
-        let (w, h) = img.dimensions();
-        let mut buf = Vec::with_capacity((w * h) as usize);
-        for p in img.pixels() {
-            let [r, g, b, a] = p.0;
-            let pm = |c: u8| (c as u32 * a as u32 + 127) / 255;
-            buf.push(((a as u32) << 24) | (pm(r) << 16) | (pm(g) << 8) | pm(b));
-        }
-        let props = D2D1_BITMAP_PROPERTIES {
-            pixelFormat: D2D1_PIXEL_FORMAT { format: DXGI_FORMAT_B8G8R8A8_UNORM, alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED },
-            dpiX: 96.0,
-            dpiY: 96.0,
-        };
-        unsafe {
-            self.rt
-                .CreateBitmap(D2D_SIZE_U { width: w, height: h }, Some(buf.as_ptr() as *const _), w * 4, &props)
-                .ok()
-        }
-    }
-
-    /// Tô `r` (bo góc) bằng ảnh, cắt giữa kiểu `object-fit: cover`.
-    pub fn image_cover(&self, bmp: &ID2D1Bitmap, r: D2D_RECT_F, radius: f32) {
-        unsafe {
-            let D2D_SIZE_F { width: bw, height: bh } = bmp.GetSize();
-            if bw <= 0.0 || bh <= 0.0 {
-                return;
-            }
-            let (dw, dh) = (r.right - r.left, r.bottom - r.top);
-            let k = (dw / bw).max(dh / bh);
-            let tx = r.left + (dw - bw * k) / 2.0;
-            let ty = r.top + (dh - bh * k) / 2.0;
-            self.image_at(bmp, r, radius, (tx, ty), k);
-        }
-    }
-
-    /// Tô `r` (bo góc `radius`) bằng ảnh đặt góc trên-trái tại `origin`, phóng `scale` lần
-    /// (ảnh ngoài `r` bị cắt: dùng cho Preview phóng to trong khung).
-    pub fn image_at(&self, bmp: &ID2D1Bitmap, r: D2D_RECT_F, radius: f32, origin: (f32, f32), scale: f32) {
+    fn image_at(&self, bmp: &ID2D1Bitmap, r: RectF, radius: f32, origin: (f32, f32), scale: f32) {
         let (tx, ty, k) = (origin.0, origin.1, scale);
         unsafe {
             let props = D2D1_BITMAP_BRUSH_PROPERTIES {
@@ -652,7 +489,7 @@ impl Canvas {
                 return;
             };
             brush.SetTransform(&Matrix3x2 { M11: k, M12: 0.0, M21: 0.0, M22: k, M31: tx, M32: ty });
-            let rr = D2D1_ROUNDED_RECT { rect: r, radiusX: radius, radiusY: radius };
+            let rr = D2D1_ROUNDED_RECT { rect: d2r(r), radiusX: radius, radiusY: radius };
             let b: ID2D1Brush = brush.cast().unwrap();
             self.rt.FillRoundedRectangle(&rr, &b);
         }
@@ -704,14 +541,13 @@ fn path_geometry(f: &ID2D1Factory, cmds: &[Cmd], filled: bool) -> Option<ID2D1Ge
 
 /// Vẽ chữ trong 1 "viên thuốc" (nền bo tròn) thành surface riêng, để ghép vào overlay.
 pub fn pill(text: &str, font_px: f32, pad_x: f32, pad_y: f32, radius: f32, bg: Color, fg: Color) -> Option<Surface> {
+    use chup_ui::Canvas as _;
     let font = Font::new(font_px, false, Align::Center, false)?;
-    let (tw, th) = font.measure(text, 10_000.0);
-    let (w, h) = ((tw + pad_x * 2.0).ceil(), (th + pad_y * 2.0).ceil());
+    let (w, h) = chup_ui::canvas::pill_size(&font, text, pad_x, pad_y);
     let s = Surface::new(w as i32, h as i32)?;
     let c = Canvas::new(&s)?;
-    c.begin(Color::rgba(0, 0, 0, 0.0));
-    c.fill_round(rectf(0.0, 0.0, w, h), radius.min(h / 2.0), bg);
-    c.text(text, &font, rectf(0.0, 0.0, w, h), fg);
+    c.begin(Color::CLEAR);
+    chup_ui::canvas::paint_pill(&c, &font, text, w, h, radius, bg, fg);
     c.end();
     drop(c);
     Some(s)
@@ -737,13 +573,12 @@ impl PillPainter {
 
     /// Vẽ `text`, trả về kích thước dùng được (góc trên-trái của surface).
     pub fn paint(&mut self, text: &str, bg: Color, fg: Color) -> (i32, i32) {
-        let (tw, th) = self.font.measure(text, 10_000.0);
-        let w = ((tw + self.pad.0 * 2.0).ceil() as i32).min(self.surface.w);
-        let h = ((th + self.pad.1 * 2.0).ceil() as i32).min(self.surface.h);
-        self.canvas.begin(Color::rgba(0, 0, 0, 0.0));
-        let r = rectf(0.0, 0.0, w as f32, h as f32);
-        self.canvas.fill_round(r, self.radius.min(h as f32 / 2.0), bg);
-        self.canvas.text(text, &self.font, r, fg);
+        use chup_ui::Canvas as _;
+        let (pw, ph) = chup_ui::canvas::pill_size(&self.font, text, self.pad.0, self.pad.1);
+        let w = (pw as i32).min(self.surface.w);
+        let h = (ph as i32).min(self.surface.h);
+        self.canvas.begin(Color::CLEAR);
+        chup_ui::canvas::paint_pill(&self.canvas, &self.font, text, w as f32, h as f32, self.radius, bg, fg);
         self.canvas.end();
         (w, h)
     }

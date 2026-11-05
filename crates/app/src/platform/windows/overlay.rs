@@ -14,6 +14,7 @@ use chup_core::{
     autoselect::is_click,
     coords::{MonitorInfo, Rect},
 };
+use chup_ui::overlay::{self as ui_overlay, HINT_BG, HINT_FONT_DIP, HINT_PAD, HINT_TOP_DIP, HOLE_PX, LABEL_BG};
 use windows::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, WPARAM},
     System::Threading::{AttachThreadInput, GetCurrentThreadId},
@@ -35,10 +36,6 @@ use super::{
     util::{cursor_pos, hiword, loword},
     win::{self, emit, Handler},
 };
-
-const DIM: Color = Color::rgba(0, 0, 0, 0.4);
-/// Gần như trong suốt nhưng vẫn nhận chuột.
-const HOLE_PX: u32 = 0x0100_0000;
 
 struct Sprite {
     s: Surface,
@@ -122,13 +119,9 @@ impl Overlay {
         let t_alloc = t0.elapsed();
         if self.st.borrow().hint.is_none() || self.st.borrow().hint_auto != auto {
             let k = self.mon.scale as f32;
-            let white = Color::rgba(255, 255, 255, 1.0);
             let text = if auto { chup_core::i18n::t().hint_select_auto } else { chup_core::i18n::t().hint_select };
             self.st.borrow_mut().hint_auto = auto;
-            let hint = pill(text, 13.0 * k, 12.0 * k, 6.0 * k, 999.0, Color::rgba(0, 0, 0, 0.7), white).map(|s| {
-                let at = Rect::new((w - s.w) / 2, self.s(24.0), s.w as u32, s.h as u32);
-                Sprite { s, at }
-            });
+            let hint = self.hint_sprite(text, k);
             self.st.borrow_mut().hint = hint;
         }
         let t_hint = t0.elapsed();
@@ -224,26 +217,37 @@ impl Overlay {
         *st = State { hint, hint_auto, ..State::default() };
     }
 
+    /// Sprite dòng gợi ý ở giữa mép trên.
+    fn hint_sprite(&self, text: &str, k: f32) -> Option<Sprite> {
+        let (px, py) = (HINT_PAD.0 * k, HINT_PAD.1 * k);
+        pill(text, HINT_FONT_DIP * k, px, py, 999.0, HINT_BG, Color::WHITE).map(|s| {
+            let at = ui_overlay::hint_rect((s.w, s.h), self.mon.rect.w as i32, self.s(HINT_TOP_DIP));
+            Sprite { s, at }
+        })
+    }
+
+    /// Bộ vẽ nhãn "W × H" (rộng tối đa `max_w` DIP).
+    fn label_painter(&self, max_w: f64) -> Option<PillPainter> {
+        use chup_ui::overlay::{LABEL_FONT_DIP, LABEL_PAD, LABEL_RADIUS_DIP};
+        let k = self.mon.scale as f32;
+        PillPainter::new(LABEL_FONT_DIP * k, LABEL_PAD.0 * k, LABEL_PAD.1 * k, LABEL_RADIUS_DIP * k, (self.s(max_w), self.s(30.0)))
+    }
+
     /// Vẽ nhãn "W × H" (physical px) cho `sel`, trả về chỗ đặt: dưới vùng chọn, sát đáy thì lên trên.
     fn place_label(&self, st: &mut State, sel: Rect) -> Option<Rect> {
-        let (w, h) = (self.mon.rect.w as i32, self.mon.rect.h as i32);
-        let k = self.mon.scale as f32;
+        let mon = (self.mon.rect.w as i32, self.mon.rect.h as i32);
         if st.label.is_none() {
-            st.label = PillPainter::new(12.0 * k, 6.0 * k, 2.0 * k, 4.0 * k, (self.s(160.0), self.s(30.0)));
+            st.label = self.label_painter(160.0);
         }
         let text = format!("{} × {}", sel.w, sel.h);
         let mut size = st.label_at.map(|a| (a.w as i32, a.h as i32));
         if text != st.label_text || size.is_none() {
             if let Some(p) = st.label.as_mut() {
-                size = Some(p.paint(&text, Color::rgba(0, 0, 0, 0.75), Color::rgba(255, 255, 255, 1.0)));
+                size = Some(p.paint(&text, LABEL_BG, Color::WHITE));
             }
             st.label_text = text;
         }
-        let (lw, lh) = size?;
-        let (gap, max_x) = (self.s(6.0), w - self.s(110.0));
-        let below = sel.bottom() + gap;
-        let ly = if below + lh > h { sel.y - gap - lh } else { below };
-        Some(Rect::new(sel.x.min(max_x).max(0), ly.max(2), lw as u32, lh as u32))
+        Some(ui_overlay::label_rect(sel, size?, mon, self.s(6.0), self.s(110.0)))
     }
 
     fn on_drag(&self, x: i32, y: i32) {
@@ -277,17 +281,8 @@ fn paint(st: &mut State, dirty: Rect) {
     let hl = auto::highlight(st).filter(|_| !st.dragging);
     let State { surface, sel, hint, label, label_at, start, .. } = st;
     let Some(s) = surface.as_mut() else { return };
-    s.fill(dirty, DIM.px());
     // Khung tự động: bên trong sáng như vùng đang kéo.
-    if let Some(inside) = hl.and_then(|h| h.intersect(&dirty)) {
-        s.fill(inside, HOLE_PX);
-    }
-    if let Some(sel) = sel {
-        if let Some(hole) = sel.intersect(&dirty) {
-            s.fill(hole, HOLE_PX);
-        }
-        s.outline_outside(*sel, 1, Color::rgba(255, 255, 255, 0.95).px());
-    }
+    ui_overlay::paint_live(&mut s.px(), dirty, hl, *sel, HOLE_PX);
     if start.is_none() {
         if let Some(h) = hint.as_mut() {
             if h.at.intersect(&dirty).is_some() {

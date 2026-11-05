@@ -13,6 +13,7 @@ path = "src/main.rs"
 
 [dependencies]
 chup-core = { path = "../core" }
+chup-ui = { path = "../ui" }
 chup-ocr-proto = { path = "../ocr-proto" }
 log = { version = "0.4", features = ["std"] }
 chrono = "0.4"

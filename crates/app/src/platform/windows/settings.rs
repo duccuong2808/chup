@@ -1464,7 +1464,8 @@ impl Handler for Settings {
                     }
                     (ID_PV_SIZE, CBN_SELCHANGE) => {
                         let v = 30 + 20 * combo_sel(h.pv_size).clamp(0, 3);
-                        self.patch(json!({ "preview": { "size": v } }))
+                        // Chọn mức mới thì bỏ tỉ lệ đã học từ lần kéo mép trước.
+                        self.patch(json!({ "preview": { "size": v, "sizeScale": 100 } }))
                     }
                     (ID_PV_OPACITY, CBN_SELCHANGE) => {
                         let v = 100 - 10 * combo_sel(h.pv_op).clamp(0, 8);

@@ -314,6 +314,15 @@ impl Preview {
         }
     }
 
+    /// Kéo mép xong: báo App để nhớ tỉ lệ so với cỡ tự tính.
+    fn save_size(&self) {
+        self.sync_pos();
+        let st = self.st.borrow();
+        if let (Some(v), Some(img)) = (st.view, st.img.as_ref()) {
+            emit(Action::PreviewResized { rect: v.rect, img: img.dimensions(), zoom: v.zoom });
+        }
+    }
+
     fn edge(&self, x: i32, y: i32) -> Option<Grip> {
         let band = (EDGE * self.scale()).round() as i32;
         let st = self.st.borrow();
@@ -346,13 +355,18 @@ impl Preview {
     }
 
     fn magnify(&self, steps: Option<i32>, anchor: (i32, i32)) {
+        self.set_zoom(|v, dims| match steps {
+            Some(n) => preview::magnify_at(v, dims, n, anchor),
+            None => preview::unmagnify(v),
+        });
+    }
+
+    /// Đổi zoom, hiện nhãn % rồi vẽ lại. Cửa sổ giữ nguyên cỡ và chỗ.
+    fn set_zoom(&self, f: impl FnOnce(View, (u32, u32)) -> View) {
         let scale = {
             let mut st = self.st.borrow_mut();
             let (Some(v), Some(img)) = (st.view, st.img.as_ref()) else { return };
-            let nv = match steps {
-                Some(n) => preview::magnify_at(v, img.dimensions(), n, anchor),
-                None => preview::unmagnify(v),
-            };
+            let nv = f(v, img.dimensions());
             st.view = Some(nv);
             nv.scale()
         };
@@ -672,9 +686,18 @@ impl Preview {
         }
         let (resized, panned, moved) = {
             let mut st = self.st.borrow_mut();
-            (st.resize.take().is_some(), st.pan.take().is_some(), st.moving.take().is_some())
+            // Chỉ nhớ khung khi cửa sổ thật sự đổi chỗ: bấm suông không được ghi đè khung người dùng đã chọn.
+            let moved = st.moving.take().is_some_and(|(r, _)| r != self.panel.rect());
+            // Bấm vào mép mà không kéo: không phải chọn cỡ.
+            let view = st.view;
+            let resized = st.resize.take().is_some_and(|(_, s, _)| view.is_some_and(|v| (v.rect.w, v.rect.h) != (s.rect.w, s.rect.h)));
+            (resized, st.pan.take().is_some(), moved)
         };
-        if resized || moved {
+        if resized {
+            self.save_size();
+            return;
+        }
+        if moved {
             self.save_box();
             return;
         }
@@ -711,6 +734,16 @@ impl Preview {
             self.sync_pos();
             self.magnify(Some(steps), self.local(wp));
         }
+    }
+
+    /// Chụm/xoè 2 ngón: phóng to quanh con trỏ như lăn chuột (SPEC 17). `delta` cộng dồn được nên dùng `exp`.
+    fn on_pinch(&self, wp: (i32, i32), delta: f64) {
+        if self.st.borrow().pan.is_some() {
+            return;
+        }
+        self.sync_pos();
+        let anchor = self.local(wp);
+        self.set_zoom(|v, dims| preview::zoom_at(v, dims, delta.exp(), anchor));
     }
 
     fn on_key(&self, code: u16, mods: Mods) {
@@ -773,6 +806,7 @@ impl Handler for Preview {
             Ev::Up { p } => self.on_up(p),
             Ev::RightDown { p } => self.context_menu(p),
             Ev::Scroll { p, dy, lines, mods } => self.on_scroll(p, dy, lines, mods),
+            Ev::Magnify { p, delta } => self.on_pinch(p, delta),
             Ev::Key { code, mods } => self.on_key(code, mods),
             _ => {}
         }

@@ -754,13 +754,18 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-preview-design.md`.
 
 - **Một cửa sổ Preview**: bấm thumbnail khác thì thay ảnh.
 - **Chỗ và cỡ mở** (Cài đặt "Chỗ mở"):
-  - **Chỗ và cỡ lần trước** (mặc định): người dùng kéo, đổi cỡ là Chup nhớ khung. Lần sau ảnh vừa
-    khung đó (tối đa 1:1) và bám cạnh khung gần cạnh màn hình hơn (khung ở góc dưới-phải thì ảnh mới cũng
-    nằm sát góc đó). Chưa có khung, hoặc màn hình chứa khung đã bị rút: mở như "Cạnh stack".
+  - **Chỗ lần trước** (mặc định): kéo di chuyển là Chup nhớ chỗ. Lần sau ảnh bám cạnh khung cũ gần cạnh màn hình
+    hơn (khung ở góc dưới-phải thì ảnh mới cũng nằm sát góc đó). Khung cũ không quyết định cỡ. Chưa có khung, hoặc
+    màn hình chứa khung đã bị rút: mở như "Cạnh stack".
   - **Cạnh stack**: sát mép trong của stack, căn đáy work area, cách 12 DIP.
   - **Giữa màn hình**.
-  - Cỡ khi mở (khi không dùng khung lần trước): ảnh tối đa 30/50/70/90% work area mỗi chiều (mặc định 50%),
-    không phóng quá 1:1. Ảnh nhỏ hơn 160×48 DIP thì cửa sổ giữ cỡ đó, ảnh nằm giữa trên nền tối.
+  - **Cỡ khi mở tự tính theo từng ảnh**, không phụ thuộc ảnh trước: lấy mức nhỏ nhất của (1) 1:1, (2) diện tích tối
+    đa f² work area, f là mức trong Cài đặt (mặc định 50%, tức 25% diện tích), (3) mỗi cạnh tối đa 90% work area.
+    Ảnh cùng tỉ lệ màn hình cỡ như f mỗi chiều; ảnh dải ngang, trang dọc được dài hơn để đọc được.
+    Ảnh nhỏ hơn 160×48 DIP thì cửa sổ giữ cỡ đó, ảnh nằm giữa trên nền tối.
+  - **Kéo mép** (khi "Chỗ lần trước"): nhớ tỉ lệ so với cỡ tự tính (50–200%), áp vào giới hạn (2) của ảnh sau. Chỉ học
+    từ ảnh công thức đã thu nhỏ: kéo mép ảnh đang 1:1 (ảnh nhỏ, ảnh dải) chỉ chỉnh riêng ảnh đó. Đổi mức trong Cài đặt
+    thì bỏ tỉ lệ đã học.
   - Mở trên màn hình đang có stack.
 - **Chỉnh trực tiếp**:
   - Kéo bất kỳ đâu (ngoài nút) để di chuyển.
@@ -768,6 +773,8 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-preview-design.md`.
     tỉ lệ ảnh, mép đối diện đứng yên. Đổi cỡ khi đang phóng to thì vẫn thấy đúng phần ảnh đó.
   - Lăn chuột: phóng to/thu nhỏ ảnh **trong khung** quanh con trỏ (×1,25 mỗi nấc), cửa sổ giữ nguyên cỡ và chỗ.
     Nhỏ nhất là vừa khung (thấy cả ảnh), lớn nhất 800% ảnh gốc.
+  - macOS: chụm/xoè 2 ngón trên trackpad cũng phóng to/thu nhỏ quanh con trỏ, đổi mượt không theo nấc. Cuộn (chuột,
+    2 ngón) tính theo chiều tay thật, không theo Natural Scrolling: đẩy lên là phóng to.
   - Đang phóng to: kéo (ngoài nút, mép, chữ) để kéo ảnh, con trỏ hình mũi tên 4 chiều; ảnh không kéo ra ngoài khung.
     `Alt` + kéo vẫn di chuyển cửa sổ.
   - `+`/`-` phóng to/thu nhỏ quanh tâm khung, `0` về vừa khung.
@@ -802,12 +809,12 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-preview-design.md`.
 ### 17.4 Config
 
 ```json
-"preview": { "alwaysOnTop": true, "opacity": 100, "position": "remember", "size": 50, "last": null }
+"preview": { "alwaysOnTop": true, "opacity": 100, "position": "remember", "size": 50, "last": null, "sizeScale": 100 }
 ```
 
 - `position`: `remember` | `stack` | `center`. `last`: khung lần trước `{x, y, w, h}` (physical px toàn desktop),
-  chỉ ghi khi `position = remember`.
-- `opacity` kẹp 20–100, `size` kẹp 20–100.
+  chỉ ghi khi `position = remember`, chỉ dùng để chọn chỗ mở. `sizeScale`: tỉ lệ % đã học từ kéo mép.
+- `opacity` kẹp 20–100, `size` kẹp 20–100, `sizeScale` kẹp 50–200.
 - Tự nhận diện chữ nằm ở `"ocr": { "language": "en", "autoPreview": true }` (mục 15).
 
 ### 17.5 Ngân sách
@@ -821,7 +828,8 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-preview-design.md`.
 - [ ] Kéo di chuyển, kéo 4 mép và 4 góc đổi cỡ giữ tỉ lệ.
 - [ ] Lăn chuột phóng to quanh con trỏ, cửa sổ không đổi cỡ; đang phóng to thì kéo ảnh được, `Alt` + kéo di chuyển
       cửa sổ; `0` về vừa khung. Chọn chữ vẫn đúng chỗ khi phóng to.
-- [ ] Đóng rồi mở ảnh khác: nằm đúng chỗ và vừa khung lần trước. Đổi "Chỗ mở" sang Cạnh stack / Giữa màn hình: đúng chỗ.
+- [ ] Đóng rồi mở ảnh khác: nằm đúng chỗ lần trước, cỡ tự tính theo ảnh mới. Đổi "Chỗ mở" sang Cạnh stack / Giữa màn hình: đúng chỗ.
+- [ ] Kéo di chuyển Preview của ảnh dải rồi mở ảnh lớn: ảnh lớn không bị nhỏ theo. Kéo mép ảnh lớn rồi mở ảnh lớn khác: to, nhỏ theo tỉ lệ đó.
 - [ ] Ctrl + lăn chuột đổi opacity; Cài đặt đổi opacity và "luôn nằm trên" thì áp ngay cho Preview đang mở.
 - [ ] Ghim: tắt thì click app khác che được Preview; bật thì luôn nằm trên.
 - [ ] Copy, Folder, ✕, `Esc`, `Ctrl+C`, Alt+F4 (ẩn, mở lại được).

@@ -1,7 +1,8 @@
 //! Tự kiểm tra cho dev (`CHUP_SELFTEST=<thư mục>`): chạy luồng chính bằng sự kiện bơm thẳng vào handler của cửa
 //! sổ (như chuột thật), xuất ảnh mỗi cửa sổ đang hiện ra PNG để xem, rồi thoát. Không cần quyền Accessibility.
 //! Freeze dùng ảnh tổng hợp nếu chưa có quyền Screen Recording; có quyền thì chụp thật một vùng nhỏ.
-//! Kết quả: `<thư mục>/*.png`, `<thư mục>/shots/*.png`, và log `~/Library/Logs/Chup/chup.log`.
+//! Kết quả: `<thư mục>/*.png`, `<thư mục>/shots/*.png`. Config, log, cache nằm ở `<thư mục>/home` (`util::dirs`), không
+//! đụng dữ liệu thật: log ở `<thư mục>/home/Library/Logs/Chup/chup.log`.
 
 use std::path::{Path, PathBuf};
 
@@ -179,10 +180,24 @@ impl App {
                 save(&dir, "15-preview-select-word.png", p.snapshot());
                 p.inject(Ev::Scroll { p: (300, 80), dy: 3.0, lines: true, mods: Mods::default() });
                 save(&dir, "16-preview-zoom.png", p.snapshot());
+                p.inject(Ev::Magnify { p: (300, 80), delta: 0.4 });
+                save(&dir, "17-preview-pinch.png", p.snapshot());
                 p.inject(Ev::Key { code: key::ESCAPE, mods: Mods::default() });
                 p.inject(Ev::Key { code: key::ESCAPE, mods: Mods::default() });
                 log::info!("selftest: Preview đóng: {}", !p.is_visible());
-                next(12, 500);
+                // Khung dải mỏng của ảnh trước không được làm nhỏ ảnh lớn (SPEC 17.2).
+                self.model.set_preview_box(Rect::new(1000, 1000, 1400, 120));
+                let big = dir.join("big.png");
+                let _ = RgbaImage::from_pixel(2226, 1616, image::Rgba([200, 220, 240, 255])).save(&big);
+                self.open_preview_for_test(big);
+                next(12, 1500);
+            }
+            12 => {
+                let p = self.preview_ref();
+                let size = p.snapshot().map(|i| i.dimensions());
+                log::info!("selftest: ảnh 2226×1616 sau khung 1400×120 mở với cửa sổ {size:?}");
+                p.inject(Ev::Key { code: key::ESCAPE, mods: Mods::default() });
+                next(13, 500);
             }
             _ => {
                 log::info!("selftest: xong");

@@ -492,6 +492,15 @@ impl Preview {
         }
     }
 
+    /// Kéo mép xong: báo App để nhớ tỉ lệ so với cỡ tự tính.
+    fn save_size(&self) {
+        self.sync_pos();
+        let st = self.st.borrow();
+        if let (Some(v), Some(img)) = (st.view, st.img.as_ref()) {
+            emit(Action::PreviewResized { rect: v.rect, img: img.dimensions(), zoom: v.zoom });
+        }
+    }
+
     /// Mép để đổi cỡ dưới điểm (toạ độ cục bộ); lề bóng đổ cũng tính là mép. Nút toolbar được ưu tiên.
     fn edge(&self, x: i32, y: i32) -> Option<Grip> {
         let band = (EDGE * self.scale()).round() as i32;
@@ -590,10 +599,14 @@ impl Preview {
 
     /// Kết thúc kéo mép (thả chuột hoặc mất capture).
     fn resize_end(&self) -> bool {
-        if self.st.borrow_mut().resize.take().is_none() {
-            return false;
+        let Some((_, start, _)) = self.st.borrow_mut().resize.take() else { return false };
+        // Bấm vào mép mà không kéo: không phải chọn cỡ.
+        let view = self.st.borrow().view;
+        if view.is_some_and(|v| (v.rect.w, v.rect.h) != (start.rect.w, start.rect.h)) {
+            self.save_size();
+        } else {
+            self.save_box();
         }
-        self.save_box();
         true
     }
 

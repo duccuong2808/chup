@@ -64,8 +64,10 @@ pub enum Ev {
     Leave,
     RightDown { p: (i32, i32) },
     RightUp,
-    /// `dy` > 0: cuộn lên. `lines`: chuột có nấc (không phải trackpad).
+    /// `dy` > 0: tay đẩy lên, bất kể Natural Scrolling. `lines`: chuột có nấc (không phải trackpad).
     Scroll { p: (i32, i32), dy: f64, lines: bool, mods: Mods },
+    /// Chụm/xoè 2 ngón trên trackpad. `delta` > 0: xoè ra (`NSEvent.magnification`).
+    Magnify { p: (i32, i32), delta: f64 },
     Key { code: u16, mods: Mods },
     /// Modifier đổi (Shift: tạm tắt tự chọn vùng).
     Flags,
@@ -205,7 +207,14 @@ define_class!(
         #[unsafe(method(scrollWheel:))]
         fn scroll_wheel(&self, e: &NSEvent) {
             let lines = !e.hasPreciseScrollingDeltas();
-            self.send(Ev::Scroll { p: self.px(e), dy: e.scrollingDeltaY(), lines, mods: Mods::from_flags(e.modifierFlags()) });
+            // Natural Scrolling (mặc định của macOS) đảo dấu delta: trả về chiều tay thật.
+            let dy = if e.isDirectionInvertedFromDevice() { -e.scrollingDeltaY() } else { e.scrollingDeltaY() };
+            self.send(Ev::Scroll { p: self.px(e), dy, lines, mods: Mods::from_flags(e.modifierFlags()) });
+        }
+
+        #[unsafe(method(magnifyWithEvent:))]
+        fn magnify_with_event(&self, e: &NSEvent) {
+            self.send(Ev::Magnify { p: self.px(e), delta: e.magnification() });
         }
 
         #[unsafe(method(keyDown:))]

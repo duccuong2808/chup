@@ -53,7 +53,11 @@ pub struct Dirs {
 
 pub fn dirs() -> Dirs {
     const ID: &str = "app.chup.desktop";
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/tmp"));
+    // Tự kiểm tra có config, log, khoá riêng: không đụng config thật, chạy được song song với app đang dùng.
+    let home = super::selftest::dir()
+        .map(|d| d.join("home"))
+        .or_else(|| std::env::var_os("HOME").map(PathBuf::from))
+        .unwrap_or_else(|| PathBuf::from("/tmp"));
     let lib = home.join("Library");
     Dirs {
         config_dir: lib.join("Application Support").join(ID),

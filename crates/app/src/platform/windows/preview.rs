@@ -23,7 +23,7 @@ use chup_core::{
     selection::Grip,
 };
 use chup_ui::{
-    preview::{self as ui_preview, Btn, EDGE, PILL_MS, TEXT_PAD},
+    preview::{self as ui_preview, Btn, EDGE, PILL_MS, SPIN_MS, TEXT_PAD},
     rectf, Canvas as _,
 };
 use image::RgbaImage;
@@ -64,6 +64,8 @@ const CMD_COPY_IMAGE: usize = 3;
 const TIMER_PILL: usize = 1;
 /// Đổi DPI: vẽ lại sau, không vẽ ngay trong message Windows gửi giữa lúc đang đẩy ảnh lên cửa sổ.
 const TIMER_DPI: usize = 3;
+/// Vòng "bận" của nút [T] quay khi đang OCR ảnh này.
+const TIMER_SPIN: usize = 4;
 const MK_CONTROL: usize = 0x0008;
 
 /// Kết quả `compose`: khung đã vẽ, vị trí, độ đục, và vùng đổi (`None` = cả cửa sổ; rỗng = không đổi gì).
@@ -107,6 +109,9 @@ struct State {
     pan: Option<(View, (i32, i32))>,
     /// File đang được OCR (nút [T] vẽ "bận" khi trùng file đang xem).
     ocr_busy: Option<PathBuf>,
+    /// Vòng "bận": bước quay và lúc bắt đầu OCR (nhãn "lần đầu có thể lâu").
+    spin: u32,
+    busy_since: Option<std::time::Instant>,
     /// Chữ nhận diện được của ảnh đang xem.
     text: Option<Arc<TextLayout>>,
     /// Vùng chọn chữ: (vị trí neo, vị trí đang kéo tới).
@@ -431,7 +436,10 @@ impl Preview {
         let (w, h) = (v.rect.w as f32, v.rect.h as f32);
         st.hits = ui_preview::bar_hits(w, k);
         let draw_bar = st.hovering;
-        let draw_pill = st.pill.is_some();
+        let busy = (st.ocr_busy.as_ref() == Some(&st.path)).then_some(st.spin);
+        let busy_text = busy.and(st.busy_since).map(|t0| ui_preview::busy_label(t0.elapsed().as_millis()));
+        let label = st.pill.as_deref().or(busy_text);
+        let draw_pill = label.is_some();
         // Vùng chọn chữ: rect theo toạ độ ảnh gốc -> toạ độ surface, cắt theo khung ảnh.
         let sel_rects: Vec<_> = match (st.text.as_ref(), st.sel, st.img.as_ref()) {
             (Some(t), Some(sel), Some(img)) => ui_preview::sel_rects(t, sel, v, img.dimensions(), m, k),
@@ -457,12 +465,12 @@ impl Preview {
             Some(d) => out.copy_rect_from(base, d),
             None => out.pixels().copy_from_slice(base.pixels()),
         }
-        if (draw_bar || draw_pill || !sel_rects.is_empty() || dirty.is_some()) && c.bind(out) {
+        if (draw_bar || draw_pill || busy.is_some() || !sel_rects.is_empty() || dirty.is_some()) && c.bind(out) {
             c.begin_over();
             if let Some(d) = dirty {
                 c.push_clip(rectf(d.x as f32, d.y as f32, d.w as f32, d.h as f32));
             }
-            let pill_font = st.pill.as_ref().and_then(|_| Font::from_spec(ui_preview::pill_font(k)));
+            let pill_font = label.and_then(|_| Font::from_spec(ui_preview::pill_font(k)));
             let top = ui_preview::Top {
                 k,
                 m,
@@ -470,9 +478,9 @@ impl Preview {
                 sel: &sel_rects,
                 bar: draw_bar,
                 hover: st.hover,
-                busy: st.ocr_busy.as_ref() == Some(&st.path),
+                busy,
                 topmost: st.topmost,
-                pill: st.pill.as_deref().zip(pill_font.as_ref()),
+                pill: label.zip(pill_font.as_ref()),
             };
             ui_preview::paint_top(c, &gfx::theme(), &top);
             if dirty.is_some() {
@@ -630,15 +638,30 @@ impl Preview {
         self.repaint();
     }
 
-    /// File đang được OCR (`None` = không OCR gì): nút [T] của đúng file đó vẽ vòng "bận".
+    /// File đang được OCR (`None` = không OCR gì): nút [T] của đúng file đó quay vòng "bận", kèm nhãn
+    /// "Đang nhận diện chữ…" (chup-27e).
     pub fn set_ocr_busy(&self, busy: Option<PathBuf>) {
         let changed = {
             let mut st = self.st.borrow_mut();
             let changed = st.ocr_busy != busy;
+            if changed {
+                st.busy_since = busy.as_ref().map(|_| std::time::Instant::now());
+                st.spin = 0;
+            }
             st.ocr_busy = busy;
             changed
         };
-        if changed && self.open.get() {
+        if !changed {
+            return;
+        }
+        unsafe {
+            if self.st.borrow().ocr_busy.is_some() {
+                SetTimer(Some(self.hwnd), TIMER_SPIN, SPIN_MS, None);
+            } else {
+                let _ = KillTimer(Some(self.hwnd), TIMER_SPIN);
+            }
+        }
+        if self.open.get() {
             self.repaint();
         }
     }
@@ -1075,6 +1098,21 @@ impl Handler for Preview {
                     v if v == VK_OEM_MINUS.0 || v == VK_SUBTRACT.0 => self.magnify(Some(-1), self.local_center()),
                     v if v == 0x30 || v == VK_NUMPAD0.0 => self.magnify(None, self.local_center()),
                     _ => return None,
+                }
+                Some(LRESULT(0))
+            }
+            WM_TIMER if wp.0 == TIMER_SPIN => {
+                let busy = {
+                    let mut st = self.st.borrow_mut();
+                    st.spin = st.spin.wrapping_add(1);
+                    st.ocr_busy.is_some()
+                };
+                if !busy {
+                    unsafe {
+                        let _ = KillTimer(Some(hwnd), TIMER_SPIN);
+                    }
+                } else if self.open.get() {
+                    self.repaint();
                 }
                 Some(LRESULT(0))
             }

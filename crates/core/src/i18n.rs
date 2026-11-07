@@ -196,6 +196,8 @@ strings! {
     ocr_pack_broken: "Gói OCR tiếng Việt bị lỗi. Hãy xoá gói rồi tải lại trong Cài đặt.",
         "The Vietnamese OCR files are damaged. Remove and download them again in Settings.";
     ocr_read_image_failed: "Không đọc được ảnh để OCR", "Couldn't read the image for OCR";
+    ocr_running: "Đang nhận diện chữ…", "Recognizing text…";
+    ocr_running_slow: "Đang nhận diện chữ… Lần đầu có thể mất khoảng 1 phút", "Recognizing text… The first time can take about a minute";
     dl_title: "Chup – OCR tiếng Việt", "Chup – Vietnamese OCR";
     dl_confirm: "OCR tiếng Việt cần tải thêm {} từ GitHub.\n\nTải về bây giờ?",
         "Vietnamese OCR needs to download {} from GitHub.\n\nDownload now?";

@@ -151,6 +151,8 @@ fn init(mtm: MainThreadMarker) {
     observe(&dist, &NSString::from_str(SHOW_SETTINGS), || emit(Action::OpenSettings));
 
     std::mem::forget(win::after(1000, gfx::warm_up));
+    // Sau CoreText: Vision (nặng hơn nhiều, chạy ở worker OCR) — chup-27e.
+    std::mem::forget(win::emit_after(3000, || Action::OcrWarmUp));
     log::info!("sẵn sàng");
     util::log_memory("khởi động xong");
     selftest::start();

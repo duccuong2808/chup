@@ -30,6 +30,8 @@ pub struct Job {
     pub id: u32,
     pub lang: OcrLanguage,
     pub img: RgbaImage,
+    /// Job làm nóng (chup-27e): chỉ để Vision chuẩn bị model, không báo kết quả cho App.
+    pub warm: bool,
 }
 
 pub struct Worker {
@@ -52,6 +54,13 @@ impl Worker {
         let _ = self.tx.send(job);
     }
 
+    /// Cho Vision chuẩn bị model nhận diện chữ ở nền (chup-27e): lần đầu sau khi cài hay cập nhật Chup, macOS
+    /// biên dịch model gần 1 phút. Làm sẵn lúc rảnh để lần bấm [T] / mở Preview đầu tiên không phải chờ.
+    /// Job thật gửi tới trước khi job này bắt đầu sẽ thay nó.
+    pub fn warm_up(&self, lang: OcrLanguage, img: RgbaImage) {
+        self.submit(Job { id: 0, lang, img, warm: true });
+    }
+
     /// Huỷ job đang chạy / đang chờ: không báo kết quả.
     pub fn cancel(&self) {
         self.cancelled.store(u32::MAX, Ordering::Release);
@@ -67,6 +76,11 @@ fn run(rx: Receiver<Job>, cancelled: Arc<AtomicU32>) {
         cancelled.store(0, Ordering::Release);
         let t0 = std::time::Instant::now();
         let r = objc2::rc::autoreleasepool(|_| recognize(&job.img, job.lang));
+        if job.warm {
+            // Lần đầu sau khi cài / cập nhật, Vision biên dịch model (~50 s); các lần sau vài trăm ms.
+            log::info!("ocr (Vision): làm nóng mất {:?} ({})", t0.elapsed(), if r.is_ok() { "ok" } else { "lỗi" });
+            continue;
+        }
         log::info!("ocr (Vision): {}×{} mất {:?}", job.img.width(), job.img.height(), t0.elapsed());
         if cancelled.load(Ordering::Acquire) != 0 {
             log::info!("ocr: job {} đã huỷ, bỏ kết quả", job.id);

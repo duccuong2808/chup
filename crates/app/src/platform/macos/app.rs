@@ -18,6 +18,7 @@ use super::{
     autoselect,
     capture as sck,
     frame::Frame,
+    gfx,
     hotkeys::{Hotkeys, Kind},
     overlay::Overlay,
     preview::Preview,
@@ -85,6 +86,8 @@ pub enum Action {
     PreviewResized { rect: Rect, img: (u32, u32), zoom: f64 },
     PreviewOcr(std::path::PathBuf),
     OcrDone(u32, Result<chup_core::ocr::TextLayout, String>),
+    /// Rảnh sau khi khởi động: cho Vision chuẩn bị model (chup-27e).
+    OcrWarmUp,
     CopyText(String),
     /// Chưa có quyền Screen Recording: hỏi người dùng (sau khi App xử lý xong Action hiện tại).
     AskPermission,
@@ -377,6 +380,10 @@ impl App {
                 _ => self.model.ocr_request(OcrSource::Preview(path)),
             },
             Action::OcrDone(id, r) => self.model.ocr_done(id, r),
+            Action::OcrWarmUp => {
+                self.ocr_warm_up();
+                vec![]
+            }
             Action::CopyText(text) => vec![Effect::CopyText(text)],
             Action::AskPermission => {
                 // Ngoài lúc App bận: hộp thoại modal chạy vòng lặp riêng, Action vẫn được xử lý.
@@ -871,13 +878,26 @@ impl App {
         self.apply(fx);
     }
 
+    /// Ảnh nhỏ có chữ (Vision chỉ nạp model nhận dạng khi tìm thấy vùng chữ) gửi cho worker làm nóng.
+    fn ocr_warm_up(&self) {
+        if self.model.ocr_busy.is_some() {
+            return;
+        }
+        let white = chup_ui::Color::WHITE;
+        let black = chup_ui::Color::rgba(0, 0, 0, 1.0);
+        let img = gfx::pill("Chụp màn hình Chup 2026", 28.0, 24.0, 16.0, 0.0, white, black).and_then(|s| gfx::to_rgba_image(&s));
+        if let Some(img) = img {
+            self.ocr.warm_up(self.model.config.ocr.language, img);
+        }
+    }
+
     fn start_ocr(&mut self, job: OcrJob) {
         let img = match &job.source {
             OcrSource::Preview(p) => self.preview.image_of(p).or_else(|| image::open(p).ok().map(|i| i.to_rgba8())),
             OcrSource::Image { .. } => self.ocr_image.take(),
         };
         match img {
-            Some(img) => self.ocr.submit(vision::Job { id: job.id, lang: job.lang, img }),
+            Some(img) => self.ocr.submit(vision::Job { id: job.id, lang: job.lang, img, warm: false }),
             None => {
                 let fx = self.model.ocr_done(job.id, Err(t().ocr_read_image_failed.into()));
                 self.apply(fx);

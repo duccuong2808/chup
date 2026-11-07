@@ -34,6 +34,21 @@ pub const SHADOW_SPREAD: f32 = 8.0;
 pub const SHADOW_DY: f32 = 2.0;
 /// Nhãn zoom / opacity hiện bao lâu (ms).
 pub const PILL_MS: u32 = 1200;
+/// Vòng "bận" của nút [T]: số chấm và thời gian mỗi bước quay (ms).
+pub const SPIN_DOTS: u32 = 8;
+pub const SPIN_MS: u32 = 100;
+/// OCR chạy quá lâu chừng này (ms) thì nhãn báo thêm "lần đầu có thể lâu" (Vision chuẩn bị model ~1 phút).
+pub const BUSY_SLOW_MS: u128 = 4000;
+
+/// Nhãn báo đang OCR (hiện ở chỗ nhãn zoom khi không có nhãn khác), theo thời gian đã chạy.
+pub fn busy_label(elapsed_ms: u128) -> &'static str {
+    let s = chup_core::i18n::t();
+    if elapsed_ms >= BUSY_SLOW_MS {
+        s.ocr_running_slow
+    } else {
+        s.ocr_running
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Btn {
@@ -218,11 +233,24 @@ pub struct Top<'a, F> {
     /// Chuột trong cửa sổ: vẽ toolbar.
     pub bar: bool,
     pub hover: Option<Btn>,
-    /// Đang OCR ảnh này: nút [T] vẽ vòng "bận".
-    pub busy: bool,
+    /// Đang OCR ảnh này: bước quay của vòng "bận" trên nút [T]. Nút [T] hiện cả khi chuột ở ngoài cửa sổ.
+    pub busy: Option<u32>,
     pub topmost: bool,
     /// Nhãn zoom / opacity và font của nó.
     pub pill: Option<(&'a str, &'a F)>,
+}
+
+/// Vòng chấm quay giữa ô `r`: chấm đầu (bước `step`) đậm nhất, các chấm sau nhạt dần.
+fn paint_spinner<C: Canvas>(c: &C, r: RectF, step: u32, k: f32) {
+    let (cx, cy) = ((r.left + r.right) / 2.0, (r.top + r.bottom) / 2.0);
+    let (ring, dot) = (6.0 * k, 2.6 * k);
+    for i in 0..SPIN_DOTS {
+        let a = std::f32::consts::TAU * i as f32 / SPIN_DOTS as f32 - std::f32::consts::FRAC_PI_2;
+        let age = (step + SPIN_DOTS - i) % SPIN_DOTS;
+        let alpha = 1.0 - 0.8 * age as f32 / (SPIN_DOTS - 1) as f32;
+        let (x, y) = (cx + ring * a.cos(), cy + ring * a.sin());
+        c.fill_round(rectf(x - dot / 2.0, y - dot / 2.0, dot, dot), dot / 2.0, Color::WHITE.with_alpha(alpha));
+    }
 }
 
 /// Vẽ lớp trên (giữa `begin_over` và `end`).
@@ -233,33 +261,38 @@ pub fn paint_top<C: Canvas>(c: &C, theme: &Theme, t: &Top<C::Font>) {
     for r in t.sel {
         c.fill_round(*r, 2.0 * k, sel_color);
     }
-    if t.bar {
-        let b = BTN * k;
-        let x0 = bar_x0(w, k);
-        for (i, (btn, icon)) in BUTTONS.iter().enumerate() {
-            let r = rectf(
-                mf + x0 + i as f32 * (b + BTN_GAP * k),
-                mf + BAR_PAD * k,
-                b,
-                b,
-            );
-            let hot = t.hover == Some(*btn);
-            let busy = *btn == Btn::Ocr && t.busy;
-            let icon = if busy { Icon::Busy } else { *icon };
-            let bg = if (*btn == Btn::Pin && t.topmost) || busy {
-                theme.accent.with_alpha(if hot { 1.0 } else { 0.9 })
-            } else {
-                Color::rgba(0, 0, 0, if hot { 0.85 } else { 0.6 })
-            };
-            c.fill_round(r, 6.0 * k, bg);
-            let is = 16.0 * k;
-            c.icon(
-                icon,
-                r.left + (b - is) / 2.0,
-                r.top + (b - is) / 2.0,
-                is,
-                Color::WHITE,
-            );
+    let b = BTN * k;
+    let x0 = bar_x0(w, k);
+    for (i, (btn, icon)) in BUTTONS.iter().enumerate() {
+        let busy = *btn == Btn::Ocr && t.busy.is_some();
+        if !t.bar && !busy {
+            continue;
+        }
+        let r = rectf(
+            mf + x0 + i as f32 * (b + BTN_GAP * k),
+            mf + BAR_PAD * k,
+            b,
+            b,
+        );
+        let hot = t.hover == Some(*btn);
+        let bg = if (*btn == Btn::Pin && t.topmost) || busy {
+            theme.accent.with_alpha(if hot { 1.0 } else { 0.9 })
+        } else {
+            Color::rgba(0, 0, 0, if hot { 0.85 } else { 0.6 })
+        };
+        c.fill_round(r, 6.0 * k, bg);
+        match t.busy.filter(|_| busy) {
+            Some(step) => paint_spinner(c, r, step, k),
+            None => {
+                let is = 16.0 * k;
+                c.icon(
+                    *icon,
+                    r.left + (b - is) / 2.0,
+                    r.top + (b - is) / 2.0,
+                    is,
+                    Color::WHITE,
+                );
+            }
         }
     }
     if let Some((text, f)) = t.pill {
@@ -330,13 +363,15 @@ mod tests {
             sel: &[],
             bar: true,
             hover: None,
-            busy: true,
+            busy: Some(3),
             topmost: true,
             pill: Some(("120%", &f)),
         };
         paint_top(&c, &theme, &t);
         let ops = c.ops();
-        assert!(ops.iter().any(|o| matches!(o, Op::Icon(Icon::Busy, ..))));
+        assert!(!ops.iter().any(|o| matches!(o, Op::Icon(Icon::Text, ..))), "nút [T] vẽ vòng quay thay icon");
+        let dots = ops.iter().filter(|o| matches!(o, Op::Fill(_, _, col) if col.a > 0.0 && (col.r, col.g, col.b) == (1.0, 1.0, 1.0))).count();
+        assert_eq!(dots, SPIN_DOTS as usize);
         let accent_fills = ops
             .iter()
             .filter(|o| matches!(o, Op::Fill(_, _, col) if *col == theme.accent.with_alpha(0.9)))
@@ -345,6 +380,38 @@ mod tests {
         assert!(ops
             .iter()
             .any(|o| matches!(o, Op::Text(s, ..) if s == "120%")));
+    }
+
+    #[test]
+    fn busy_shows_ocr_button_without_hover() {
+        let theme = Theme::new(true);
+        let top = |busy| Top {
+            k: 1.0,
+            m: 10,
+            size: (300.0, 200.0),
+            sel: &[],
+            bar: false,
+            hover: None,
+            busy,
+            topmost: false,
+            pill: None::<(&str, &FixedFont)>,
+        };
+        let c = RecordingCanvas::default();
+        paint_top(&c, &theme, &top(None));
+        assert!(c.ops().is_empty(), "chuột ngoài cửa sổ, không bận: không vẽ toolbar");
+        let c = RecordingCanvas::default();
+        paint_top(&c, &theme, &top(Some(0)));
+        let accent = c
+            .ops()
+            .into_iter()
+            .filter(|o| matches!(o, Op::Fill(_, _, col) if *col == theme.accent.with_alpha(0.9)))
+            .count();
+        assert_eq!(accent, 1, "chỉ nút [T]");
+    }
+
+    #[test]
+    fn busy_label_mentions_first_run_when_slow() {
+        assert_ne!(busy_label(0), busy_label(BUSY_SLOW_MS));
     }
 
     #[test]

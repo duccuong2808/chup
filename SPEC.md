@@ -591,6 +591,12 @@ pub trait OcrEngine {
   để chọn chữ (không quay "bận", không toast, tiếng Việt thiếu gói thì bỏ qua không hỏi). Bấm [T] lúc đó thì đợi
   job nền xong rồi copy. Job khác (Freeze, Chụp text) thay job nền; xong thì job nền chạy lại nếu Preview còn mở.
   Đóng Preview huỷ job nền.
+- **Đang OCR ảnh của Preview** (job người dùng yêu cầu, chup-27e): nút [T] hiện cả khi chuột ở ngoài cửa sổ, quay vòng
+  chấm, kèm nhãn "Đang nhận diện chữ…" ở chỗ nhãn zoom; sau 4 s nhãn báo thêm "Lần đầu có thể mất khoảng 1 phút".
+  Preview vẫn phóng, kéo, đóng được (OCR chạy ở worker). Bấm [T] lần nữa thì huỷ.
+- **macOS: làm nóng Vision.** Lần đầu sau khi cài hay cập nhật Chup, Vision biên dịch model gần 1 phút (cache theo bản
+  build). 3 s sau khi khởi động, worker OCR nhận diện một ảnh chữ nhỏ ở nền để lần dùng đầu không phải chờ; job thật tới
+  trước khi nó bắt đầu thì thay nó.
 - Bbox (dòng, từ, ký tự) được đổi về toạ độ ảnh gốc (bỏ hệ số phóng ×2 hoặc thu nhỏ của Windows OCR).
   Tesseract trả vị trí từng ký tự; Windows OCR chỉ có bbox từ nên vị trí ký tự được ước lượng theo độ rộng chữ.
 

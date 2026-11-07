@@ -134,7 +134,7 @@ Crate mới (target macOS, pin `=`, kiểm signature trên docs.rs trước khi 
 | Cửa sổ | Loại | Level | Nhận chuột | Focus |
 |---|---|---|---|---|
 | overlay (mỗi `NSScreen` một cái) | `NSPanel` `.nonactivatingPanel`, không viền | `.screenSaver` (trên menu bar, Dock) | có | key window (nhận Esc), không activate app |
-| frame | `NSPanel` | `.statusBar` | Normal: có; Faded: `ignoresMouseEvents = true` | không |
+| frame | `NSPanel` `.nonactivatingPanel` | `.statusBar` | Normal: có; Faded: `ignoresMouseEvents = true` | key window ngay sau khi chọn vùng và khi bấm viền (Enter chụp, Esc đóng; chup-48i), không activate app |
 | toolbar, stack | `NSPanel` | `.statusBar` | có | không |
 | Cài đặt | `NSWindow` thường | normal | có | có (activate app khi mở, trả về `.accessory` khi đóng) |
 | Preview | `NSPanel` không viền, **không** `.nonactivatingPanel` | `.floating` (hoặc normal) | có | có: app thành `.regular` + activate khi mở, bấm vào cũng activate; trả về `.accessory` khi đóng |

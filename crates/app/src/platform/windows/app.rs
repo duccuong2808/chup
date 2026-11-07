@@ -40,6 +40,10 @@ pub enum Action {
     FrameMoved(Rect),
     ToggleFade,
     CloseRegion,
+    /// Frame được / mất bàn phím (chup-48i).
+    FrameFocus(bool),
+    /// Phím Enter / Esc gửi tới frame.
+    FrameKey(chup_core::model::FrameKey),
     Capture,
     Grabbed(Result<RgbaImage, String>),
     /// Nút [T] trên toolbar Live.
@@ -226,6 +230,8 @@ impl App {
             Action::FrameMoved(outer) => self.model.frame_moved(outer),
             Action::ToggleFade => self.model.toggle_fade(),
             Action::CloseRegion => self.model.close_region(),
+            Action::FrameFocus(on) => self.model.frame_focus(on),
+            Action::FrameKey(k) => self.model.frame_key(k),
             Action::Capture => self.model.request_capture(),
             Action::Grabbed(res) => self.on_grabbed(res),
             Action::CaptureText => self.model.request_capture_text(),
@@ -538,10 +544,11 @@ impl App {
                 }
                 Effect::UpdateFrameMode => self.frame.set_faded(self.model.mode == FrameMode::Faded),
                 Effect::HideFrame => self.frame.hide(),
+                Effect::FocusFrame => self.frame.take_keys(),
                 Effect::LayoutToolbar => {
                     if let Some(r) = self.model.toolbar_rect() {
                         let faded = self.model.mode == FrameMode::Faded;
-                        self.toolbar.show(r, self.model.region_scale(), faded);
+                        self.toolbar.show(r, self.model.region_scale(), faded, self.model.enter_captures());
                     }
                 }
                 Effect::HideToolbar => self.toolbar.hide(),

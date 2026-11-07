@@ -4,14 +4,15 @@
 
 use std::cell::RefCell;
 
-use chup_core::coords::Rect;
+use chup_core::{coords::Rect, model::FrameKey};
 use chup_ui::frame::{self as ui_frame, Part};
 use windows::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, WPARAM},
     UI::{
-        Input::KeyboardAndMouse::{GetCapture, ReleaseCapture, SetCapture},
+        Input::KeyboardAndMouse::{GetCapture, ReleaseCapture, SetCapture, SetFocus, VK_ESCAPE, VK_RETURN},
         WindowsAndMessaging::{
-            GetWindowLongPtrW, LoadCursorW, SetCursor, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE,
+            GetForegroundWindow, GetWindowLongPtrW, LoadCursorW, SetCursor, SetForegroundWindow, SetWindowLongPtrW,
+            SetWindowPos, ShowWindow, GWL_EXSTYLE, WA_INACTIVE, WM_ACTIVATE, WM_KEYDOWN,
             HTCLIENT, HTTRANSPARENT, HWND_TOPMOST, IDC_ARROW, IDC_SIZEALL, IDC_SIZENESW, IDC_SIZENS, IDC_SIZENWSE,
             IDC_SIZEWE, MA_NOACTIVATE, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SW_HIDE, SW_SHOWNOACTIVATE,
             WM_CAPTURECHANGED, WM_LBUTTONDBLCLK, WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_MOUSEMOVE, WM_NCHITTEST,
@@ -111,6 +112,22 @@ impl Frame {
         st.surface = None;
     }
 
+    /// Nhận bàn phím (Enter chụp, Esc đóng vùng; chup-48i): làm foreground window. Chỉ gọi ngay sau thao tác chuột
+    /// của người dùng trên Chup (thả chuột trên overlay, bấm viền frame) nên Windows cho phép. Không đổi z-order hay
+    /// cách nhận chuột; bấm sang app khác là frame mất bàn phím (WM_ACTIVATE).
+    pub fn take_keys(&self) {
+        if !self.st.borrow().visible {
+            return;
+        }
+        unsafe {
+            let _ = SetForegroundWindow(self.hwnd);
+            let _ = SetFocus(Some(self.hwnd));
+            if GetForegroundWindow() != self.hwnd {
+                log::debug!("frame: Windows không cho nhận bàn phím");
+            }
+        }
+    }
+
     /// Faded: cả cửa sổ click-through (WS_EX_TRANSPARENT).
     fn set_click_through(&self, on: bool) {
         unsafe {
@@ -194,9 +211,23 @@ fn present_sized(s: &Surface, hwnd: HWND, outer: Rect) {
 }
 
 impl Handler for Frame {
-    fn handle(&self, hwnd: HWND, msg: u32, _wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
+    fn handle(&self, hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
         match msg {
             WM_MOUSEACTIVATE => Some(LRESULT(MA_NOACTIVATE as isize)),
+            WM_ACTIVATE => {
+                emit(Action::FrameFocus((wp.0 & 0xFFFF) as u32 != WA_INACTIVE));
+                // DefWindowProc đặt keyboard focus cho cửa sổ vừa active.
+                None
+            }
+            WM_KEYDOWN => {
+                let key = match wp.0 as u16 {
+                    k if k == VK_RETURN.0 => FrameKey::Enter,
+                    k if k == VK_ESCAPE.0 => FrameKey::Escape,
+                    _ => return Some(LRESULT(0)),
+                };
+                emit(Action::FrameKey(key));
+                Some(LRESULT(0))
+            }
             WM_NCHITTEST => {
                 let o = self.st.borrow().outer;
                 let (x, y) = (loword(lp.0) - o.x, hiword(lp.0) - o.y);
@@ -223,6 +254,8 @@ impl Handler for Frame {
                 if let Some(part) = self.hit(lx, ly) {
                     let outer = self.st.borrow().outer;
                     self.st.borrow_mut().drag = Some(Drag { part, cursor: cursor_pos(), outer });
+                    // Bấm viền frame: Chup nhận lại bàn phím (Enter chụp).
+                    self.take_keys();
                     unsafe { SetCapture(hwnd) };
                 }
                 Some(LRESULT(0))

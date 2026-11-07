@@ -267,6 +267,7 @@ strings! {
     hint_freeze_failed: "Không chụp được màn hình này · Esc để huỷ", "Couldn't capture this screen · Esc to cancel";
     hint_ocr: "Chụp text · Kéo để chọn vùng có chữ · Esc để huỷ", "Capture text · Drag over the text · Esc to cancel";
     btn_capture: "Chụp", "Capture";
+    btn_capture_enter: "Chụp ↵", "Capture ↵";
     btn_fade: "Mờ", "Fade";
     btn_save: "Lưu", "Save";
     btn_text: "Chữ", "Text";

@@ -137,13 +137,14 @@ pub const LIVE_BUTTONS: [LiveBtn; 4] = [
     LiveBtn::Close,
 ];
 
-/// Bộ nút toolbar Live (chữ theo ngôn ngữ giao diện). `faded`: nút Mờ đang bật.
-pub fn live_items(faded: bool) -> [BarButton; 4] {
+/// Bộ nút toolbar Live (chữ theo ngôn ngữ giao diện). `faded`: nút Mờ đang bật. `enter`: Enter đang chụp được
+/// (frame giữ bàn phím, chup-48i): nút Chụp kèm "↵".
+pub fn live_items(faded: bool, enter: bool) -> [BarButton; 4] {
     let t = chup_core::i18n::t();
     [
         BarButton {
             icon: Icon::Camera,
-            label: t.btn_capture,
+            label: if enter { t.btn_capture_enter } else { t.btn_capture },
             primary: true,
             active: false,
         },

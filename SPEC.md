@@ -83,7 +83,12 @@
    - Overlay ẩn đi.
    - Frame hiện quanh region, Toolbar hiện cạnh frame.
    - Frame ở **Normal mode**.
-5. Bấm **[Chụp]** trên toolbar hoặc nhấn hotkey **Chụp** (`Ctrl+Alt+X`; trước v3 là `Ctrl+Alt+S`, hay bị app khác giữ):
+   - Frame **nhận bàn phím** (chup-48i): Windows là foreground window, macOS là key window của panel nonactivating
+     (không activate app). Trong lúc đó `Enter` = **[Chụp]**, `Esc` = đóng vùng, nút Chụp trên toolbar ghi
+     **"Chụp ↵"**. Bấm (hay chuyển) sang app khác là frame mất bàn phím: `Enter` lại thuộc về app đó, nút về "Chụp".
+     Bấm viền frame (kéo / đổi cỡ) thì frame nhận lại bàn phím. Faded mode bỏ qua `Enter` / `Esc` (người dùng đang làm
+     việc ở app bên dưới). Không đăng ký `Enter` làm hotkey toàn cục. Logic ở `Model::frame_focus` / `frame_key`.
+5. Bấm **[Chụp]** trên toolbar, nhấn `Enter` khi frame đang giữ bàn phím, hoặc nhấn hotkey **Chụp** (`Ctrl+Alt+X`; trước v3 là `Ctrl+Alt+S`, hay bị app khác giữ):
    - Chụp nội dung **tại thời điểm bấm**.
    - Lưu PNG vào folder đã cấu hình.
    - Copy ảnh vào clipboard nếu bật cấu hình.
@@ -93,8 +98,9 @@
    - Faded mode: **giữ nguyên** frame để chụp tiếp.
 7. Huỷ:
    - Đang chọn vùng: nhấn `Esc`, hoặc click phải lên overlay.
-   - Sau khi đã có frame: bấm **[✕]** trên toolbar.
-   - **Không đăng ký `Esc` làm hotkey toàn cục** vì sẽ phá phím Esc của mọi app khác. `Esc` chỉ xử lý local khi overlay đang có focus.
+   - Sau khi đã có frame: bấm **[✕]** trên toolbar, hoặc `Esc` khi frame đang giữ bàn phím (bước 4).
+   - **Không đăng ký `Esc` làm hotkey toàn cục** vì sẽ phá phím Esc của mọi app khác. `Esc` chỉ xử lý local khi overlay
+     hoặc frame đang có focus.
 
 ### 5.2 Chế độ mờ (Faded mode)
 
@@ -353,7 +359,9 @@ Mục tiêu; đo thực tế ở bước 1.4 rồi chỉnh lại.
 - [ ] Faded mode: click, gõ phím, cuộn ở app bên dưới bình thường. Hotkey Chụp vẫn chụp đúng vùng.
 - [ ] Chụp 7 lần liên tiếp: stack chỉ còn 5 ảnh mới nhất, đủ 7 file trên ổ đĩa.
 - [ ] Kéo thumbnail thả vào được các đích sau: Explorer (copy file), ô upload của Chrome hoặc Arc, Zalo PC, Slack, Word, VS Code.
-- [ ] Chụp xong thì app đang dùng **không** mất focus.
+- [ ] Đang gõ ở app khác (đã bấm vào nó sau khi chọn vùng) rồi bấm [Chụp] hay hotkey Chụp: app đó **không** mất focus.
+- [ ] Chọn vùng xong nhấn `Enter`: chụp (nút ghi "Chụp ↵"). Chọn vùng, bấm sang Notepad / TextEdit gõ `Enter`: xuống dòng
+      bình thường, Chup không chụp, nút về "Chụp". Bấm viền frame rồi `Enter`: chụp. Faded: `Enter` không chụp.
 - [ ] Đổi folder lưu trong settings: ảnh tiếp theo vào folder mới, không cần restart.
 - [ ] Rút màn hình phụ khi frame đang nằm trên đó: không crash, frame đóng.
 - [ ] Đặt hotkey trùng với app khác: có báo lỗi, app vẫn chạy.
@@ -370,7 +378,7 @@ Mục tiêu; đo thực tế ở bước 1.4 rồi chỉnh lại.
     (mục 17.2).
   - Hotkey mặc định dùng `Ctrl+Cmd`: `Ctrl+Cmd+A` (chọn vùng), `Ctrl+Cmd+X` (chụp), `Ctrl+Cmd+Z` (Freeze). Tránh `Cmd+Shift+3/4/5` của hệ thống; không dùng F1 (phím độ sáng).
   - Màn hình Retina có scale 2. `Rect` vẫn là physical px toàn desktop: gốc mỗi màn hình = gốc (point) × scale lớn nhất, kích thước = point × scale của chính màn hình đó (không bao giờ chồng nhau).
-  - Overlay, frame, toolbar, stack là `NSPanel` không lấy focus (overlay thành key window để nhận Esc mà không activate app), hiện trên mọi Space và trên app toàn màn hình.
+  - Overlay, frame, toolbar, stack là `NSPanel` không lấy focus (overlay và frame thành key window để nhận Esc / Enter mà không activate app), hiện trên mọi Space và trên app toàn màn hình.
   - OCR dùng Apple Vision cho cả tiếng Việt và tiếng Anh: không có gói tải thêm, không có `chup-ocr.exe`.
   - Tự chọn vùng: `CGWindowListCopyWindowInfo` cho cửa sổ, `AXUIElement` cho phần tử (cần quyền Accessibility; chưa có thì chỉ khung cửa sổ). Khung từ ảnh chỉ ở Freeze (Live chưa chụp ngầm màn hình).
   - Mở cùng hệ thống bằng `SMAppService`. Phát hành `.app` trong `.dmg`.

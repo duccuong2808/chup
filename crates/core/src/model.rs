@@ -30,6 +30,13 @@ pub enum FrameMode {
     Faded,
 }
 
+/// Phím frame nhận khi đang giữ bàn phím (chup-48i).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrameKey {
+    Enter,
+    Escape,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToastKind {
     Info,
@@ -116,6 +123,8 @@ pub enum Effect {
     HideOverlays,
     /// Hiện frame quanh `Model::frame_outer()` theo `Model::mode`.
     ShowFrame,
+    /// Vùng vừa chọn bằng chuột: frame nhận bàn phím (Enter chụp, Esc đóng vùng; chup-48i). Không activate app.
+    FocusFrame,
     /// Mode của frame đổi (Normal <-> Faded): vẽ lại, đổi click-through.
     UpdateFrameMode,
     HideFrame,
@@ -178,6 +187,9 @@ pub struct Model {
     pub mode: FrameMode,
     /// Lề physical của cửa sổ frame quanh region (chứa viền và handle).
     pub frame_margin: i32,
+    /// Frame đang giữ bàn phím (là cửa sổ nhận phím): Enter / Esc thuộc về Chup. Người dùng bấm sang app khác thì
+    /// mất, Enter lại thuộc về app đó (chup-48i, SPEC 5.1).
+    pub frame_keys: bool,
     pub stack: Stack,
     /// Lỗi đăng ký hotkey: tên hotkey (`selectRegion`, `capture`) -> câu báo lỗi.
     pub hotkey_errors: BTreeMap<String, String>,
@@ -213,6 +225,7 @@ impl Model {
             last_region: None,
             mode: FrameMode::Hidden,
             frame_margin: 0,
+            frame_keys: false,
             stack: Stack::default(),
             hotkey_errors: BTreeMap::new(),
             capture_exclusion_ok: true,
@@ -260,8 +273,39 @@ impl Model {
         let mut fx = vec![Effect::HideOverlays];
         if rect.w >= 4 && rect.h >= 4 {
             fx.extend(self.open_region(rect));
+            // Người dùng vừa thả chuột trên overlay (Chup đang giữ bàn phím): frame nhận tiếp để Enter chụp được.
+            fx.push(Effect::FocusFrame);
         }
         fx
+    }
+
+    /// Frame được / mất bàn phím (lớp platform báo theo sự kiện của cửa sổ). Toolbar vẽ lại gợi ý "↵".
+    pub fn frame_focus(&mut self, on: bool) -> Vec<Effect> {
+        let on = on && self.mode != FrameMode::Hidden;
+        if self.frame_keys == on {
+            return vec![];
+        }
+        self.frame_keys = on;
+        if self.mode == FrameMode::Hidden {
+            return vec![];
+        }
+        vec![Effect::LayoutToolbar]
+    }
+
+    /// Có gợi ý "Enter để chụp" trên toolbar không: frame giữ phím và không Faded.
+    pub fn enter_captures(&self) -> bool {
+        self.frame_keys && self.mode == FrameMode::Normal
+    }
+
+    /// Phím gửi tới frame (chỉ tới khi frame giữ bàn phím). Faded: người dùng đang làm việc ở app bên dưới, bỏ qua.
+    pub fn frame_key(&mut self, key: FrameKey) -> Vec<Effect> {
+        if !self.enter_captures() {
+            return vec![];
+        }
+        match key {
+            FrameKey::Enter => self.request_capture(),
+            FrameKey::Escape => self.close_region(),
+        }
     }
 
     fn open_region(&mut self, rect: Rect) -> Vec<Effect> {
@@ -307,6 +351,7 @@ impl Model {
         }
         self.region = None;
         self.mode = FrameMode::Hidden;
+        self.frame_keys = false;
         vec![Effect::HideFrame, Effect::HideToolbar]
     }
 
@@ -841,12 +886,51 @@ mod tests {
         assert_eq!(m.start_selection(), vec![Effect::ShowOverlays]);
         assert!(m.start_selection().is_empty(), "đang chọn thì bỏ qua");
         let fx = m.select_region(Rect::new(2000, 100, 400, 300));
-        assert_eq!(fx, vec![Effect::HideOverlays, Effect::ShowFrame, Effect::LayoutToolbar]);
+        assert_eq!(fx, vec![Effect::HideOverlays, Effect::ShowFrame, Effect::LayoutToolbar, Effect::FocusFrame]);
         assert_eq!(m.frame_margin, 18, "màn hình 150%");
         assert_eq!(m.frame_outer(), Some(Rect::new(1982, 82, 436, 336)));
         let tb = m.toolbar_rect().unwrap();
         assert_eq!((tb.w, tb.h), (378, 66));
         assert!(tb.y >= 400 + 18, "toolbar nằm dưới frame");
+    }
+
+    #[test]
+    fn enter_captures_only_while_frame_has_keys() {
+        let mut m = model();
+        assert!(m.frame_focus(true).is_empty(), "chưa có vùng: bỏ qua");
+        assert!(!m.frame_keys);
+        m.select_region(Rect::new(100, 100, 200, 100));
+        assert!(m.frame_key(FrameKey::Enter).is_empty(), "frame chưa báo nhận phím");
+        assert_eq!(m.frame_focus(true), vec![Effect::LayoutToolbar], "toolbar vẽ gợi ý Enter");
+        assert!(m.enter_captures());
+        assert!(m.frame_focus(true).is_empty(), "không đổi thì không làm gì");
+        assert!(matches!(m.frame_key(FrameKey::Enter)[0], Effect::StartCapture(j) if j.rect == Rect::new(100, 100, 200, 100)));
+    }
+
+    #[test]
+    fn enter_belongs_to_other_app_after_focus_lost() {
+        let mut m = model();
+        m.select_region(Rect::new(100, 100, 200, 100));
+        m.frame_focus(true);
+        // Người dùng bấm sang Notepad / TextEdit.
+        assert_eq!(m.frame_focus(false), vec![Effect::LayoutToolbar]);
+        assert!(!m.enter_captures());
+        assert!(m.frame_key(FrameKey::Enter).is_empty());
+    }
+
+    #[test]
+    fn faded_ignores_enter_and_escape_closes() {
+        let mut m = model();
+        m.select_region(Rect::new(100, 100, 200, 100));
+        m.frame_focus(true);
+        m.toggle_fade();
+        assert!(!m.enter_captures());
+        assert!(m.frame_key(FrameKey::Enter).is_empty());
+        assert!(m.frame_key(FrameKey::Escape).is_empty());
+        m.toggle_fade();
+        assert_eq!(m.frame_key(FrameKey::Escape), vec![Effect::HideFrame, Effect::HideToolbar]);
+        assert!(!m.frame_keys, "đóng vùng thì hết giữ phím");
+        assert!(m.frame_focus(false).is_empty(), "frame ẩn báo mất focus: không làm gì");
     }
 
     #[test]

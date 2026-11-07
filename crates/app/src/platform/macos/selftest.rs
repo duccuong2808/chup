@@ -87,6 +87,9 @@ impl App {
                 next(2, 700);
             }
             2 => {
+                // Chọn vùng xong: frame giữ bàn phím, nút Chụp có "↵" (chup-48i).
+                log::info!("selftest: frame giữ bàn phím sau khi chọn vùng: {}", self.model.frame_keys);
+                self.frame_ref().inject(Ev::Focus(true));
                 save(&dir, "02-frame.png", self.frame_ref().snapshot());
                 save(&dir, "02-toolbar.png", self.toolbar_ref().snapshot());
                 // Rê chuột lên nút đầu (Chụp).

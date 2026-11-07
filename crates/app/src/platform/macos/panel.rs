@@ -73,6 +73,8 @@ pub enum Ev {
     Key { code: u16, mods: Mods },
     /// Modifier đổi (Shift: tạm tắt tự chọn vùng).
     Flags,
+    /// Cửa sổ thành / thôi là key window (nhận phím).
+    Focus(bool),
 }
 
 /// Mã phím ảo của macOS (kVK_*).
@@ -352,8 +354,29 @@ define_class!(
         fn can_become_main(&self) -> bool {
             false
         }
+
+        #[unsafe(method(becomeKeyWindow))]
+        fn become_key(&self) {
+            let _: () = unsafe { msg_send![super(self), becomeKeyWindow] };
+            self.notify_key(true);
+        }
+
+        #[unsafe(method(resignKeyWindow))]
+        fn resign_key(&self) {
+            let _: () = unsafe { msg_send![super(self), resignKeyWindow] };
+            self.notify_key(false);
+        }
     }
 );
+
+impl ChupPanel {
+    /// Báo handler của view nội dung (`Ev::Focus`).
+    fn notify_key(&self, on: bool) {
+        if let Some(v) = self.contentView().and_then(|v| v.downcast::<ChupView>().ok()) {
+            v.send(Ev::Focus(on));
+        }
+    }
+}
 
 /// Kiểu cửa sổ.
 #[derive(Clone, Copy, Debug)]

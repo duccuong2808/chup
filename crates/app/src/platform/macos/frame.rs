@@ -3,14 +3,14 @@
 
 use std::{cell::RefCell, rc::Rc};
 
-use chup_core::coords::Rect;
+use chup_core::{coords::Rect, model::FrameKey};
 use chup_ui::frame::{self as ui_frame, Part};
 use objc2::MainThreadMarker;
 
 use super::{
     app::Action,
     gfx::{self, Surface},
-    panel::{Cursor, Ev, Handler, Opts, Panel, LEVEL_UI},
+    panel::{key, Cursor, Ev, Handler, Opts, Panel, LEVEL_UI},
     util::cursor_pos,
     win::emit,
 };
@@ -38,7 +38,9 @@ pub struct Frame {
 
 impl Frame {
     pub fn create(mtm: MainThreadMarker) -> Rc<Frame> {
-        let panel = Panel::new(mtm, Opts { key: false, level: LEVEL_UI, activating: false });
+        // Làm key window được (không activate app): nhận Enter / Esc sau khi chọn vùng (chup-48i). Bấm viền frame cũng
+        // làm nó thành key lại.
+        let panel = Panel::new(mtm, Opts { key: true, level: LEVEL_UI, activating: false });
         let f = Rc::new(Frame { panel, st: RefCell::new(State::default()) });
         let weak: std::rc::Weak<dyn Handler> = Rc::downgrade(&f) as _;
         f.panel.set_handler(weak);
@@ -58,6 +60,18 @@ impl Frame {
         self.panel.set_ignores_mouse(faded);
         self.render();
         self.panel.show(false);
+    }
+
+    /// Nhận bàn phím (Enter chụp, Esc đóng vùng): làm key window, không activate app. Bấm sang app khác là mất.
+    pub fn take_keys(&self) {
+        if self.st.borrow().visible {
+            self.panel.show(true);
+        }
+    }
+
+    /// Tự kiểm tra (`CHUP_SELFTEST`): bơm sự kiện như thật.
+    pub fn inject(&self, ev: Ev) {
+        Handler::event(self, ev);
     }
 
     /// Tự kiểm tra (`CHUP_SELFTEST`): lấy ảnh đang hiện.
@@ -135,6 +149,9 @@ impl Handler for Frame {
             Ev::Up { .. } => {
                 self.st.borrow_mut().drag = None;
             }
+            Ev::Focus(on) => emit(Action::FrameFocus(on)),
+            Ev::Key { code: key::RETURN | key::KEYPAD_ENTER, .. } => emit(Action::FrameKey(FrameKey::Enter)),
+            Ev::Key { code: key::ESCAPE, .. } => emit(Action::FrameKey(FrameKey::Escape)),
             _ => {}
         }
     }

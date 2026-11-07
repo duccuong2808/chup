@@ -22,6 +22,8 @@ struct State {
     rect: Rect,
     scale: f64,
     faded: bool,
+    /// Enter đang chụp được (frame giữ bàn phím): nút Chụp hiện "↵".
+    enter: bool,
     visible: bool,
     hover: Option<Btn>,
     pressed: Option<Btn>,
@@ -44,12 +46,13 @@ impl Toolbar {
     }
 
     /// Đặt toolbar tại `rect` (physical) và hiện, không lấy focus.
-    pub fn show(&self, rect: Rect, scale: f64, faded: bool) {
+    pub fn show(&self, rect: Rect, scale: f64, faded: bool, enter: bool) {
         let was_visible = {
             let mut st = self.st.borrow_mut();
             st.rect = rect;
             st.scale = scale;
             st.faded = faded;
+            st.enter = enter;
             std::mem::replace(&mut st.visible, true)
         };
         self.render();
@@ -89,18 +92,18 @@ impl Toolbar {
     }
 
     fn render(&self) {
-        let (rect, k, faded, hover, pressed, inside) = {
+        let (rect, k, faded, enter, hover, pressed, inside) = {
             let st = self.st.borrow();
             if !st.visible {
                 return;
             }
-            (st.rect, st.scale as f32, st.faded, st.hover, st.pressed, st.inside)
+            (st.rect, st.scale as f32, st.faded, st.enter, st.hover, st.pressed, st.inside)
         };
         let (w, h) = (rect.w as i32, rect.h as i32);
         let Some(s) = Surface::new(w, h) else { return };
         let Some(c) = Canvas::new(&s) else { return };
         let font = Font::new(13.0 * k, false, Align::Leading, false);
-        let items = live_items(faded);
+        let items = live_items(faded, enter);
         let idx = |b: Option<Btn>| b.and_then(|b| LIVE_BUTTONS.iter().position(|x| *x == b));
         c.begin(Color::CLEAR);
         let rects = paint_bar(&c, font.as_ref(), &gfx::theme(), k, (w, h), &items, faded, idx(hover), idx(pressed));

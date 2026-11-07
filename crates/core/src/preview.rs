@@ -10,6 +10,11 @@ pub const MIN_OPACITY: u8 = 20;
 pub const ZOOM_STEP: f64 = 1.25;
 const MIN_ZOOM: f64 = 0.05;
 const MAX_ZOOM: f64 = 8.0;
+/// Cỡ tự tính: không cạnh nào vượt tỉ lệ này của work area (dải ngang, trang dọc dùng được gần hết chiều dài).
+const MAX_EDGE: f64 = 0.9;
+/// Tỉ lệ (%) so với cỡ tự tính mà người dùng chọn bằng cách kéo mép.
+pub const MIN_SIZE_SCALE: u16 = 50;
+pub const MAX_SIZE_SCALE: u16 = 200;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct View {
@@ -99,16 +104,27 @@ fn clamp_view(rect: Rect, work: Rect) -> Rect {
     Rect::new(clamp_into(rect.x, rect.w, work.x, work.w), clamp_into(rect.y, rect.h, work.y, work.h), rect.w, rect.h)
 }
 
-/// Zoom khi mở: vừa khung, không phóng to quá 1:1 (ảnh chụp phóng to chỉ mờ đi).
-fn open_zoom(img: (u32, u32), bw: f64, bh: f64, work: Rect) -> f64 {
+/// Zoom khi mở, tính từ chính ảnh (SPEC 17.2), không phụ thuộc ảnh trước: lấy mức nhỏ nhất của 1:1 (ảnh chụp phóng
+/// to chỉ mờ đi), diện tích tối đa `frac_pct`² work area (nhân thêm `user_pct`% người dùng đã chọn), và mỗi cạnh tối
+/// đa [`MAX_EDGE`]. Giới hạn theo diện tích nên ảnh cùng tỉ lệ màn hình cỡ như cũ, còn ảnh dải được dài hơn.
+pub fn auto_zoom(img: (u32, u32), work: Rect, frac_pct: u8, user_pct: u16) -> f64 {
+    let f = frac_pct as f64 / 100.0;
+    let budget = f * f * work.w as f64 * work.h as f64;
+    let by_area = (budget / (img.0.max(1) as f64 * img.1.max(1) as f64)).sqrt() * user_pct as f64 / 100.0;
+    let by_edge = fit(img, work.w as f64 * MAX_EDGE, work.h as f64 * MAX_EDGE);
     let (lo, hi) = zoom_range(img, work);
-    fit(img, bw, bh).min(1.0).clamp(lo, hi)
+    by_area.min(by_edge).min(1.0).clamp(lo, hi)
 }
 
-/// Mở giữa work area; ảnh tối đa `frac_pct`% work area mỗi chiều.
-pub fn open_center(img: (u32, u32), work: Rect, frac_pct: u8, min: (u32, u32)) -> View {
-    let f = frac_pct as f64 / 100.0;
-    let zoom = open_zoom(img, work.w as f64 * f, work.h as f64 * f, work);
+/// Người dùng kéo mép tới `zoom`: tỉ lệ (%) so với cỡ tự tính để áp cho ảnh sau. `None` khi ảnh đang 1:1 (ảnh nhỏ, ảnh
+/// dải): công thức không thu nhỏ nó thì kéo mép chỉ là chỉnh riêng ảnh đó, không phải chọn cỡ chung.
+pub fn learned_scale(img: (u32, u32), work: Rect, frac_pct: u8, zoom: f64) -> Option<u16> {
+    let base = auto_zoom(img, work, frac_pct, 100);
+    (base < 1.0).then(|| (zoom / base * 100.0).round().clamp(MIN_SIZE_SCALE as f64, MAX_SIZE_SCALE as f64) as u16)
+}
+
+/// Mở giữa work area với `zoom` (thường từ [`auto_zoom`]).
+pub fn open_center(img: (u32, u32), work: Rect, zoom: f64, min: (u32, u32)) -> View {
     let (w, h) = window_size(img, zoom, min);
     let x = work.x + (work.w as i32 - w as i32) / 2;
     let y = work.y + (work.h as i32 - h as i32) / 2;
@@ -120,14 +136,12 @@ pub fn open_center(img: (u32, u32), work: Rect, frac_pct: u8, min: (u32, u32)) -
 pub fn open_beside_stack(
     img: (u32, u32),
     work: Rect,
-    frac_pct: u8,
+    zoom: f64,
     min: (u32, u32),
     stack: Option<Rect>,
     edge_right: bool,
     gap: i32,
 ) -> View {
-    let f = frac_pct as f64 / 100.0;
-    let zoom = open_zoom(img, work.w as f64 * f, work.h as f64 * f, work);
     let (w, h) = window_size(img, zoom, min);
     let x = if edge_right {
         stack.map(|s| s.x).unwrap_or(work.right()) - gap - w as i32
@@ -138,10 +152,9 @@ pub fn open_beside_stack(
     View::new(clamp_view(Rect::new(x, y, w, h), work), zoom)
 }
 
-/// Mở trong khung người dùng để lại lần trước: ảnh vừa khung (tối đa 1:1), bám cạnh khung gần cạnh màn hình hơn
-/// (khung để ở góc dưới-phải thì ảnh mới cũng nằm sát góc đó).
-pub fn open_in_box(img: (u32, u32), bx: Rect, work: Rect, min: (u32, u32)) -> View {
-    let zoom = open_zoom(img, bx.w as f64, bx.h as f64, work);
+/// Mở ở chỗ người dùng để lần trước: cỡ theo `zoom`, bám cạnh khung cũ gần cạnh màn hình hơn (khung để ở góc
+/// dưới-phải thì ảnh mới cũng nằm sát góc đó). Khung cũ chỉ quyết định chỗ, không quyết định cỡ.
+pub fn open_near(img: (u32, u32), bx: Rect, work: Rect, zoom: f64, min: (u32, u32)) -> View {
     let (w, h) = window_size(img, zoom, min);
     let (bcx, bcy) = bx.center();
     let (wcx, wcy) = work.center();
@@ -153,8 +166,13 @@ pub fn open_in_box(img: (u32, u32), bx: Rect, work: Rect, min: (u32, u32)) -> Vi
 /// Phóng to/thu nhỏ ảnh trong khung `steps` nấc (dương = to ra) quanh `anchor` (toạ độ cửa sổ), giữ điểm ảnh
 /// dưới con trỏ đứng yên. Cửa sổ giữ nguyên cỡ; nhỏ nhất là vừa khung, lớn nhất 800% ảnh gốc.
 pub fn magnify_at(v: View, img: (u32, u32), steps: i32, anchor: (i32, i32)) -> View {
+    zoom_at(v, img, ZOOM_STEP.powi(steps), anchor)
+}
+
+/// Như [`magnify_at`] nhưng nhân zoom với hệ số bất kỳ (chụm 2 ngón trên trackpad đổi mượt, không theo nấc).
+pub fn zoom_at(v: View, img: (u32, u32), factor: f64, anchor: (i32, i32)) -> View {
     let max = (MAX_ZOOM / v.zoom.max(1e-9)).max(1.0);
-    let mut mag = (v.mag * ZOOM_STEP.powi(steps)).clamp(1.0, max);
+    let mut mag = (v.mag * factor).clamp(1.0, max);
     // Lăn tới rồi lùi lại đúng số nấc: sai số dấu phẩy động không được để lại "phóng to 100,0001%".
     if (mag - 1.0).abs() < 1e-6 {
         mag = 1.0;
@@ -169,9 +187,15 @@ pub fn magnify_at(v: View, img: (u32, u32), steps: i32, anchor: (i32, i32)) -> V
 
 /// Kéo ảnh đang phóng to: con trỏ đi `(dx, dy)` px màn hình kể từ lúc bấm (view lúc bấm là `start`).
 pub fn pan(start: View, img: (u32, u32), dx: i32, dy: i32) -> View {
-    let s = start.scale().max(1e-9);
-    let off = (start.off.0 - dx as f64 / s, start.off.1 - dy as f64 / s);
-    View { off, ..start }.clamped(img)
+    pan_by(start, img, dx as f64, dy as f64)
+}
+
+/// Dời ảnh đang phóng to `(dx, dy)` px màn hình (lẻ được: vuốt 2 ngón trên trackpad gửi từng chút một).
+/// Ảnh đi cùng chiều `(dx, dy)`; vừa khung thì không dời được.
+pub fn pan_by(v: View, img: (u32, u32), dx: f64, dy: f64) -> View {
+    let s = v.scale().max(1e-9);
+    let off = (v.off.0 - dx / s, v.off.1 - dy / s);
+    View { off, ..v }.clamped(img)
 }
 
 /// Về vừa khung (thấy cả ảnh).
@@ -272,52 +296,128 @@ mod tests {
     const WORK: Rect = Rect { x: 0, y: 0, w: 1920, h: 1040 };
     const MIN: (u32, u32) = (160, 48);
 
+    fn zoom(img: (u32, u32), frac_pct: u8) -> f64 {
+        auto_zoom(img, WORK, frac_pct, 100)
+    }
+
+    #[test]
+    fn zoom_at_is_continuous_and_matches_steps() {
+        let img = (1000, 500);
+        let v = View::new(Rect::new(0, 0, 500, 250), 0.5);
+        let a = (100, 50);
+        assert_eq!(zoom_at(v, img, ZOOM_STEP * ZOOM_STEP, a), magnify_at(v, img, 2, a));
+        // Hệ số lẻ (chụm 2 ngón): điểm ảnh dưới con trỏ đứng yên.
+        let z = zoom_at(v, img, 1.07, a);
+        assert!((z.mag - 1.07).abs() < 1e-9);
+        let (p, q) = (v.to_image(img, (100.0, 50.0)), z.to_image(img, (100.0, 50.0)));
+        assert!((p.0 - q.0).abs() < 1e-6 && (p.1 - q.1).abs() < 1e-6);
+        // Chặn hai đầu: nhỏ nhất vừa khung, lớn nhất 800% ảnh gốc.
+        assert_eq!(zoom_at(z, img, 1e-4, a).mag, 1.0);
+        assert!((zoom_at(v, img, 1e4, a).scale() - MAX_ZOOM).abs() < 1e-9);
+    }
+
     #[test]
     fn center_opens_one_to_one_or_fits_fraction() {
-        let v = open_center((800, 600), WORK, 90, MIN);
+        let v = open_center((800, 600), WORK, zoom((800, 600), 90), MIN);
         assert_eq!(v.zoom, 1.0);
         assert_eq!(v.rect, Rect::new(560, 220, 800, 600));
-        // 4K trong 50%: 520 / 2160 (chiều cao quyết định).
-        let v = open_center((3840, 2160), WORK, 50, MIN);
-        assert!((v.zoom - 520.0 / 2160.0).abs() < 1e-9);
-        assert_eq!((v.rect.w, v.rect.h), (924, 520));
+        // 4K ở mức 50%: diện tích tối đa 25% work area.
+        let img = (3840, 2160);
+        let v = open_center(img, WORK, zoom(img, 50), MIN);
+        assert_eq!((v.rect.w, v.rect.h), (942, 530));
+    }
+
+    #[test]
+    fn auto_zoom_never_upscales_and_keeps_area_budget() {
+        const MAC: Rect = Rect { x: 0, y: 0, w: 3600, h: 2264 };
+        // Ảnh nhỏ: 1:1, giữ nét.
+        assert_eq!(auto_zoom((800, 600), MAC, 50, 100), 1.0);
+        assert_eq!(auto_zoom((1764, 868), MAC, 50, 100), 1.0);
+        // Ảnh lớn: diện tích đúng 25% work area, không phụ thuộc tỉ lệ.
+        for img in [(3600, 2128), (2226, 1616)] {
+            let z = auto_zoom(img, MAC, 50, 100);
+            let area = img.0 as f64 * img.1 as f64 * z * z;
+            assert!((area / (3600.0 * 2264.0) - 0.25).abs() < 1e-9);
+        }
+    }
+
+    #[test]
+    fn auto_zoom_lets_strips_stay_readable_within_edge_limit() {
+        const MAC: Rect = Rect { x: 0, y: 0, w: 3600, h: 2264 };
+        // Dải ngang: 1:1 nếu vừa; dải dài hơn 90% màn hình thì bị chặn theo cạnh, không theo diện tích.
+        assert_eq!(auto_zoom((1400, 120), MAC, 50, 100), 1.0);
+        assert!((auto_zoom((3400, 300), MAC, 50, 100) - 0.9 * 3600.0 / 3400.0).abs() < 1e-9);
+        // Trang dọc tương tự theo chiều cao.
+        assert!((auto_zoom((900, 2500), MAC, 50, 100) - 0.9 * 2264.0 / 2500.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn auto_zoom_applies_user_scale_within_limits() {
+        const MAC: Rect = Rect { x: 0, y: 0, w: 3600, h: 2264 };
+        let img = (3600, 2128);
+        let base = auto_zoom(img, MAC, 50, 100);
+        assert!((auto_zoom(img, MAC, 50, 140) - base * 1.4).abs() < 1e-9);
+        // Ảnh đã 1:1 thì không phóng thêm.
+        assert_eq!(auto_zoom((800, 600), MAC, 50, 200), 1.0);
+    }
+
+    #[test]
+    fn learned_scale_only_from_images_the_formula_shrank() {
+        const MAC: Rect = Rect { x: 0, y: 0, w: 3600, h: 2264 };
+        let img = (3600, 2128);
+        let base = auto_zoom(img, MAC, 50, 100);
+        assert_eq!(learned_scale(img, MAC, 50, base * 1.4), Some(140));
+        // Giữ trong 50–200%.
+        assert_eq!(learned_scale(img, MAC, 50, base * 5.0), Some(MAX_SIZE_SCALE));
+        assert_eq!(learned_scale(img, MAC, 50, base * 0.1), Some(MIN_SIZE_SCALE));
+        // Ảnh dải và ảnh nhỏ (đang 1:1): kéo mép không phải là chọn cỡ chung.
+        assert_eq!(learned_scale((1400, 120), MAC, 50, 0.3), None);
+        assert_eq!(learned_scale((800, 600), MAC, 50, 0.5), None);
     }
 
     #[test]
     fn beside_stack_hugs_stack_and_bottom() {
         let stack = Rect::new(1700, 600, 208, 428);
-        let v = open_beside_stack((800, 600), WORK, 50, MIN, Some(stack), true, 12);
-        // 50%: 960 × 520 -> zoom 520/600.
+        let v = open_beside_stack((800, 600), WORK, zoom((800, 600), 50), MIN, Some(stack), true, 12);
         assert_eq!(v.rect.right(), 1700 - 12);
         assert_eq!(v.rect.bottom(), 1040 - 12);
         // Stack bên trái, chưa hiện: sát cạnh trái work area.
         let left = Rect::new(-1920, 0, 1920, 1040);
-        let v = open_beside_stack((400, 300), left, 50, MIN, None, false, 12);
+        let v = open_beside_stack((400, 300), left, 1.0, MIN, None, false, 12);
         assert_eq!((v.rect.x, v.rect.bottom(), v.zoom), (-1908, 1028, 1.0));
     }
 
     #[test]
-    fn box_fits_image_and_sticks_to_nearest_corner() {
-        // Khung ở góc dưới-phải: ảnh dọc mới nằm sát góc dưới-phải của khung.
+    fn near_box_takes_size_from_zoom_and_sticks_to_nearest_corner() {
+        // Khung ở góc dưới-phải: ảnh mới nằm sát góc dưới-phải của khung.
         let bx = Rect::new(1400, 640, 500, 380);
-        let v = open_in_box((1000, 1000), bx, WORK, MIN);
+        let v = open_near((1000, 1000), bx, WORK, 0.38, MIN);
         assert_eq!(v.zoom, 0.38);
         assert_eq!((v.rect.right(), v.rect.bottom(), v.rect.w), (1900, 1020, 380));
         // Khung ở góc trên-trái, ảnh nhỏ: 1:1, bám góc trên-trái.
-        let v = open_in_box((200, 100), Rect::new(10, 10, 600, 400), WORK, MIN);
+        let v = open_near((200, 100), Rect::new(10, 10, 600, 400), WORK, 1.0, MIN);
         assert_eq!(v.rect, Rect::new(10, 10, 200, 100));
     }
 
     #[test]
+    fn near_box_stays_in_work_area_when_image_is_bigger_than_box() {
+        // Khung dải mỏng ở đáy: ảnh lớn không bị ép vào khung, vẫn nằm trong màn hình.
+        let bx = Rect::new(500, 900, 1400, 120);
+        let v = open_near((1000, 800), bx, WORK, 1.0, MIN);
+        assert_eq!((v.rect.w, v.rect.h), (1000, 800));
+        assert_eq!((v.rect.right(), v.rect.bottom()), (1900, 1020));
+    }
+
+    #[test]
     fn tiny_image_gets_min_window_and_is_centered_inside() {
-        let v = open_center((40, 10), WORK, 50, MIN);
+        let v = open_center((40, 10), WORK, 1.0, MIN);
         assert_eq!((v.rect.w, v.rect.h), (160, 48));
         assert_eq!(v.frame((40, 10)), Rect::new(60, 19, 40, 10));
     }
 
     #[test]
     fn magnify_keeps_window_and_point_under_cursor() {
-        let v = open_center((800, 600), WORK, 90, MIN);
+        let v = open_center((800, 600), WORK, 1.0, MIN);
         let z = magnify_at(v, (800, 600), 1, (400, 300));
         // Cửa sổ giữ nguyên, ảnh to ra quanh con trỏ (giữa ảnh).
         assert_eq!(z.rect, v.rect);
@@ -335,20 +435,34 @@ mod tests {
 
     #[test]
     fn magnify_limits() {
-        let v = open_center((800, 600), WORK, 90, MIN);
+        let v = open_center((800, 600), WORK, 1.0, MIN);
         // Không nhỏ hơn vừa khung.
         assert_eq!(magnify_at(v, (800, 600), -5, (10, 10)).mag, 1.0);
         // Tối đa 800% ảnh gốc.
         let z = magnify_at(v, (800, 600), 40, (400, 300));
         assert!((z.scale() - 8.0).abs() < 1e-9);
         // Ảnh 4K mở ở zoom nhỏ: vẫn phóng được tới 800%.
-        let v = open_center((3840, 2160), WORK, 50, MIN);
+        let v = open_center((3840, 2160), WORK, zoom((3840, 2160), 50), MIN);
         assert!((magnify_at(v, (3840, 2160), 100, (0, 0)).scale() - 8.0).abs() < 1e-9);
     }
 
     #[test]
+    fn pan_by_accumulates_fractions_and_needs_magnify() {
+        let img = (800, 600);
+        let fit = open_center(img, WORK, 1.0, MIN);
+        // Vừa khung: vuốt không làm gì.
+        assert_eq!(pan_by(fit, img, 30.0, -20.0).off, (0.0, 0.0));
+        let v = magnify_at(fit, img, 3, (400, 300));
+        // 10 lần 0,4 px = 4 px: không mất phần lẻ.
+        let p = (0..10).fold(v, |p, _| pan_by(p, img, 0.4, 0.0));
+        assert!((p.off.0 - (v.off.0 - 4.0 / v.scale())).abs() < 1e-9);
+        // Vuốt lên (dy âm): ảnh đi lên, thấy phần dưới hơn.
+        assert!(pan_by(v, img, 0.0, -30.0).off.1 > v.off.1);
+    }
+
+    #[test]
     fn pan_moves_image_and_stays_inside() {
-        let v = magnify_at(open_center((800, 600), WORK, 90, MIN), (800, 600), 3, (400, 300));
+        let v = magnify_at(open_center((800, 600), WORK, 1.0, MIN), (800, 600), 3, (400, 300));
         // Kéo sang phải 50 px: thấy phần ảnh bên trái hơn.
         let p = pan(v, (800, 600), 50, 0);
         assert!((p.off.0 - (v.off.0 - 50.0 / v.scale())).abs() < 1e-9);
@@ -359,7 +473,7 @@ mod tests {
         let s = v.scale();
         assert!((far.off.0 - (800.0 - 800.0 / s)).abs() < 1e-6 && (far.off.1 - (600.0 - 600.0 / s)).abs() < 1e-6);
         // Vừa khung: không kéo được.
-        let v = open_center((800, 600), WORK, 90, MIN);
+        let v = open_center((800, 600), WORK, 1.0, MIN);
         assert_eq!(pan(v, (800, 600), 40, 40).off, (0.0, 0.0));
     }
 

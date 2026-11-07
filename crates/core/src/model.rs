@@ -725,13 +725,27 @@ impl Model {
 
     /// Người dùng vừa kéo hoặc đổi cỡ Preview: nhớ khung để lần sau mở đúng chỗ (chỉ khi chọn "như lần trước").
     pub fn set_preview_box(&mut self, r: Rect) -> Vec<Effect> {
-        let p = &self.config.preview;
-        let saved = config::SavedRect { x: r.x, y: r.y, w: r.w, h: r.h };
-        if p.position != config::PreviewPosition::Remember || p.last == Some(saved) {
+        self.save_preview(r, None)
+    }
+
+    /// Người dùng kéo mép Preview xong: nhớ chỗ, và nhớ tỉ lệ so với cỡ tự tính để áp cho ảnh sau (SPEC 17.2).
+    pub fn preview_resized(&mut self, r: Rect, img: (u32, u32), zoom: f64) -> Vec<Effect> {
+        let (cx, cy) = r.center();
+        let frac = self.config.preview.size;
+        let learned = monitor_at(&self.monitors, cx, cy).and_then(|m| crate::preview::learned_scale(img, m.work, frac, zoom));
+        self.save_preview(r, learned)
+    }
+
+    fn save_preview(&mut self, r: Rect, size_scale: Option<u16>) -> Vec<Effect> {
+        if self.config.preview.position != config::PreviewPosition::Remember {
             return vec![];
         }
         let mut next = self.config.clone();
-        next.preview.last = Some(saved);
+        next.preview.last = Some(config::SavedRect { x: r.x, y: r.y, w: r.w, h: r.h });
+        next.preview.size_scale = size_scale.unwrap_or(next.preview.size_scale);
+        if next == self.config {
+            return vec![];
+        }
         match self.commit_config(next) {
             Ok(fx) => fx,
             Err(e) => vec![Effect::Toast(Toast::error(e))],
@@ -1272,6 +1286,29 @@ mod tests {
         m.freeze_grabbed(m.freeze_gen, true);
         let r = Rect::new(1, 2, 30, 40);
         assert_eq!(m.freeze_confirm(r, FreezeAction::Ocr), vec![Effect::HideOverlays, Effect::FreezeOcr(r)]);
+    }
+
+    #[test]
+    fn preview_move_keeps_size_scale_but_resize_learns_it() {
+        let mut m = model();
+        let work = m.monitors[0].work;
+        let img = (work.w * 2, work.h * 2);
+        let base = crate::preview::auto_zoom(img, work, m.config.preview.size, 100);
+        let r = Rect::new(work.x + 10, work.y + 10, 400, 300);
+        assert_eq!(m.preview_resized(r, img, base * 1.5), vec![Effect::ConfigChanged]);
+        assert_eq!(m.config.preview.size_scale, 150);
+        assert_eq!(m.config.preview.last, Some(config::SavedRect { x: r.x, y: r.y, w: 400, h: 300 }));
+        // Di chuyển chỉ đổi chỗ.
+        m.set_preview_box(r.offset(5, 5));
+        assert_eq!(m.config.preview.size_scale, 150);
+        // Ảnh đang 1:1: kéo mép chỉ nhớ chỗ, không học.
+        m.preview_resized(r, (100, 100), 0.5);
+        assert_eq!(m.config.preview.size_scale, 150);
+        assert_eq!(m.config.preview.last, Some(config::SavedRect { x: r.x, y: r.y, w: 400, h: 300 }));
+        // Không ở chế độ nhớ thì không ghi gì.
+        m.config.preview.position = config::PreviewPosition::Center;
+        assert!(m.preview_resized(r, img, base * 0.5).is_empty());
+        assert_eq!(m.config.preview.size_scale, 150);
     }
 
     #[test]

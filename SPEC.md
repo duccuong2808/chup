@@ -40,8 +40,9 @@
 | OS Phase 1 | Windows 10 (64-bit) và Windows 11 |
 | Ngôn ngữ | Rust stable, **không WebView, không framework UI** |
 | Giao diện Windows | Win32 qua crate `windows`: layered window tự vẽ (overlay, frame, toolbar, stack) bằng thao tác pixel + Direct2D **software** + DirectWrite; Cài đặt dùng control gốc (Common Controls v6) |
-| Giao diện macOS, Linux (Phase 3) | AppKit (`objc2`), X11 (`x11rb`); dùng chung crate lõi |
-| Chụp màn hình | `xcap` |
+| Giao diện macOS, Linux (Phase 3) | AppKit (`objc2`), X11 (`x11rb`); dùng chung crate lõi và crate vẽ `ui` (trait `Canvas`: Direct2D / CoreGraphics + CoreText / Cairo) |
+| OS Phase 3.1 | macOS 26 Tahoe trở lên (chi tiết mục 11) |
+| Chụp màn hình | `xcap` (Windows, Linux); ScreenCaptureKit (macOS) |
 | Kéo file ra app khác | `drag` (CrabNebula) |
 | Phím tắt toàn cục | `global-hotkey` |
 | Tray | `tray-icon` (menu bằng `muda`) |
@@ -214,7 +215,7 @@ Toolbar hoặc stack có thể nằm đè lên region (ví dụ region sát cạ
   - Yêu cầu Windows 10 bản 2004 trở lên.
   - **Phải verify** cách này có tác dụng với cách `xcap` chụp trên Windows.
 - **Fallback** (OS cũ, hoặc verify thất bại): ẩn các cửa sổ đó, chờ 1 frame (~50ms), chụp, rồi hiện lại.
-- **macOS** (Phase 3): thử `NSWindow.sharingType = .none`. **Chưa chắc** cách này còn hiệu lực với API chụp mới; cần kiểm chứng, không được thì dùng fallback.
+- **macOS** (Phase 3): chụp bằng ScreenCaptureKit với `SCContentFilter(excludingApplications:)` loại mọi cửa sổ của Chup. Không dùng `sharingType = .none` (không còn tác dụng với API chụp mới). Spike phải kiểm chứng; không được thì dùng fallback.
 
 ### 6.5 Cấu trúc thư mục
 
@@ -360,11 +361,18 @@ Mục tiêu; đo thực tế ở bước 1.4 rồi chỉnh lại.
 
 ## 11. Mở rộng sang các OS khác (Phase 3)
 
-- **macOS**:
-  - Cần xin quyền Screen Recording: kiểm tra trước khi chụp, hướng dẫn mở System Settings nếu chưa có quyền.
-  - Tray thành icon trên menu bar. Hotkey mặc định dùng `Cmd` thay cho `Ctrl+Alt`.
-  - Màn hình Retina có scale 2.
-  - Kiểm chứng lại cách loại cửa sổ khỏi ảnh chụp (mục 6.4).
+- **macOS** (thiết kế chi tiết: `docs/plans/2026-11-05-macos-design.md`):
+  - Hỗ trợ **macOS 26 Tahoe trở lên**. Bản đầu ký bằng chứng chỉ tự tạo (dùng cá nhân, chưa notarize); đổi sang Developer ID sau.
+  - Cần xin quyền Screen Recording: kiểm tra trước khi mở overlay, chưa có quyền thì không mở overlay và hướng dẫn mở System Settings.
+  - Chụp bằng ScreenCaptureKit (`SCScreenshotManager`), loại cửa sổ của Chup khỏi ảnh (mục 6.4).
+  - Tray thành icon trên menu bar (icon template). App không có icon ở Dock (`LSUIElement`), trừ lúc Preview đang mở
+    (mục 17.2).
+  - Hotkey mặc định dùng `Ctrl+Cmd`: `Ctrl+Cmd+A` (chọn vùng), `Ctrl+Cmd+X` (chụp), `Ctrl+Cmd+Z` (Freeze). Tránh `Cmd+Shift+3/4/5` của hệ thống; không dùng F1 (phím độ sáng).
+  - Màn hình Retina có scale 2. `Rect` vẫn là physical px toàn desktop: gốc mỗi màn hình = gốc (point) × scale lớn nhất, kích thước = point × scale của chính màn hình đó (không bao giờ chồng nhau).
+  - Overlay, frame, toolbar, stack là `NSPanel` không lấy focus (overlay thành key window để nhận Esc mà không activate app), hiện trên mọi Space và trên app toàn màn hình.
+  - OCR dùng Apple Vision cho cả tiếng Việt và tiếng Anh: không có gói tải thêm, không có `chup-ocr.exe`.
+  - Tự chọn vùng: `CGWindowListCopyWindowInfo` cho cửa sổ, `AXUIElement` cho phần tử (cần quyền Accessibility; chưa có thì chỉ khung cửa sổ). Khung từ ảnh chỉ ở Freeze (Live chưa chụp ngầm màn hình).
+  - Mở cùng hệ thống bằng `SMAppService`. Phát hành `.app` trong `.dmg`.
 - **Giao diện native riêng từng OS** trên cùng crate lõi: macOS dùng AppKit (`NSPanel` không lấy focus, `ignoresMouseEvents` cho Faded), Linux X11 dùng `x11rb` (override-redirect window, ARGB visual), Cài đặt dùng control gốc (AppKit / GTK).
 - **Linux X11**: cài thêm dependency hệ thống theo README của `xcap`.
 - **Linux Wayland: không hỗ trợ.** Lý do:
@@ -391,7 +399,11 @@ Mục tiêu; đo thực tế ở bước 1.4 rồi chỉnh lại.
 | 2.5 | Spike tự động chọn vùng (mục 16.6) | Chốt có làm khung từ ảnh hay không |
 | 2.6 | Tự động chọn vùng (mục 16) | Pass mục 16.7 |
 | **Phase 3 — đa nền tảng** | | |
-| 3.1 | macOS | Pass mục 10 và 14.7 trên macOS |
+| 3.1.0 | Tách crate `ui` (trait `Canvas`), refactor vỏ Windows, không đổi hành vi | CI xanh, test hồi quy trên VM pass |
+| 3.1.1 | macOS MVP: spike, menu bar, hotkey, quyền, overlay, chụp, stack, frame/toolbar, Cài đặt, Freeze, `.app` tự ký | Pass mục 10 và 14.7 trên macOS |
+| 3.1.2 | macOS: Preview, OCR (Vision), Live Text | Pass mục 17.6 và 15.8 trên macOS |
+| 3.1.3 | macOS: tự động chọn vùng | Pass mục 16.7 trên macOS |
+| 3.1.4 | macOS: `.dmg`, CI macOS | Cài từ `.dmg` chạy được trên tài khoản macOS mới |
 | 3.2 | Linux X11 | Pass mục 10 trên X11 |
 
 ## 13. Quyết định đã chốt
@@ -411,6 +423,10 @@ Mục tiêu; đo thực tế ở bước 1.4 rồi chỉnh lại.
 | Q-OCR2 | Hotkey "Chụp text" mặc định chưa gán | Tránh xung đột, người dùng tự gán trong settings |
 | Q-OCR3 | "Chụp text" không lưu ảnh, không thêm vào stack | Mục đích là lấy chữ, không làm rác folder |
 | Q-OCR4 | Giữ xuống dòng như trong ảnh | Dễ đoán. Gộp đoạn sai còn khó sửa hơn |
+| Q-MAC1 | macOS: chia mốc, MVP (Phase 1 + Freeze) trước | Người dùng chốt (2026-11-05). Có bản dùng sớm, kiểm chứng kiến trúc trước khi port phần nặng |
+| Q-MAC2 | macOS 26 trở lên | Người dùng chốt. ScreenCaptureKit + Vision có tiếng Việt: bỏ được Tesseract trên Mac |
+| Q-MAC3 | Ký bằng chứng chỉ tự tạo, chưa notarize | Người dùng chốt. Miễn phí; chữ ký ổn định nên không mất quyền Screen Recording mỗi lần build |
+| Q-MAC4 | Code vẽ dùng chung qua trait `Canvas`, mỗi OS cài bằng API vẽ native; refactor Windows trước (3.1.0) | Người dùng chốt. Vẽ một lần cho mọi OS, Linux sau chỉ cần thêm một bản cài trait |
 
 ---
 
@@ -739,13 +755,18 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-preview-design.md`.
 
 - **Một cửa sổ Preview**: bấm thumbnail khác thì thay ảnh.
 - **Chỗ và cỡ mở** (Cài đặt "Chỗ mở"):
-  - **Chỗ và cỡ lần trước** (mặc định): người dùng kéo, đổi cỡ là Chup nhớ khung. Lần sau ảnh vừa
-    khung đó (tối đa 1:1) và bám cạnh khung gần cạnh màn hình hơn (khung ở góc dưới-phải thì ảnh mới cũng
-    nằm sát góc đó). Chưa có khung, hoặc màn hình chứa khung đã bị rút: mở như "Cạnh stack".
+  - **Chỗ lần trước** (mặc định): kéo di chuyển là Chup nhớ chỗ. Lần sau ảnh bám cạnh khung cũ gần cạnh màn hình
+    hơn (khung ở góc dưới-phải thì ảnh mới cũng nằm sát góc đó). Khung cũ không quyết định cỡ. Chưa có khung, hoặc
+    màn hình chứa khung đã bị rút: mở như "Cạnh stack".
   - **Cạnh stack**: sát mép trong của stack, căn đáy work area, cách 12 DIP.
   - **Giữa màn hình**.
-  - Cỡ khi mở (khi không dùng khung lần trước): ảnh tối đa 30/50/70/90% work area mỗi chiều (mặc định 50%),
-    không phóng quá 1:1. Ảnh nhỏ hơn 160×48 DIP thì cửa sổ giữ cỡ đó, ảnh nằm giữa trên nền tối.
+  - **Cỡ khi mở tự tính theo từng ảnh**, không phụ thuộc ảnh trước: lấy mức nhỏ nhất của (1) 1:1, (2) diện tích tối
+    đa f² work area, f là mức trong Cài đặt (mặc định 50%, tức 25% diện tích), (3) mỗi cạnh tối đa 90% work area.
+    Ảnh cùng tỉ lệ màn hình cỡ như f mỗi chiều; ảnh dải ngang, trang dọc được dài hơn để đọc được.
+    Ảnh nhỏ hơn 160×48 DIP thì cửa sổ giữ cỡ đó, ảnh nằm giữa trên nền tối.
+  - **Kéo mép** (khi "Chỗ lần trước"): nhớ tỉ lệ so với cỡ tự tính (50–200%), áp vào giới hạn (2) của ảnh sau. Chỉ học
+    từ ảnh công thức đã thu nhỏ: kéo mép ảnh đang 1:1 (ảnh nhỏ, ảnh dải) chỉ chỉnh riêng ảnh đó. Đổi mức trong Cài đặt
+    thì bỏ tỉ lệ đã học.
   - Mở trên màn hình đang có stack.
 - **Chỉnh trực tiếp**:
   - Kéo bất kỳ đâu (ngoài nút) để di chuyển.
@@ -753,6 +774,12 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-preview-design.md`.
     tỉ lệ ảnh, mép đối diện đứng yên. Đổi cỡ khi đang phóng to thì vẫn thấy đúng phần ảnh đó.
   - Lăn chuột: phóng to/thu nhỏ ảnh **trong khung** quanh con trỏ (×1,25 mỗi nấc), cửa sổ giữ nguyên cỡ và chỗ.
     Nhỏ nhất là vừa khung (thấy cả ảnh), lớn nhất 800% ảnh gốc.
+  - macOS, như app Preview của máy: chụm 2 ngón trên trackpad là thu nhỏ, xoè ra là phóng to quanh con trỏ, đổi mượt
+    không theo nấc. Vuốt 2 ngón (lên, xuống, trái, phải) dời ảnh đang phóng to theo chiều cuộn của máy (bật Natural
+    Scrolling, mặc định, thì ảnh đi theo ngón tay); vừa khung thì vuốt không làm gì. Chuột có nấc vẫn phóng to như
+    Windows, tính theo chiều tay thật (đẩy lên là phóng to). Mở Preview hoặc bấm vào Preview thì Chup thành app đang
+    dùng, và có icon ở Dock tới khi đóng Preview: macOS chỉ gửi cử chỉ trackpad cho app thường (không phải app chỉ có
+    icon menu bar) đang dùng.
   - Đang phóng to: kéo (ngoài nút, mép, chữ) để kéo ảnh, con trỏ hình mũi tên 4 chiều; ảnh không kéo ra ngoài khung.
     `Alt` + kéo vẫn di chuyển cửa sổ.
   - `+`/`-` phóng to/thu nhỏ quanh tâm khung, `0` về vừa khung.
@@ -787,12 +814,12 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-preview-design.md`.
 ### 17.4 Config
 
 ```json
-"preview": { "alwaysOnTop": true, "opacity": 100, "position": "remember", "size": 50, "last": null }
+"preview": { "alwaysOnTop": true, "opacity": 100, "position": "remember", "size": 50, "last": null, "sizeScale": 100 }
 ```
 
 - `position`: `remember` | `stack` | `center`. `last`: khung lần trước `{x, y, w, h}` (physical px toàn desktop),
-  chỉ ghi khi `position = remember`.
-- `opacity` kẹp 20–100, `size` kẹp 20–100.
+  chỉ ghi khi `position = remember`, chỉ dùng để chọn chỗ mở. `sizeScale`: tỉ lệ % đã học từ kéo mép.
+- `opacity` kẹp 20–100, `size` kẹp 20–100, `sizeScale` kẹp 50–200.
 - Tự nhận diện chữ nằm ở `"ocr": { "language": "en", "autoPreview": true }` (mục 15).
 
 ### 17.5 Ngân sách
@@ -806,7 +833,10 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-preview-design.md`.
 - [ ] Kéo di chuyển, kéo 4 mép và 4 góc đổi cỡ giữ tỉ lệ.
 - [ ] Lăn chuột phóng to quanh con trỏ, cửa sổ không đổi cỡ; đang phóng to thì kéo ảnh được, `Alt` + kéo di chuyển
       cửa sổ; `0` về vừa khung. Chọn chữ vẫn đúng chỗ khi phóng to.
-- [ ] Đóng rồi mở ảnh khác: nằm đúng chỗ và vừa khung lần trước. Đổi "Chỗ mở" sang Cạnh stack / Giữa màn hình: đúng chỗ.
+- [ ] macOS: chụm 2 ngón thu nhỏ, xoè ra phóng to; vuốt 2 ngón 4 hướng dời ảnh theo ngón tay. Bấm sang app khác rồi
+      quay lại bấm vào Preview: chụm vẫn được.
+- [ ] Đóng rồi mở ảnh khác: nằm đúng chỗ lần trước, cỡ tự tính theo ảnh mới. Đổi "Chỗ mở" sang Cạnh stack / Giữa màn hình: đúng chỗ.
+- [ ] Kéo di chuyển Preview của ảnh dải rồi mở ảnh lớn: ảnh lớn không bị nhỏ theo. Kéo mép ảnh lớn rồi mở ảnh lớn khác: to, nhỏ theo tỉ lệ đó.
 - [ ] Ctrl + lăn chuột đổi opacity; Cài đặt đổi opacity và "luôn nằm trên" thì áp ngay cho Preview đang mở.
 - [ ] Ghim: tắt thì click app khác che được Preview; bật thì luôn nằm trên.
 - [ ] Copy, Folder, ✕, `Esc`, `Ctrl+C`, Alt+F4 (ẩn, mở lại được).

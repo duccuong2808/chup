@@ -175,6 +175,26 @@ nhanh tới dưới dạng nhấp đúp mà stack không xử lý; thêm chặn 
 vừa rê vào thumbnail thì không kéo được (0/4); dừng ≥ 0,15 s thì 9/9. Có 1 lần lỗi dù đã dừng
 0,5 s, chưa rõ nguyên nhân (Chup hay cách VMPal giả lập chuột).
 
+## Hồi quy sau khi tách crate `ui` (chup-mac.6, 2026-11-06)
+
+So bản CI của `df99e70` (gộp vào `macos-ui-crate`) với `main` trước refactor (`980588d`), cùng kịch bản, cùng toạ độ,
+so từng ảnh màn hình 2048×1496 (bỏ taskbar). VM Windows 11 24H2 ARM64 (`chup.exe` x64 chạy qua Prism).
+
+| Cấu hình | Số bước | Kết quả |
+|---|---|---|
+| 200%, sáng | 25 | Trùng; chỉ khác dấu nháy Notepad và con trỏ bận của Windows ở 1 ảnh |
+| 200%, tối | 25 | Trùng; chỉ khác dấu nháy Notepad và vài pixel đồng hồ trong thumbnail ảnh toàn màn hình |
+| 150%, sáng | 16 | Trùng hoàn toàn |
+| 100%, sáng | 16 | Trùng; chỉ khác dấu nháy Notepad ở 1 ảnh |
+| Toast (200%) | 2 | Toast thường trùng; toast lỗi chỉ khác tên file |
+
+Phủ: overlay, khung tự nhận phần tử, cuộn đổi khung, frame + toolbar Normal/Faded, `[T]` OCR (clipboard giống nhau), stack
+(hover, thu gọn, mở lại, toast thường và lỗi), Preview (chọn chữ + `Ctrl+C`, menu chuột phải, zoom, pan, resize theo mép),
+Freeze (overlay, toolbar, Lưu, Copy), `Ctrl+Alt+X`, `Esc`.
+
+Chưa phủ: nhiều màn hình và DPI khác nhau, máy x64 thật, kéo thả thumbnail sang app khác, Cài đặt. Đổi scale trên VM này
+không cần đăng xuất: `DisplayConfigSetDeviceInfo` loại `-4` chạy được với VMPal VirtIO GPU 3D.
+
 ## Ngôn ngữ giao diện
 
 Đã chụp kiểm tra 6 trang Cài đặt bằng tiếng Anh và đổi ngôn ngữ khi đang mở Cài đặt (Windows 11 x64, 125%).

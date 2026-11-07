@@ -1,4 +1,5 @@
-//! Log ra file `%LOCALAPPDATA%\app.chup.desktop\chup.log` (ghi đè mỗi lần khởi động).
+//! Log ra file (ghi đè mỗi lần khởi động): Windows `%LOCALAPPDATA%\app.chup.desktop\chup.log`,
+//! macOS `~/Library/Logs/Chup/chup.log`. Dùng chung cho mọi vỏ OS (`#[path]`).
 
 use std::{
     fs::File,

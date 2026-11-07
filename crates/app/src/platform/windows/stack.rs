@@ -3,11 +3,10 @@
 
 use std::{cell::RefCell, collections::HashMap};
 
-use chup_core::{
-    capture::Shot,
-    coords::Rect,
-    icons::Icon,
-    model::{Toast, ToastKind},
+use chup_core::{capture::Shot, coords::Rect, model::Toast};
+use chup_ui::{
+    stack::{self as ui_stack, Hit, StackFonts, StackState, ToastItem, DRAG_DIP, LEAVE_MS, MARGIN_DIP, MAX_TOASTS},
+    Canvas as _,
 };
 use windows::Win32::{
     UI::Controls::WM_MOUSELEAVE,
@@ -26,47 +25,19 @@ use windows::Win32::{
 
 use super::{
     app::Action,
-    gfx::{rectf, Align, Canvas, Color, Font, Surface, Theme},
+    gfx::{self, Canvas, Color, Font, Surface},
     util::{cursor_pos, hiword, loword, HwndHandle},
     win::{self, emit, Handler},
 };
-
-// Bố cục (DIP), giống bản web cũ.
-const WIDTH: f32 = 184.0;
-const PAD_X: f32 = 12.0;
-const PAD_Y: f32 = 6.0;
-const GAP: f32 = 8.0;
-const CARD_W: f32 = 160.0;
-const TAB_W: f32 = 28.0;
-const TAB_H: f32 = 56.0;
-const TAB_BOTTOM: f32 = 6.0;
-const HEADER_H: f32 = 24.0;
 
 const TIMER_LEAVE: usize = 1;
 /// wParam của WM_MOUSEMOVE: phím trái đang giữ.
 const MK_LBUTTON: usize = 0x0001;
 const TIMER_TOAST_BASE: usize = 100;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Hit {
-    Card(usize),
-    Copy(usize),
-    Folder(usize),
-    Remove(usize),
-    Collapse,
-    Clear,
-    Tab,
-    Toast(u32),
-}
-
 struct Press {
     hit: Hit,
     at: (i32, i32),
-}
-
-struct ToastItem {
-    id: u32,
-    toast: Toast,
 }
 
 #[derive(Default)]
@@ -98,10 +69,6 @@ pub struct StackWin {
 
 thread_local! {
     static CLASS: Vec<u16> = win::register_class::<StackWin>("ChupStack");
-}
-
-fn thumb_h(s: &Shot) -> f32 {
-    (CARD_W * s.height as f32 / s.width.max(1) as f32).round().clamp(40.0, 120.0)
 }
 
 impl StackWin {
@@ -162,12 +129,12 @@ impl StackWin {
             st.next_toast += 1;
             let id = st.next_toast;
             st.toasts.push(ToastItem { id, toast: t.clone() });
-            if st.toasts.len() > 3 {
+            if st.toasts.len() > MAX_TOASTS {
                 st.toasts.remove(0);
             }
             id
         };
-        let ms = if t.kind == ToastKind::Error { 7000 } else { 2500 };
+        let ms = ui_stack::toast_ms(&t);
         unsafe { SetTimer(Some(self.hwnd), TIMER_TOAST_BASE + id as usize, ms, None) };
         self.relayout();
     }
@@ -206,16 +173,21 @@ impl StackWin {
 
     /// Tính bố cục, vẽ, đặt kích thước và vị trí cửa sổ.
     fn relayout(&self) {
-        let theme = Theme::current();
+        let theme = gfx::theme();
         let mut st = self.st.borrow_mut();
         let k = st.scale as f32;
-        let has = !st.shots.is_empty();
-        let show_list = has && !st.collapsed;
-        let show_tab = has && st.collapsed;
-        let show_header = st.hovering && show_list;
-        let wrap_visible = show_list || !st.toasts.is_empty();
-
-        if !wrap_visible && !show_tab {
+        let [body, small, btn] = ui_stack::font_specs(k).map(Font::from_spec);
+        let fonts = StackFonts { body, small, btn };
+        let input = StackState {
+            shots: &st.shots,
+            toasts: &st.toasts,
+            collapsed: st.collapsed,
+            hovering: st.hovering,
+            hover: st.hover,
+            edge_right: st.edge_right,
+            k,
+        };
+        let Some(layout) = ui_stack::layout(&input, &fonts) else {
             if st.visible {
                 unsafe {
                     let _ = ShowWindow(self.hwnd, SW_HIDE);
@@ -227,43 +199,8 @@ impl StackWin {
             st.bitmaps.clear();
             st.hits.clear();
             return;
-        }
-
-        let font = Font::new(13.0 * k, false, Align::Leading, true);
-        let small = Font::new(11.0 * k, false, Align::Center, false);
-        let btn_font = Font::new(12.0 * k, false, Align::Center, false);
-
-        // Chiều cao từng phần tử trong "wrap" (trên xuống).
-        enum Item {
-            Header,
-            Toast(usize, f32),
-            Card(usize, f32),
-        }
-        let mut items = vec![];
-        if show_header {
-            items.push(Item::Header);
-        }
-        for (i, t) in st.toasts.iter().enumerate() {
-            let th = font.as_ref().map(|f| f.measure(&t.toast.message, (CARD_W - 23.0) * k).1).unwrap_or(16.0 * k);
-            items.push(Item::Toast(i, th + 16.0 * k));
-        }
-        if show_list {
-            for (i, s) in st.shots.iter().enumerate() {
-                items.push(Item::Card(i, thumb_h(s) * k));
-            }
-        }
-        let item_h = |it: &Item| match it {
-            Item::Header => HEADER_H * k,
-            Item::Toast(_, h) | Item::Card(_, h) => *h,
         };
-        let wrap_h = if wrap_visible {
-            PAD_Y * 2.0 * k + items.iter().map(item_h).sum::<f32>() + GAP * k * (items.len().saturating_sub(1)) as f32
-        } else {
-            0.0
-        };
-        let tab_h = if show_tab { (TAB_H + TAB_BOTTOM) * k } else { 0.0 };
-        let total_w = if wrap_visible { WIDTH * k } else { TAB_W * k }.ceil() as i32;
-        let total_h = (wrap_h + tab_h).ceil() as i32;
+        let (total_w, total_h) = (layout.w, layout.h);
 
         // Surface cấp dư theo chiều cao để hover header/toast không phải cấp lại.
         let need_new = st.surface.as_ref().map(|s| s.w < total_w || s.h < total_h).unwrap_or(true);
@@ -278,120 +215,29 @@ impl StackWin {
         let missing: Vec<usize> =
             (0..st.shots.len()).filter(|&i| !st.bitmaps.contains_key(&st.shots[i].id)).collect();
         for i in missing {
-            let bmp = st.canvas.as_ref().and_then(|c| c.bitmap(&st.shots[i].thumb));
+            let bmp = st.canvas.as_ref().and_then(|c| c.image(&st.shots[i].thumb));
             if let Some(b) = bmp {
                 let id = st.shots[i].id.clone();
                 st.bitmaps.insert(id, b);
             }
         }
 
-        let (hover, edge_right) = (st.hover, st.edge_right);
-        let mut hits: Vec<(Hit, Rect)> = vec![];
-        let to_rect = |r: windows::Win32::Graphics::Direct2D::Common::D2D_RECT_F| {
-            Rect::new(r.left as i32, r.top as i32, (r.right - r.left) as u32, (r.bottom - r.top) as u32)
-        };
         let Some(c) = st.canvas.as_ref() else { return };
-        c.begin(Color::rgba(0, 0, 0, 0.0));
-
-        let mut y = PAD_Y * k;
-        let x = PAD_X * k;
-        let cw = CARD_W * k;
-        for it in &items {
-            let h = item_h(it);
-            match it {
-                Item::Header => {
-                    let b = 24.0 * k;
-                    let collapse = rectf(x, y, b, b);
-                    let clear_w = btn_font.as_ref().map(|f| f.measure(chup_core::i18n::t().stack_clear_all, 1000.0).0).unwrap_or(40.0) + 16.0 * k;
-                    let clear = rectf(x + cw - clear_w, y, clear_w, b);
-                    for (r, hit) in [(collapse, Hit::Collapse), (clear, Hit::Clear)] {
-                        c.shadow(r, 6.0 * k, 2.0 * k, 1.0 * k, theme.shadow);
-                        let bg = if hover == Some(hit) { theme.surface2 } else { theme.surface };
-                        c.fill_round(r, 6.0 * k, bg);
-                        c.stroke_round(r, 6.0 * k, 1.0, theme.line);
-                        hits.push((hit, to_rect(r)));
-                    }
-                    let chevron = if edge_right { Icon::ChevronRight } else { Icon::ChevronLeft };
-                    c.icon(chevron, collapse.left + 5.0 * k, collapse.top + 5.0 * k, 14.0 * k, theme.text);
-                    if let Some(f) = btn_font.as_ref() {
-                        c.text(chup_core::i18n::t().stack_clear_all, f, clear, theme.text);
-                    }
-                }
-                Item::Toast(i, _) => {
-                    let t = &st.toasts[*i];
-                    let r = rectf(x, y, cw, h);
-                    c.shadow(r, 6.0 * k, 3.0 * k, 2.0 * k, theme.shadow);
-                    c.fill_round(r, 6.0 * k, theme.surface);
-                    c.stroke_round(r, 6.0 * k, 1.0, theme.line);
-                    let bar = if t.toast.kind == ToastKind::Error { theme.danger } else { theme.accent };
-                    c.fill_round(rectf(x, y, 3.0 * k, h), 1.5 * k, bar);
-                    if let Some(f) = font.as_ref() {
-                        c.text(&t.toast.message, f, rectf(x + 13.0 * k, y + 8.0 * k, cw - 23.0 * k, h - 16.0 * k), theme.text);
-                    }
-                    hits.push((Hit::Toast(t.id), to_rect(r)));
-                }
-                Item::Card(i, _) => {
-                    let s = &st.shots[*i];
-                    let r = rectf(x, y, cw, h);
-                    let rad = 6.0 * k;
-                    c.shadow(r, rad, 3.0 * k, 2.0 * k, theme.shadow);
-                    c.fill_round(r, rad, theme.surface2);
-                    if let Some(b) = st.bitmaps.get(&s.id) {
-                        c.image_cover(b, r, rad);
-                    }
-                    c.stroke_round(r, rad, 1.0, theme.line);
-                    let card_hovered =
-                        matches!(hover, Some(Hit::Card(j) | Hit::Copy(j) | Hit::Folder(j) | Hit::Remove(j)) if j == *i);
-                    let b = 24.0 * k;
-                    let btns = [
-                        (Hit::Copy(*i), Icon::Copy),
-                        (Hit::Folder(*i), Icon::Folder),
-                        (Hit::Remove(*i), Icon::Close),
-                    ];
-                    for (n, (hit, icon)) in btns.iter().enumerate() {
-                        let bx = r.right - 4.0 * k - b * (3 - n) as f32 - 2.0 * k * (2 - n) as f32;
-                        let br = rectf(bx, r.top + 4.0 * k, b, b);
-                        if card_hovered {
-                            let a = if hover == Some(*hit) { 0.85 } else { 0.6 };
-                            c.fill_round(br, 6.0 * k, Color::rgba(0, 0, 0, a));
-                            c.icon(*icon, br.left + 5.0 * k, br.top + 5.0 * k, 14.0 * k, Color::rgba(255, 255, 255, 1.0));
-                        }
-                        hits.push((*hit, to_rect(br)));
-                    }
-                    if card_hovered {
-                        if let Some(f) = small.as_ref() {
-                            let text = format!("{} × {}", s.width, s.height);
-                            let (tw, th) = f.measure(&text, 1000.0);
-                            let mr = rectf(r.left + 4.0 * k, r.bottom - 4.0 * k - th - 2.0 * k, tw + 10.0 * k, th + 2.0 * k);
-                            c.fill_round(mr, 4.0 * k, Color::rgba(0, 0, 0, 0.55));
-                            c.text(&text, f, mr, Color::rgba(255, 255, 255, 1.0));
-                        }
-                    }
-                    hits.push((Hit::Card(*i), to_rect(r)));
-                }
-            }
-            y += h + GAP * k;
-        }
-
-        if show_tab {
-            let tx = if edge_right { total_w as f32 - TAB_W * k } else { 0.0 };
-            let ty = total_h as f32 - (TAB_H + TAB_BOTTOM) * k;
-            let r = rectf(tx, ty, TAB_W * k, TAB_H * k);
-            c.shadow(r, 6.0 * k, 3.0 * k, 2.0 * k, theme.shadow);
-            let bg = if hover == Some(Hit::Tab) { theme.surface2 } else { theme.surface };
-            c.fill_round(r, 6.0 * k, bg);
-            c.stroke_round(r, 6.0 * k, 1.0, theme.line);
-            let chevron = if edge_right { Icon::ChevronLeft } else { Icon::ChevronRight };
-            c.icon(chevron, tx + 7.0 * k, ty + 12.0 * k, 14.0 * k, theme.text);
-            if let Some(f) = small.as_ref() {
-                c.text(&st.shots.len().to_string(), f, rectf(tx, ty + 28.0 * k, TAB_W * k, 16.0 * k), theme.text);
-            }
-            hits.push((Hit::Tab, to_rect(r)));
-        }
+        let input = StackState {
+            shots: &st.shots,
+            toasts: &st.toasts,
+            collapsed: st.collapsed,
+            hovering: st.hovering,
+            hover: st.hover,
+            edge_right: st.edge_right,
+            k,
+        };
+        c.begin(Color::CLEAR);
+        let hits = ui_stack::paint(c, &theme, &fonts, &input, &layout, |id| st.bitmaps.get(id));
         c.end();
 
         // Neo góc dưới của work area (SPEC 5.4).
-        let margin = (12.0 * k).round() as i32;
+        let margin = (MARGIN_DIP * k).round() as i32;
         let (px, py) = chup_core::coords::place_stack((total_w as u32, total_h as u32), &st.work, st.edge_right, margin);
         if let Some(s) = st.surface.as_ref() {
             s.present_part(self.hwnd, (px, py), (total_w, total_h), 255);
@@ -419,8 +265,7 @@ impl StackWin {
     }
 
     fn hit(&self, x: i32, y: i32) -> Option<Hit> {
-        // Nút trên thẻ được thêm trước thẻ nên tìm thấy trước.
-        self.st.borrow().hits.iter().find(|(_, r)| r.contains_point(x, y)).map(|(h, _)| *h)
+        ui_stack::hit_at(&self.st.borrow().hits, x, y)
     }
 
     fn shot_id(&self, i: usize) -> Option<String> {
@@ -489,7 +334,7 @@ impl Handler for StackWin {
                         Hit::Card(i) => {
                             let (cx, cy) = cursor_pos();
                             let d = (((cx - p.at.0).pow(2) + (cy - p.at.1).pow(2)) as f64).sqrt();
-                            (d >= 4.0 * st.scale).then_some(i)
+                            (d >= DRAG_DIP * st.scale).then_some(i)
                         }
                         _ => None,
                     })
@@ -521,7 +366,7 @@ impl Handler for StackWin {
                     st.tracking = false;
                     st.hover = None;
                 }
-                unsafe { SetTimer(Some(hwnd), TIMER_LEAVE, 400, None) };
+                unsafe { SetTimer(Some(hwnd), TIMER_LEAVE, LEAVE_MS, None) };
                 self.relayout();
                 Some(LRESULT(0))
             }

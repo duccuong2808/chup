@@ -9,9 +9,27 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 pub const CONFIG_VERSION: u32 = 4;
-/// Mặc định cũ (v1, v2) của hotkey "Chụp". Hay bị app khác giữ, v3 đổi sang [`DEFAULT_CAPTURE`].
+/// Mặc định cũ (v1, v2) của hotkey "Chụp". Hay bị app khác giữ, v3 đổi sang [`V3_CAPTURE`] (chỉ có trên Windows).
 const OLD_DEFAULT_CAPTURE: &str = "Ctrl+Alt+S";
-pub const DEFAULT_CAPTURE: &str = "Ctrl+Alt+X";
+const V3_CAPTURE: &str = "Ctrl+Alt+X";
+
+/// Hotkey mặc định (SPEC Q2). Tránh `PrtScn` (Windows 11 gán cho Snipping Tool); Freeze không dùng `Alt`.
+#[cfg(not(target_os = "macos"))]
+mod defaults {
+    pub const SELECT: &str = "Ctrl+Alt+A";
+    pub const CAPTURE: &str = "Ctrl+Alt+X";
+    pub const FREEZE: &str = "F1";
+}
+
+/// macOS (SPEC 11): `Ctrl+Cmd` (`Super` = Cmd). Tránh `Cmd+Shift+3/4/5` của hệ thống; F1 là phím độ sáng.
+#[cfg(target_os = "macos")]
+mod defaults {
+    pub const SELECT: &str = "Ctrl+Super+A";
+    pub const CAPTURE: &str = "Ctrl+Super+X";
+    pub const FREEZE: &str = "Ctrl+Super+Z";
+}
+
+pub use defaults::{CAPTURE as DEFAULT_CAPTURE, FREEZE as DEFAULT_FREEZE, SELECT as DEFAULT_SELECT};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -51,9 +69,9 @@ pub struct Hotkeys {
 impl Default for Hotkeys {
     fn default() -> Self {
         Self {
-            select_region: "Ctrl+Alt+A".into(),
+            select_region: DEFAULT_SELECT.into(),
             capture: DEFAULT_CAPTURE.into(),
-            freeze: "F1".into(),
+            freeze: DEFAULT_FREEZE.into(),
             freeze_enabled: true,
             ocr: String::new(),
         }
@@ -128,7 +146,7 @@ impl Default for StackConfig {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PreviewPosition {
-    /// Vị trí và cỡ lần trước (người dùng kéo, đổi cỡ là nhớ). Chưa có thì như `Stack`.
+    /// Chỗ lần trước (người dùng kéo là nhớ), cỡ tự tính theo ảnh. Chưa có chỗ thì như `Stack`.
     Remember,
     /// Sát cạnh stack, căn đáy.
     Stack,
@@ -153,15 +171,17 @@ pub struct PreviewConfig {
     /// %, 20–100.
     pub opacity: u8,
     pub position: PreviewPosition,
-    /// Cỡ khi mở (khi không có khung lần trước): ảnh tối đa bấy nhiêu % work area mỗi chiều, 20–100.
+    /// Cỡ khi mở: diện tích tối đa bằng ảnh rộng, cao bấy nhiêu % work area, 20–100 (`preview::auto_zoom`).
     pub size: u8,
-    /// Khung lần trước, dùng khi `position = remember`.
+    /// Khung lần trước, dùng khi `position = remember`. Chỉ quyết định chỗ mở, không quyết định cỡ.
     pub last: Option<SavedRect>,
+    /// % so với cỡ tự tính người dùng đã chọn bằng cách kéo mép, 50–200. Dùng khi `position = remember`.
+    pub size_scale: u16,
 }
 
 impl Default for PreviewConfig {
     fn default() -> Self {
-        Self { always_on_top: true, opacity: 100, position: PreviewPosition::Remember, size: 50, last: None }
+        Self { always_on_top: true, opacity: 100, position: PreviewPosition::Remember, size: 50, last: None, size_scale: 100 }
     }
 }
 
@@ -169,6 +189,13 @@ impl PreviewConfig {
     fn clamp(&mut self) {
         self.opacity = crate::preview::clamp_opacity(self.opacity);
         self.size = self.size.clamp(20, 100);
+        self.size_scale = self.size_scale.clamp(crate::preview::MIN_SIZE_SCALE, crate::preview::MAX_SIZE_SCALE);
+    }
+
+    /// Zoom mở ảnh `img` trên work area `work` (SPEC 17.2).
+    pub fn open_zoom(&self, img: (u32, u32), work: crate::coords::Rect) -> f64 {
+        let user = if self.position == PreviewPosition::Remember { self.size_scale } else { 100 };
+        crate::preview::auto_zoom(img, work, self.size, user)
     }
 }
 
@@ -233,7 +260,7 @@ impl Config {
             self.file_name_pattern = Config::default().file_name_pattern;
         }
         if self.version < 2 {
-            // v1 chưa có hotkey Freeze (serde điền "F1"). Nếu người dùng đã dùng phím đó cho việc khác thì để trống.
+            // v1 chưa có hotkey Freeze (serde điền mặc định, "F1" trên Windows). Nếu người dùng đã dùng phím đó cho việc khác thì để trống.
             let h = &self.hotkeys;
             if [&h.select_region, &h.capture, &h.ocr].iter().any(|k| k.eq_ignore_ascii_case(&h.freeze)) {
                 self.hotkeys.freeze.clear();
@@ -242,8 +269,8 @@ impl Config {
         if self.version < 3 && self.hotkeys.capture.eq_ignore_ascii_case(OLD_DEFAULT_CAPTURE) {
             // v3: mặc định cũ của "Chụp" hay bị app khác giữ. Đổi sang mặc định mới nếu phím đó chưa dùng cho việc khác.
             let h = &self.hotkeys;
-            if ![&h.select_region, &h.freeze, &h.ocr].iter().any(|k| k.eq_ignore_ascii_case(DEFAULT_CAPTURE)) {
-                self.hotkeys.capture = DEFAULT_CAPTURE.into();
+            if ![&h.select_region, &h.freeze, &h.ocr].iter().any(|k| k.eq_ignore_ascii_case(V3_CAPTURE)) {
+                self.hotkeys.capture = V3_CAPTURE.into();
             }
         }
         if self.version < 4 {
@@ -342,7 +369,7 @@ mod tests {
         let cfg = Config::with_save_dir(Path::new("/tmp/pics"));
         let next = apply_patch(&cfg, &json!({ "hotkeys": { "capture": "F2" }, "stack": { "edge": "left" } })).unwrap();
         assert_eq!(next.hotkeys.capture, "F2");
-        assert_eq!(next.hotkeys.select_region, "Ctrl+Alt+A");
+        assert_eq!(next.hotkeys.select_region, DEFAULT_SELECT);
         assert_eq!(next.stack.edge, Edge::Left);
         assert_eq!(next.save_dir, PathBuf::from("/tmp/pics"));
     }
@@ -350,7 +377,7 @@ mod tests {
     #[test]
     fn patch_rejects_duplicate_hotkeys_and_empty_pattern() {
         let cfg = Config::with_save_dir(Path::new("/x"));
-        assert!(apply_patch(&cfg, &json!({ "hotkeys": { "capture": "ctrl+alt+a" } })).is_err());
+        assert!(apply_patch(&cfg, &json!({ "hotkeys": { "capture": DEFAULT_SELECT.to_lowercase() } })).is_err());
         assert!(apply_patch(&cfg, &json!({ "fileNamePattern": "  " })).is_err());
         assert!(apply_patch(&cfg, &json!({ "stack": { "edge": "top" } })).is_err());
     }
@@ -363,10 +390,11 @@ mod tests {
         fs::write(&p, r#"{ "version": 1, "hotkeys": { "selectRegion": "Ctrl+Alt+A", "capture": "Ctrl+Alt+S" } }"#).unwrap();
         let cfg = load(&p, Path::new("/pics")).config;
         assert_eq!(cfg.version, CONFIG_VERSION);
-        assert_eq!(cfg.hotkeys.freeze, "F1");
+        assert_eq!(cfg.hotkeys.freeze, DEFAULT_FREEZE);
         assert!(cfg.hotkeys.freeze_enabled);
-        // v1 đã dùng F1 cho hotkey khác: không cướp, để Freeze trống.
-        fs::write(&p, r#"{ "version": 1, "hotkeys": { "capture": "f1" } }"#).unwrap();
+        // v1 đã dùng phím Freeze mặc định cho hotkey khác: không cướp, để Freeze trống.
+        let v1 = json!({ "version": 1, "hotkeys": { "capture": DEFAULT_FREEZE.to_lowercase() } });
+        fs::write(&p, v1.to_string()).unwrap();
         assert_eq!(load(&p, Path::new("/pics")).config.hotkeys.freeze, "");
         // v2 giữ nguyên giá trị người dùng, kể cả khi đã tắt.
         fs::write(&p, r#"{ "version": 2, "hotkeys": { "freeze": "" } }"#).unwrap();
@@ -383,7 +411,7 @@ mod tests {
             fs::write(&p, json).unwrap();
             load(&p, Path::new("/pics")).config.hotkeys.capture
         };
-        assert_eq!(Config::default().hotkeys.capture, "Ctrl+Alt+X");
+        assert_eq!(Config::default().hotkeys.capture, DEFAULT_CAPTURE);
         assert_eq!(load_capture(r#"{ "version": 2, "hotkeys": { "capture": "Ctrl+Alt+S" } }"#), "Ctrl+Alt+X");
         // Người dùng tự chọn phím khác: giữ.
         assert_eq!(load_capture(r#"{ "version": 2, "hotkeys": { "capture": "Ctrl+Shift+F9" } }"#), "Ctrl+Shift+F9");
@@ -421,13 +449,13 @@ mod tests {
         let cfg = Config::with_save_dir(Path::new("/x"));
         let off = apply_patch(&cfg, &json!({ "hotkeys": { "freezeEnabled": false } })).unwrap();
         assert!(!off.hotkeys.freeze_enabled);
-        assert_eq!(off.hotkeys.freeze, "F1", "tắt không làm mất phím");
+        assert_eq!(off.hotkeys.freeze, DEFAULT_FREEZE, "tắt không làm mất phím");
     }
 
     #[test]
     fn patch_rejects_freeze_duplicating_other_hotkey() {
         let cfg = Config::with_save_dir(Path::new("/x"));
-        assert!(apply_patch(&cfg, &json!({ "hotkeys": { "freeze": "Ctrl+Alt+X" } })).is_err());
+        assert!(apply_patch(&cfg, &json!({ "hotkeys": { "freeze": DEFAULT_CAPTURE } })).is_err());
         assert!(apply_patch(&cfg, &json!({ "hotkeys": { "freeze": "", "capture": "" } })).is_ok());
     }
 
@@ -466,7 +494,7 @@ mod tests {
         let next = apply_patch(&cfg, &json!({ "ocr": { "language": "vi" }, "hotkeys": { "ocr": "Ctrl+Alt+T" } })).unwrap();
         assert_eq!(next.ocr.language, OcrLanguage::Vi);
         assert_eq!(next.hotkeys.ocr, "Ctrl+Alt+T");
-        assert!(apply_patch(&cfg, &json!({ "hotkeys": { "ocr": "f1" } })).is_err(), "trùng Freeze");
+        assert!(apply_patch(&cfg, &json!({ "hotkeys": { "ocr": DEFAULT_FREEZE.to_lowercase() } })).is_err(), "trùng Freeze");
         assert!(apply_patch(&cfg, &json!({ "ocr": { "language": "fr" } })).is_err());
         let s = serde_json::to_value(&next).unwrap();
         assert_eq!(s["ocr"], json!({ "language": "vi", "autoPreview": true }));
@@ -508,6 +536,43 @@ mod tests {
         save(&p, &out.config).unwrap();
         assert_eq!(load(&p, Path::new("/other")).config, out.config);
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn default_hotkeys_follow_os() {
+        let h = Hotkeys::default();
+        if cfg!(target_os = "macos") {
+            assert_eq!((h.select_region.as_str(), h.capture.as_str(), h.freeze.as_str()), ("Ctrl+Super+A", "Ctrl+Super+X", "Ctrl+Super+Z"));
+        } else {
+            assert_eq!((h.select_region.as_str(), h.capture.as_str(), h.freeze.as_str()), ("Ctrl+Alt+A", "Ctrl+Alt+X", "F1"));
+        }
+        // Mặc định phải parse được và không trùng nhau.
+        assert!(apply_patch(&Config::with_save_dir(Path::new("/x")), &json!({})).is_ok());
+    }
+
+    #[test]
+    fn preview_size_scale_defaults_clamps_and_patches() {
+        let cfg = Config::with_save_dir(Path::new("/x"));
+        assert_eq!(cfg.preview.size_scale, 100);
+        let old: Config = serde_json::from_value(json!({ "version": 4, "preview": { "size": 50 } })).unwrap();
+        assert_eq!(old.preview.size_scale, 100, "config cũ thiếu field: 100%");
+        let next = apply_patch(&cfg, &json!({ "preview": { "sizeScale": 999 } })).unwrap();
+        assert_eq!(next.preview.size_scale, 200);
+    }
+
+    #[test]
+    fn preview_open_zoom_ignores_previous_box_and_uses_scale_only_when_remembering() {
+        let work = crate::coords::Rect::new(0, 0, 3600, 2264);
+        let img = (3600, 2128);
+        let mut p = PreviewConfig::default();
+        let base = p.open_zoom(img, work);
+        // Khung dải mỏng của ảnh trước không làm nhỏ ảnh sau.
+        p.last = Some(SavedRect { x: 1784, y: 2064, w: 1400, h: 120 });
+        assert_eq!(p.open_zoom(img, work), base);
+        p.size_scale = 150;
+        assert!((p.open_zoom(img, work) - base * 1.5).abs() < 1e-9);
+        p.position = PreviewPosition::Center;
+        assert_eq!(p.open_zoom(img, work), base);
     }
 
     #[test]

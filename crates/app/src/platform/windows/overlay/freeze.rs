@@ -9,9 +9,13 @@ use chup_core::{
     autoselect::is_click,
     coords::{place_toolbar, Rect},
     freeze,
-    icons::Icon,
     model::FreezeAction,
     selection::{self, Grip},
+};
+use chup_ui::{
+    overlay::{self as ui_overlay, BAR_GAP_DIP, BAR_H_DIP, FAILED_DIM, HANDLE_DIP, HANDLE_HIT_DIP},
+    toolbar::{bar_width, freeze_items as buttons, paint_bar},
+    Canvas as _,
 };
 use image::RgbaImage;
 use windows::{
@@ -31,32 +35,13 @@ use windows::{
 use super::{
     super::{
         app::Action,
-        gfx::{pill, Align, Canvas, Color, Font, Surface, Theme},
-        toolbar::{bar_width, paint_bar, BarButton},
+        gfx::{self, Align, Canvas, Color, Font, Surface},
         win::emit,
     },
     auto, cursor_pos, hiword, loword, Overlay, Sprite, State, VK_ESCAPE, VK_RETURN, WM_KEYDOWN, WM_LBUTTONDBLCLK,
     WM_LBUTTONDOWN, WM_LBUTTONUP, WM_MOUSEMOVE, WM_RBUTTONUP, WM_SETCURSOR,
 };
 
-/// Handle vẽ 8 DIP, vùng bắt chuột 14 DIP cho dễ trúng.
-const HANDLE_DIP: f64 = 8.0;
-const HANDLE_HIT_DIP: f64 = 14.0;
-const BAR_H_DIP: f64 = 44.0;
-const BAR_GAP_DIP: f64 = 6.0;
-const WHITE: u32 = 0xFFFF_FFFF;
-const DARK: u32 = 0xFF20_2020;
-
-/// Nút của toolbar Freeze (chữ theo ngôn ngữ giao diện).
-fn buttons() -> [BarButton; 4] {
-    let t = chup_core::i18n::t();
-    [
-        BarButton { icon: Icon::Check, label: t.btn_save, primary: true, active: false },
-        BarButton { icon: Icon::Copy, label: "Copy", primary: false, active: false },
-        BarButton { icon: Icon::Text, label: t.btn_text, primary: false, active: false },
-        BarButton { icon: Icon::Close, label: "", primary: false, active: false },
-    ]
-}
 /// Hành động của từng nút; `None` = huỷ.
 const ACTIONS: [Option<FreezeAction>; 4] =
     [Some(FreezeAction::Save), Some(FreezeAction::Copy), Some(FreezeAction::Ocr), None];
@@ -125,9 +110,9 @@ impl Bar {
     }
 
     fn render(&mut self) {
-        let theme = Theme::current();
+        let theme = gfx::theme();
         let size = (self.surface.w, self.surface.h);
-        self.canvas.begin(Color::rgba(0, 0, 0, 0.0));
+        self.canvas.begin(Color::CLEAR);
         self.buttons =
             paint_bar(&self.canvas, self.font.as_ref(), &theme, self.k, size, &buttons(), false, self.hover, self.pressed);
         self.canvas.end();
@@ -201,11 +186,7 @@ impl Overlay {
             (true, false) if auto => chup_core::i18n::t().hint_frozen_auto,
             (true, false) => chup_core::i18n::t().hint_frozen,
         };
-        let white = Color::rgba(255, 255, 255, 1.0);
-        let hint = pill(text, 13.0 * k, 12.0 * k, 6.0 * k, 999.0, Color::rgba(0, 0, 0, 0.7), white).map(|s| {
-            let at = Rect::new((w - s.w) / 2, self.s(24.0), s.w as u32, s.h as u32);
-            Sprite { s, at }
-        });
+        let hint = self.hint_sprite(text, k);
         let bar = if ocr_only { None } else { Bar::new(k) };
         let t_prep = t0.elapsed();
         {
@@ -546,18 +527,10 @@ pub(super) fn paint_frozen(st: &mut State, dirty: Rect) {
                 }
             }
         }
-        None => s.fill(dirty, Color::rgba(0, 0, 0, 0.6).px()),
+        None => s.fill(dirty, FAILED_DIM.px()),
     }
     if let Some(sel) = f.sel {
-        s.outline_outside(sel, 1, WHITE);
-        if !matches!(f.drag, Drag::New(_)) {
-            for (_, hr) in selection::handles(sel, f.handle) {
-                if hr.intersect(&dirty).is_some() {
-                    s.fill(hr.expand(1), DARK);
-                    s.fill(hr, WHITE);
-                }
-            }
-        }
+        ui_overlay::paint_frozen_sel(&mut s.px(), dirty, sel, f.handle, !matches!(f.drag, Drag::New(_)));
     }
     if f.hint_visible() {
         if let Some(h) = f.hint.as_mut() {

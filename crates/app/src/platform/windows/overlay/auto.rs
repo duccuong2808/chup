@@ -8,20 +8,17 @@ use chup_core::{
     autoselect::{normalize, window_at, Frame, FrameKind, Picker, WinFrame},
     coords::Rect,
 };
+use chup_ui::overlay::{auto_label_rect, DASH_DIP, EDGE_DIP, LABEL_BG};
 use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_SHIFT};
 
 use super::{
     super::{
         app::Action,
-        gfx::{Color, PillPainter, Theme},
+        gfx::{self, Color, PillPainter},
         win::emit,
     },
     cursor_pos, Overlay, State,
 };
-
-/// Viền nét đứt: dày 2 DIP, đoạn 6 DIP.
-const EDGE_DIP: f64 = 2.0;
-const DASH_DIP: f64 = 6.0;
 
 pub(super) struct Auto {
     wins: Rc<Vec<WinFrame>>,
@@ -46,7 +43,7 @@ impl Auto {
         Self {
             edge: (EDGE_DIP * scale).round().max(1.0) as i32,
             dash: (DASH_DIP * scale).round().max(2.0) as i32,
-            accent: Theme::current().accent.px(),
+            accent: gfx::theme().accent.px(),
             wins,
             picker: Picker::default(),
             at: None,
@@ -202,25 +199,14 @@ impl Overlay {
 
     /// Nhãn "W × H · Loại": dưới khung, sát đáy thì lên trên, không còn chỗ thì nằm trong góc trên-trái khung.
     fn place_auto_label(&self, a: &mut Auto, f: Frame) -> Option<Rect> {
-        let (w, h) = (self.mon.rect.w as i32, self.mon.rect.h as i32);
-        let k = self.mon.scale as f32;
+        let mon = (self.mon.rect.w as i32, self.mon.rect.h as i32);
         if a.label.is_none() {
-            a.label = PillPainter::new(12.0 * k, 6.0 * k, 2.0 * k, 4.0 * k, (self.s(320.0), self.s(30.0)));
+            a.label = self.label_painter(320.0);
         }
         a.label_text = f.label();
         let p = a.label.as_mut()?;
-        let (lw, lh) = p.paint(&a.label_text, Color::rgba(0, 0, 0, 0.75), Color::rgba(255, 255, 255, 1.0));
-        let gap = self.s(6.0);
-        let r = f.rect;
-        let y = if r.bottom() + gap + lh <= h {
-            r.bottom() + gap
-        } else if r.y - gap - lh >= 0 {
-            r.y - gap - lh
-        } else {
-            r.y + gap
-        };
-        let x = (r.x + if y == r.y + gap { gap } else { 0 }).clamp(0, (w - lw).max(0));
-        Some(Rect::new(x, y, lw as u32, lh as u32))
+        let size = p.paint(&a.label_text, LABEL_BG, Color::WHITE);
+        Some(auto_label_rect(f.rect, size, mon, self.s(6.0)))
     }
 
     /// Chế độ hiện tại có cho tô khung ở `p` (toạ độ overlay) không.

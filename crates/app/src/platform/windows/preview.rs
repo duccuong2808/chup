@@ -18,10 +18,13 @@ use std::{
 
 use chup_core::{
     coords::{monitor_at, Rect},
-    icons::Icon,
     ocr::{Pos, TextLayout},
     preview::{self, View},
     selection::Grip,
+};
+use chup_ui::{
+    preview::{self as ui_preview, Btn, EDGE, PILL_MS, TEXT_PAD},
+    rectf, Canvas as _,
 };
 use image::RgbaImage;
 use windows::Win32::{
@@ -48,27 +51,10 @@ use windows::Win32::{
 
 use super::{
     app::Action,
-    gfx::{rectf, Align, Canvas, Color, Font, Surface, Theme},
+    gfx::{self, Canvas, Color, Font, Surface},
     util::{self, cursor_pos, hiword, loword, wide},
     win::{self, emit, Handler},
 };
-
-// Kích thước (DIP).
-const MIN_W: f32 = 160.0;
-const MIN_H: f32 = 48.0;
-const RADIUS: f32 = 8.0;
-const BTN: f32 = 28.0;
-const BTN_GAP: f32 = 4.0;
-const BAR_PAD: f32 = 8.0;
-/// Bề rộng dải mép cửa sổ để kéo đổi cỡ.
-const EDGE: f32 = 6.0;
-/// Nới vùng nhận chuột quanh dòng chữ (DIP).
-const TEXT_PAD: f32 = 4.0;
-/// Độ đục của màu tô vùng chọn chữ.
-const SEL_ALPHA: f32 = 0.35;
-/// Bóng đổ quanh khung: độ loang và độ lệch xuống (DIP). Lề cửa sổ = tổng hai số.
-const SHADOW_SPREAD: f32 = 8.0;
-const SHADOW_DY: f32 = 2.0;
 
 // Lệnh của menu chuột phải.
 const CMD_COPY_TEXT: usize = 1;
@@ -76,28 +62,9 @@ const CMD_SELECT_ALL: usize = 2;
 const CMD_COPY_IMAGE: usize = 3;
 
 const TIMER_PILL: usize = 1;
-const PILL_MS: u32 = 1200;
 /// Đổi DPI: vẽ lại sau, không vẽ ngay trong message Windows gửi giữa lúc đang đẩy ảnh lên cửa sổ.
 const TIMER_DPI: usize = 3;
 const MK_CONTROL: usize = 0x0008;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Btn {
-    /// OCR: copy chữ trong ảnh (SPEC 15.2). Đang OCR thì vẽ vòng "bận", bấm lần nữa là huỷ.
-    Ocr,
-    Pin,
-    Copy,
-    Folder,
-    Close,
-}
-
-const BUTTONS: [(Btn, Icon); 5] = [
-    (Btn::Ocr, Icon::Text),
-    (Btn::Pin, Icon::Pin),
-    (Btn::Copy, Icon::Copy),
-    (Btn::Folder, Icon::Folder),
-    (Btn::Close, Icon::Close),
-];
 
 /// Kết quả `compose`: khung đã vẽ, vị trí, độ đục, và vùng đổi (`None` = cả cửa sổ; rỗng = không đổi gì).
 struct Composed {
@@ -173,10 +140,7 @@ fn shift_down() -> bool {
     (unsafe { GetKeyState(VK_SHIFT.0 as i32) }) < 0
 }
 
-/// Cỡ cửa sổ nhỏ nhất (physical px) ở scale `k`.
-pub fn min_size(k: f64) -> (u32, u32) {
-    ((MIN_W as f64 * k).round() as u32, (MIN_H as f64 * k).round() as u32)
-}
+pub use ui_preview::min_size;
 
 pub struct Preview {
     pub hwnd: HWND,
@@ -370,12 +334,12 @@ impl Preview {
 
     /// Vẽ lại `base` theo kích thước của view. `false` = không cấp được bộ nhớ.
     fn rescale(&self) -> bool {
-        let theme = Theme::current();
+        let theme = gfx::theme();
         let k = self.scale();
         let mut st = self.st.borrow_mut();
         let st = &mut *st;
         let (Some(v), Some(img)) = (st.view, st.img.as_ref()) else { return false };
-        let m = ((SHADOW_SPREAD + SHADOW_DY) * k).ceil() as i32;
+        let m = ui_preview::margin(k);
         st.margin = m;
         let (w, h) = (v.rect.w as i32 + 2 * m, v.rect.h as i32 + 2 * m);
         if st.base.as_ref().map(|s| (s.w, s.h)) != Some((w, h)) {
@@ -397,32 +361,15 @@ impl Preview {
         }
         let Some(c) = st.canvas.as_ref() else { return false };
         if st.bmp.is_none() {
-            st.bmp = c.bitmap(img);
+            st.bmp = c.image(img);
         }
         let Some(bmp) = st.bmp.as_ref() else { return false };
         if !c.bind(base) {
             return false;
         }
         let t0 = std::time::Instant::now();
-        let rad = RADIUS * k;
-        let (mf, vw, vh) = (m as f32, v.rect.w as f32, v.rect.h as f32);
-        let full = rectf(mf, mf, vw, vh);
-        c.begin(Color::rgba(0, 0, 0, 0.0));
-        c.shadow(full, rad, SHADOW_SPREAD * k, SHADOW_DY * k, theme.shadow);
-        // Alpha 1/255 thay vì 0: pixel alpha 0 của layered window không nhận chuột, mà góc bo tròn
-        // vẫn phải kéo được để đổi cỡ.
-        c.fill_round(full, rad, Color::rgba(0, 0, 0, 1.0 / 255.0));
-        let dims = img.dimensions();
-        let fr = v.frame(dims);
-        let fills = fr.w == v.rect.w && fr.h == v.rect.h;
-        if !fills {
-            // Ảnh nhỏ hơn cỡ tối thiểu: nằm giữa trên nền tối.
-            c.fill_round(full, rad, Color::rgba(24, 24, 27, 1.0));
-        }
-        let img_r = rectf(fr.x as f32 + mf, fr.y as f32 + mf, fr.w as f32, fr.h as f32);
-        let (ox, oy) = v.origin(dims);
-        c.image_at(bmp, img_r, if fills { rad } else { 0.0 }, (ox as f32 + mf, oy as f32 + mf), v.scale() as f32);
-        c.stroke_round(rectf(mf + 0.5, mf + 0.5, vw - 1.0, vh - 1.0), rad, 1.0, theme.line);
+        c.begin(Color::CLEAR);
+        ui_preview::paint_base(c, &theme, v, img.dimensions(), bmp, m, k, true);
         c.end();
         log::debug!("preview: vẽ ảnh {}×{} mất {:?}", w, h, t0.elapsed());
         true
@@ -479,54 +426,19 @@ impl Preview {
         let out = &mut owned;
         // Vẽ theo toạ độ surface = toạ độ cục bộ + lề bóng đổ.
         let m = st.margin;
-        let mf = m as f32;
 
         // Toolbar góc trên-phải (luôn tính vùng bấm; chỉ vẽ khi hover).
         let (w, h) = (v.rect.w as f32, v.rect.h as f32);
-        let b = BTN * k;
-        let n = BUTTONS.len() as f32;
-        let x0 = w - BAR_PAD * k - n * b - (n - 1.0) * BTN_GAP * k;
-        // Vùng bấm của toolbar: luôn tính (cả khi không vẽ, cả khi thoát sớm vì không có gì đổi).
-        st.hits = BUTTONS
-            .iter()
-            .enumerate()
-            .map(|(i, (btn, _))| {
-                let x = x0 + i as f32 * (b + BTN_GAP * k);
-                (*btn, Rect::new(x as i32, (BAR_PAD * k) as i32, b as u32, b as u32))
-            })
-            .collect();
+        st.hits = ui_preview::bar_hits(w, k);
         let draw_bar = st.hovering;
         let draw_pill = st.pill.is_some();
-        // Vùng chọn chữ: rect theo toạ độ ảnh gốc -> toạ độ surface, cắt theo khung ảnh (đang phóng to thì
-        // phần chữ ngoài khung không vẽ).
+        // Vùng chọn chữ: rect theo toạ độ ảnh gốc -> toạ độ surface, cắt theo khung ảnh.
         let sel_rects: Vec<_> = match (st.text.as_ref(), st.sel, st.img.as_ref()) {
-            (Some(t), Some((a, b)), Some(img)) => {
-                let dims = img.dimensions();
-                let fr = v.frame(dims);
-                let (fl, ft) = (fr.x as f32 + mf, fr.y as f32 + mf);
-                let (fr_, fb) = (fl + fr.w as f32, ft + fr.h as f32);
-                let (ox, oy) = v.origin(dims);
-                let (ox, oy, z) = (ox as f32 + mf, oy as f32 + mf, v.scale() as f32);
-                let pad = k;
-                t.highlight(a, b)
-                    .iter()
-                    .filter_map(|r| {
-                        let l = (ox + r.x as f32 * z - pad).max(fl);
-                        let t = (oy + r.y as f32 * z - pad).max(ft);
-                        let rt = (ox + (r.x + r.w as i32) as f32 * z + pad).min(fr_);
-                        let bt = (oy + (r.y + r.h as i32) as f32 * z + pad).min(fb);
-                        (rt > l && bt > t).then(|| rectf(l, t, rt - l, bt - t))
-                    })
-                    .collect()
-            }
+            (Some(t), Some(sel), Some(img)) => ui_preview::sel_rects(t, sel, v, img.dimensions(), m, k),
             _ => vec![],
         };
         // Khung bao vùng bôi đen (nới cho bo góc, khử răng cưa).
-        let sel_box = sel_rects.iter().fold(None::<Rect>, |acc, r| {
-            let ri = Rect::new(r.left.floor() as i32 - 2, r.top.floor() as i32 - 2, 0, 0);
-            let ri = Rect::new(ri.x, ri.y, (r.right.ceil() as i32 + 2 - ri.x) as u32, (r.bottom.ceil() as i32 + 2 - ri.y) as u32);
-            Some(acc.map_or(ri, |a| a.union(&ri)))
-        });
+        let sel_box = ui_preview::sel_box(&sel_rects);
         let full = Rect::new(0, 0, out.w as u32, out.h as u32);
         // Vẽ lại một phần chỉ khi `out` đang là khung trước (cùng cỡ với base) và chỉ vùng bôi đen đổi.
         let dirty = (sel_only && (out.w, out.h) == (base.w, base.h)).then(|| {
@@ -550,34 +462,19 @@ impl Preview {
             if let Some(d) = dirty {
                 c.push_clip(rectf(d.x as f32, d.y as f32, d.w as f32, d.h as f32));
             }
-            let sel_color = Theme::current().accent.with_alpha(SEL_ALPHA);
-            for r in &sel_rects {
-                c.fill_round(*r, 2.0 * k, sel_color);
-            }
-            for (i, (btn, icon)) in BUTTONS.iter().enumerate() {
-                let r = rectf(mf + x0 + i as f32 * (b + BTN_GAP * k), mf + BAR_PAD * k, b, b);
-                if !draw_bar {
-                    continue;
-                }
-                let hot = st.hover == Some(*btn);
-                let busy = *btn == Btn::Ocr && st.ocr_busy.as_ref() == Some(&st.path);
-                let icon = if busy { &Icon::Busy } else { icon };
-                let bg = if (*btn == Btn::Pin && st.topmost) || busy {
-                    Theme::current().accent.with_alpha(if hot { 1.0 } else { 0.9 })
-                } else {
-                    Color::rgba(0, 0, 0, if hot { 0.85 } else { 0.6 })
-                };
-                c.fill_round(r, 6.0 * k, bg);
-                let is = 16.0 * k;
-                c.icon(*icon, r.left + (b - is) / 2.0, r.top + (b - is) / 2.0, is, Color::rgba(255, 255, 255, 1.0));
-            }
-            if let (Some(text), Some(f)) = (st.pill.as_ref(), Font::new(12.0 * k, false, Align::Center, false)) {
-                let (tw, th) = f.measure(text, 10_000.0);
-                let (pw, ph) = (tw + 20.0 * k, th + 8.0 * k);
-                let r = rectf(mf + (w - pw) / 2.0, mf + h - 12.0 * k - ph, pw, ph);
-                c.fill_round(r, ph / 2.0, Color::rgba(0, 0, 0, 0.7));
-                c.text(text, &f, r, Color::rgba(255, 255, 255, 1.0));
-            }
+            let pill_font = st.pill.as_ref().and_then(|_| Font::from_spec(ui_preview::pill_font(k)));
+            let top = ui_preview::Top {
+                k,
+                m,
+                size: (w, h),
+                sel: &sel_rects,
+                bar: draw_bar,
+                hover: st.hover,
+                busy: st.ocr_busy.as_ref() == Some(&st.path),
+                topmost: st.topmost,
+                pill: st.pill.as_deref().zip(pill_font.as_ref()),
+            };
+            ui_preview::paint_top(c, &gfx::theme(), &top);
             if dirty.is_some() {
                 c.pop_clip();
             }
@@ -592,6 +489,15 @@ impl Preview {
         let r = self.st.borrow().view.map(|v| v.rect);
         if let Some(r) = r {
             emit(Action::PreviewBox(r));
+        }
+    }
+
+    /// Kéo mép xong: báo App để nhớ tỉ lệ so với cỡ tự tính.
+    fn save_size(&self) {
+        self.sync_pos();
+        let st = self.st.borrow();
+        if let (Some(v), Some(img)) = (st.view, st.img.as_ref()) {
+            emit(Action::PreviewResized { rect: v.rect, img: img.dimensions(), zoom: v.zoom });
         }
     }
 
@@ -693,10 +599,14 @@ impl Preview {
 
     /// Kết thúc kéo mép (thả chuột hoặc mất capture).
     fn resize_end(&self) -> bool {
-        if self.st.borrow_mut().resize.take().is_none() {
-            return false;
+        let Some((_, start, _)) = self.st.borrow_mut().resize.take() else { return false };
+        // Bấm vào mép mà không kéo: không phải chọn cỡ.
+        let view = self.st.borrow().view;
+        if view.is_some_and(|v| (v.rect.w, v.rect.h) != (start.rect.w, start.rect.h)) {
+            self.save_size();
+        } else {
+            self.save_box();
         }
-        self.save_box();
         true
     }
 

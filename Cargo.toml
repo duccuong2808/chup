@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/core", "crates/app", "crates/ocr-proto"]
+members = ["crates/core", "crates/ui", "crates/app", "crates/ocr-proto"]
 # Cần Tesseract để link: build riêng (CI Windows, hoặc Homebrew trên macOS), xem crates/ocr-helper.
 exclude = ["crates/ocr-helper"]
 resolver = "2"

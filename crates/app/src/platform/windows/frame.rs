@@ -5,6 +5,7 @@
 use std::cell::RefCell;
 
 use chup_core::coords::Rect;
+use chup_ui::frame::{self as ui_frame, Part};
 use windows::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, WPARAM},
     UI::{
@@ -22,23 +23,10 @@ use windows::Win32::{
 
 use super::{
     app::Action,
-    gfx::{Color, Surface, Theme},
+    gfx::{self, Surface},
     util::{cursor_pos, hiword, loword},
     win::{self, emit, Handler},
 };
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Part {
-    Move,
-    N,
-    S,
-    E,
-    W,
-    NE,
-    NW,
-    SE,
-    SW,
-}
 
 struct Drag {
     part: Part,
@@ -135,10 +123,6 @@ impl Frame {
         }
     }
 
-    fn sz(&self, scale: f64, dip: f64) -> i32 {
-        (dip * scale).round().max(1.0) as i32
-    }
-
     /// Vẽ lại và đẩy lên ở `st.outer`. Ngoài lúc kéo/resize thì không giữ DIB:
     /// DWM đã có bản sao của layered window, giữ thêm bản của mình chỉ tốn RAM.
     fn render(&self) {
@@ -165,93 +149,25 @@ impl Frame {
             st.surface = Surface::new(w + 256, h + 256);
         }
         let (m, scale, faded) = (st.margin, st.scale, st.faded);
-        let theme = Theme::current();
-        let bw = self.sz(scale, 2.0);
-        let hs = self.sz(scale, 8.0);
-        let hb = self.sz(scale, 1.5);
-        let off = m - self.sz(scale, 3.0) - hs;
         let mut surface = st.surface.take()?;
         drop(st);
-        let s = &mut surface;
-
-        let all = Rect::new(0, 0, s.w as u32, s.h as u32);
-        s.fill(all, 0);
-        let region = Rect::new(m, m, (w - 2 * m).max(0) as u32, (h - 2 * m).max(0) as u32);
-        let alpha = if faded { 0.3 } else { 1.0 };
-        if !faded {
-            // Lề nhận chuột (để kéo), gần như trong suốt.
-            let ring = Rect::new(0, 0, w as u32, h as u32);
-            s.fill(ring, 0x0100_0000);
-            s.fill(region, 0);
-        }
-        // Viền màu nhấn nằm ngay ngoài region, viền trắng mảnh ngoài nữa.
-        let band = region.expand(bw);
-        s.outline_outside(band, 1, Color::rgba(255, 255, 255, 0.9 * alpha).px());
-        s.outline_outside(region, bw, theme.accent.with_alpha(alpha).px());
-
-        if !faded {
-            for (hx, hy) in handle_origins(w, h, off, hs) {
-                let r = Rect::new(hx, hy, hs as u32, hs as u32);
-                s.fill(r, theme.accent.px());
-                s.fill(r.expand(-hb), Color::rgba(255, 255, 255, 1.0).px());
-            }
-        }
+        ui_frame::paint(&mut surface.px(), (w, h), m, scale, faded, &gfx::theme(), true);
         Some(surface)
     }
 
     fn hit(&self, lx: i32, ly: i32) -> Option<Part> {
         let st = self.st.borrow();
-        if st.faded || !st.visible {
+        if !st.visible {
             return None;
         }
-        let (w, h, m) = (st.outer.w as i32, st.outer.h as i32, st.margin);
-        let hs = self.sz(st.scale, 8.0);
-        let off = m - self.sz(st.scale, 3.0) - hs;
-        let pad = self.sz(st.scale, 3.0);
-        let parts = [Part::NW, Part::N, Part::NE, Part::E, Part::SE, Part::S, Part::SW, Part::W];
-        for (p, (hx, hy)) in parts.iter().zip(handle_origins(w, h, off, hs)) {
-            if Rect::new(hx - pad, hy - pad, (hs + 2 * pad) as u32, (hs + 2 * pad) as u32).contains_point(lx, ly) {
-                return Some(*p);
-            }
-        }
-        let inner = Rect::new(m, m, (w - 2 * m).max(0) as u32, (h - 2 * m).max(0) as u32);
-        if inner.contains_point(lx, ly) {
-            return None;
-        }
-        Rect::new(0, 0, w as u32, h as u32).contains_point(lx, ly).then_some(Part::Move)
+        ui_frame::hit((st.outer.w as i32, st.outer.h as i32), st.margin, st.scale, st.faded, lx, ly)
     }
 
     fn drag_to(&self, cur: (i32, i32)) {
         let next = {
             let st = self.st.borrow();
             let Some(d) = st.drag.as_ref() else { return };
-            let (dx, dy) = (cur.0 - d.cursor.0, cur.1 - d.cursor.1);
-            let o = d.outer;
-            let min = 2 * st.margin + 8;
-            let (mut l, mut t, mut r, mut b) = (o.x, o.y, o.right(), o.bottom());
-            match d.part {
-                Part::Move => {
-                    l += dx;
-                    r += dx;
-                    t += dy;
-                    b += dy;
-                }
-                p => {
-                    if matches!(p, Part::W | Part::NW | Part::SW) {
-                        l = (l + dx).min(r - min);
-                    }
-                    if matches!(p, Part::E | Part::NE | Part::SE) {
-                        r = (r + dx).max(l + min);
-                    }
-                    if matches!(p, Part::N | Part::NW | Part::NE) {
-                        t = (t + dy).min(b - min);
-                    }
-                    if matches!(p, Part::S | Part::SW | Part::SE) {
-                        b = (b + dy).max(t + min);
-                    }
-                }
-            }
-            Rect::new(l, t, (r - l) as u32, (b - t) as u32)
+            ui_frame::drag(d.part, d.outer, cur.0 - d.cursor.0, cur.1 - d.cursor.1, st.margin)
         };
         let resized = {
             let mut st = self.st.borrow_mut();
@@ -270,13 +186,6 @@ impl Frame {
         }
         emit(Action::FrameMoved(next));
     }
-}
-
-/// 8 handle theo thứ tự NW, N, NE, E, SE, S, SW, W (toạ độ góc trên-trái trong cửa sổ).
-fn handle_origins(w: i32, h: i32, off: i32, hs: i32) -> [(i32, i32); 8] {
-    let (cx, cy) = ((w - hs) / 2, (h - hs) / 2);
-    let (r, b) = (w - off - hs, h - off - hs);
-    [(off, off), (cx, off), (r, off), (r, cy), (r, b), (cx, b), (off, b), (off, cy)]
 }
 
 /// Surface có thể lớn hơn cửa sổ (cấp dư): chỉ đẩy phần đúng kích thước cửa sổ.

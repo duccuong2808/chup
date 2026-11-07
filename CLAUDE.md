@@ -1,7 +1,8 @@
 # Chup
 
-App chụp màn hình theo vùng cho Windows (macOS/Linux X11 ở Phase 3).
-Rust thuần, **không WebView**: giao diện Win32 + Direct2D/DirectWrite. Lõi tách riêng, không phụ thuộc OS.
+App chụp màn hình theo vùng cho Windows và macOS (Linux X11 ở Phase 3.2).
+Rust thuần, **không WebView**: Win32 + Direct2D/DirectWrite (Windows), AppKit + CoreGraphics/CoreText (macOS).
+Lõi (`chup-core`) và code vẽ (`chup-ui`, trait `Canvas`) tách riêng, không phụ thuộc OS.
 
 - **Đặc tả là nguồn sự thật: [SPEC.md](SPEC.md).** Mọi thay đổi hành vi phải khớp SPEC; nếu cần lệch thì cập nhật SPEC và ghi vào mục "Khác với SPEC" trong README.
 - Trạng thái: Phase 1 xong và đã test trên Windows 11 thật; bước 1.5 (bỏ Tauri, UI native) xong; 2.1 Freeze (SPEC mục 14, thiết kế ở `docs/plans/2026-11-01-freeze-design.md`) xong và đã test trên VM. Kết quả test và số đo ở `docs/testing.md` (README chỉ tóm tắt).
@@ -17,6 +18,9 @@ Rust thuần, **không WebView**: giao diện Win32 + Direct2D/DirectWrite. Lõi
   Công cụ spike ở `tools/` (ngoài workspace).
 - Cài đặt chia trang kiểu Windows 11 (SPEC 5.6, `chup-ck1`), trang Giới thiệu, đa ngôn ngữ vi/en (`chup-81y`), bộ cài
   Full/Lite (`chup-0oa`): đã vào main, thử trên Windows 11 x64 thật.
+- Phase 3.1 macOS (SPEC 11, 12; thiết kế `docs/plans/2026-11-05-macos-design.md`, epic beads `chup-mac`): code đủ 5 mốc
+  (crate `ui`, vỏ `platform/macos`, Preview, OCR Vision, tự chọn vùng, `.dmg`, CI macOS), đã chạy `CHUP_SELFTEST` trên máy
+  dev. Test VM Windows sau refactor (`chup-mac.6`) xong, kết quả ở `docs/testing.md`. Còn: test tay trên Mac có quyền Ghi màn hình (`chup-mac.7`).
 
 ## Lệnh
 
@@ -30,12 +34,18 @@ cargo build --release -p chup                            # trên Windows
 makensis /DLITE /DVERSION=0.2.0 /DEXE=target\release\chup.exe installer\chup.nsi   # bộ cài Lite; Full: xem README (fetch-ocr.ps1)
 ```
 
+macOS: `cargo run -p chup` chạy thẳng; `scripts/macos-bundle.sh --dmg` đóng gói; `CHUP_SELFTEST=<thư mục>` chạy luồng
+chính bằng sự kiện bơm vào cửa sổ và xuất ảnh PNG từng cửa sổ (không cần quyền); `chup --ocr-file <png>` thử Vision.
+
 Máy dev là macOS: check/clippy cho target Windows chạy được (cần `rustup target add x86_64-pc-windows-msvc`), nhưng không link được. Bản chạy thật lấy từ CI (artifact `chup-windows-<sha>` có cả `chup.exe` và installer).
 
 ## Kiến trúc (chi tiết: SPEC mục 6)
 
 - `crates/core`: `Model` (state machine) nhận sự kiện, trả về `Vec<Effect>`. Không biết cửa sổ là gì, nên mọi logic đều unit test được. Thêm hành vi mới thì thêm vào đây trước, kèm test.
+- `crates/ui`: vẽ + bố cục + hit-test dùng chung (toolbar, frame, overlay, stack, Preview) qua trait `Canvas`; pixel op qua `Pixels`.
 - `crates/app/src/platform/windows/`: vỏ Win32. `app.rs` đổi `Action` -> gọi `Model` -> áp `Effect` lên cửa sổ.
+- `crates/app/src/platform/macos/`: vỏ AppKit cùng cấu trúc (`NSPanel` qua `define_class!`, `emit` qua main queue,
+  ScreenCaptureKit, Vision, Accessibility). `platform/common/`: logger, hotkey, tray dùng chung (`#[path]`).
 - **Một UI thread.** Cửa sổ, tray, hotkey, worker **không gọi thẳng vào App**: chúng `win::emit(Action)`; App xử lý khi nhận `WM_APP_ACTION`.
 - State của mỗi cửa sổ nằm trong `RefCell`; **không giữ borrow khi gọi API Win32** (API có thể gửi message ngược lại vào wndproc).
 - Mọi `Rect` là **physical px trên toàn desktop**. Kích thước giao diện khai báo bằng DIP rồi nhân scale của màn hình.

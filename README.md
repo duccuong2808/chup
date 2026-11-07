@@ -1,12 +1,14 @@
 # Chup
 
-Chụp màn hình theo vùng cho Windows. Ảnh vừa chụp nằm thành stack ở cạnh màn hình và kéo thả thẳng được sang app
+Chụp màn hình theo vùng cho Windows và macOS. Ảnh vừa chụp nằm thành stack ở cạnh màn hình và kéo thả thẳng được sang app
 khác. Có chụp đóng băng (menu, tooltip), Preview, OCR / chọn chữ trên ảnh, tự động chọn vùng; giao diện tiếng Việt và
 tiếng Anh. Đặc tả đầy đủ ở [SPEC.md](SPEC.md).
 
 - **Trạng thái**: Phase 1 và Phase 2 (Freeze, Preview, OCR, Live Text, tự chọn vùng) xong, đã dùng trên Windows 11 x64
-  thật. macOS / Linux X11 ở Phase 3.
-- **Rust thuần, không WebView**: Win32 + Direct2D/DirectWrite. `chup.exe` ~1 MB, rảnh thì RAM dưới 1 MB, CPU 0%.
+  thật. **macOS 26+** (Phase 3.1): đủ tính năng, đã chạy tự kiểm tra trên máy dev; chưa test tay đầy đủ (mục
+  [macOS](#macos)). Linux X11 ở Phase 3.2.
+- **Rust thuần, không WebView**: Win32 + Direct2D/DirectWrite trên Windows, AppKit + CoreGraphics/CoreText trên macOS,
+  chung lõi (`chup-core`) và chung code vẽ (`chup-ui`). `chup.exe` ~1 MB, rảnh thì RAM dưới 1 MB, CPU 0%.
 
 ## Cài và dùng
 
@@ -35,7 +37,43 @@ Chup chạy nền ở khay hệ thống, không mở cửa sổ nào khi khởi 
 
 Ngôn ngữ giao diện mặc định theo Windows, đổi ở Cài đặt > Chung.
 
-## Build
+## macOS
+
+Cần **macOS 26** trở lên. Chup chạy nền với icon trên menu bar (không có icon ở Dock, trừ lúc Preview đang mở); bấm icon để mở menu.
+
+- **Cài**: mở `Chup-<ver>.dmg`, kéo `Chup.app` vào Applications. Bản build tự ký / ký ad-hoc chưa notarize: lần đầu mở
+  bằng chuột phải > Mở (hoặc Cài đặt hệ thống > Quyền riêng tư & Bảo mật > Vẫn mở).
+- **Quyền Ghi màn hình** (bắt buộc): lần đầu Chup hỏi và dẫn tới Cài đặt hệ thống > Quyền riêng tư & Bảo mật > Ghi màn
+  hình & âm thanh hệ thống. Bật Chup, thoát rồi mở lại nếu macOS yêu cầu. Chưa có quyền thì Chup không mở overlay.
+- **Quyền Trợ năng** (tuỳ chọn): để tự chọn vùng nhận được nút, ô nhập, đoạn chữ bên trong cửa sổ. Cài đặt > Chụp >
+  "Cấp quyền Trợ năng…". Không có thì chỉ nhận khung cửa sổ.
+- **Phím tắt mặc định**: `⌃⌘A` chọn vùng, `⌃⌘X` chụp (không có vùng chọn thì chụp lại vùng cuối), `⌃⌘Z` chụp đóng
+  băng. Thao tác khác như bảng trên, `Ctrl` đổi thành `⌘` (`⌘C`, `⌘A`), `Alt` thành `⌥`.
+- **OCR** dùng Apple Vision có sẵn (tiếng Việt + Anh), không tải gì. Lần đầu dùng tiếng Việt macOS chuẩn bị model
+  (có thể mất gần 1 phút, một lần).
+
+Build và đóng gói (trên Mac):
+
+```bash
+cargo run -p chup                       # chạy thẳng (quyền Ghi màn hình gắn với app terminal)
+scripts/macos-make-cert.sh              # một lần: chứng chỉ "Chup Self-Signed" để quyền không mất khi build lại
+scripts/macos-bundle.sh --dmg           # target/macos/Chup.app + Chup-<ver>.dmg, ký bằng chứng chỉ trên
+CHUP_SELFTEST=/tmp/chup-st target/release/chup   # tự kiểm tra: chạy luồng chính, xuất ảnh từng cửa sổ ra PNG
+target/release/chup --ocr-file anh.png  # OCR một file bằng Vision
+```
+
+File của app trên macOS: cấu hình `~/Library/Application Support/app.chup.desktop/config.json`, thumbnail trong
+`~/Library/Caches/app.chup.desktop/`, log `~/Library/Logs/Chup/chup.log`, ảnh mặc định `~/Pictures/Chup`.
+
+**Đã kiểm chứng** (máy dev, MacBook Pro Retina, macOS 27.2, 2026-11-05) bằng `CHUP_SELFTEST`: overlay chọn vùng, nhãn
+kích thước, frame + toolbar (Normal, Mờ), lưu ảnh, stack (hover, toast tiếng Việt), Freeze (vùng chọn, handle, toolbar,
+Enter lưu), tự chọn vùng (khung cửa sổ), Cài đặt (đủ trang), Preview (toolbar, chọn từ theo ký tự, phóng to), OCR câu
+tiếng Việt có dấu khớp 100% (~0,2 s). RAM rảnh ~70 MB. Overlay 3600×2338 hiện trong 76 ms, Freeze 48 ms.
+**Chưa kiểm chứng** (cần người dùng thật, máy đã cấp quyền): chụp thật bằng ScreenCaptureKit (terminal của máy dev
+không có quyền Ghi màn hình), phím tắt toàn cục, kéo thumbnail sang app khác, overlay khi app toàn màn hình / Space khác,
+nhiều màn hình khác scale, Accessibility, mở cùng hệ thống, bản Windows sau khi tách `chup-ui` (CI xanh, chưa test VM).
+
+## Build (Windows)
 
 Cần [Rust](https://rustup.rs) stable (≥ 1.82) với toolchain `x86_64-pc-windows-msvc`, Visual Studio Build Tools
 ("Desktop development with C++"), và [NSIS](https://nsis.sourceforge.io) nếu đóng gói bộ cài.
@@ -61,7 +99,8 @@ cargo clippy -p chup --target x86_64-pc-windows-msvc -- -D warnings
 CHUP_TESSDATA=<thư mục có vie/eng.traineddata> cargo test --release --manifest-path crates/ocr-helper/Cargo.toml
 ```
 
-**CI** (`.github/workflows/build.yml`, `windows-latest`): mỗi PR và mỗi push lên `main` có đổi code chạy test + clippy, build và test
+**CI** (`.github/workflows/build.yml`, `windows-latest` + `macos-latest`): job macOS chạy test + clippy và đóng gói
+`Chup.app` (ký ad-hoc) thành artifact `chup-macos-<sha>`. Mỗi PR và mỗi push lên `main` có đổi code chạy test + clippy, build và test
 `chup-ocr.exe`, rồi build `chup.exe` và 2 bộ cài, ra artifact `chup-windows-<sha>`. Push tag `v*` (nhớ đổi `version`
 trong `Cargo.toml` trước) tạo thêm GitHub Release dạng draft. Commit chỉ đổi `*.md`, `docs/`, `.beads/`, `.claude/`, `tools/` thì không chạy CI.
 
@@ -81,8 +120,13 @@ Engine `chup-ocr.exe` không build lại mỗi lần phát hành Chup: app và b
 ```
 crates/core/        chup-core: không phụ thuộc OS, unit test được. model.rs là state machine
                     (nhận sự kiện, trả Vec<Effect>), chứa mọi logic hành vi; i18n.rs chứa chuỗi giao diện vi/en
+crates/ui/          chup-ui: vẽ + bố cục + hit-test (toolbar, frame, overlay, stack, Preview) qua trait Canvas,
+                    không phụ thuộc OS
 crates/app/src/platform/windows/   bin `chup`: vỏ Win32. app.rs đổi Action -> Model -> áp Effect lên cửa sổ;
                     mỗi cửa sổ một file (overlay, frame, toolbar, stack, preview, settings…)
+crates/app/src/platform/macos/     vỏ AppKit cùng cấu trúc (NSPanel, CoreGraphics/CoreText, ScreenCaptureKit, Vision)
+crates/app/src/platform/common/    logger, hotkey, tray dùng chung hai vỏ
+scripts/            đóng gói macOS (Chup.app, .dmg, chứng chỉ tự ký)
 crates/ocr-proto/   khung tin giữa chup.exe và chup-ocr.exe
 crates/ocr-helper/  chup-ocr.exe: Tesseract link tĩnh (ngoài workspace)
 installer/          bộ cài NSIS, fetch-ocr.ps1
@@ -122,3 +166,15 @@ Chi tiết từng lần test, số đo đầy đủ và cách đo: [docs/testing
   app chia sẻ màn hình (Teams, Zoom) không thấy overlay. SPEC 16.4 đã ghi.
 - **Không dịch**: log, và câu báo file cấu hình hỏng (sinh ra trước khi biết ngôn ngữ). Máy Windows tiếng Anh đã dùng
   Chup từ trước thì app giữ tiếng Việt (config cũ), còn bộ cài hiện tiếng Anh (bộ cài theo Windows, không đọc config).
+
+### macOS
+
+- **Chụp bằng ScreenCaptureKit**, không dùng `xcap` (API Apple đã khai tử); cửa sổ của Chup được loại khỏi ảnh bằng
+  bộ lọc của ScreenCaptureKit thay cho `sharingType`. SPEC 6.4 đã ghi.
+- **Tự chọn vùng, khung từ hình ảnh chỉ ở Freeze**: Live trên macOS chưa chụp ngầm màn hình để nhận khung (Windows có).
+- **Cài đặt dùng tab ở trên** (kiểu Cài đặt của macOS) thay cho danh sách trang bên trái.
+- **Preview trên Mac**: kéo nền để di chuyển (không có thanh tiêu đề); `⌘W` cũng đóng; trackpad cuộn 24 pt = 1 nấc
+  phóng to. Không có hẹn giờ vẽ lại khi đổi DPI (AppKit tự xử lý scale theo màn hình).
+- **Bộ đếm RAM**: rảnh ~70 MB (AppKit + font hệ thống), không xuống dưới 1 MB như Windows (macOS không có trim working
+  set kiểu `EmptyWorkingSet`); vẫn trong ngân sách 100 MB của SPEC 9.
+

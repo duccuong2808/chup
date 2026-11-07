@@ -81,6 +81,8 @@ pub enum Action {
     PreviewReveal(std::path::PathBuf),
     PreviewClosed,
     PreviewBox(Rect),
+    /// Kéo mép Preview xong: khung, cỡ ảnh, zoom mới.
+    PreviewResized { rect: Rect, img: (u32, u32), zoom: f64 },
     PreviewOcr(std::path::PathBuf),
     OcrDone(u32, Result<chup_core::ocr::TextLayout, String>),
     CopyText(String),
@@ -369,6 +371,7 @@ impl App {
             },
             Action::PreviewClosed => self.model.preview_closed(),
             Action::PreviewBox(r) => self.model.set_preview_box(r),
+            Action::PreviewResized { rect, img, zoom } => self.model.preview_resized(rect, img, zoom),
             Action::PreviewOcr(path) => match &self.model.ocr_busy {
                 Some(OcrJob { source: OcrSource::Preview(p), copy: true, .. }) if *p == path => self.model.ocr_cancel(),
                 _ => self.model.ocr_request(OcrSource::Preview(path)),
@@ -726,7 +729,7 @@ impl App {
                 let (cx, cy) = bx.center();
                 if let Some(m) = monitor_at(mons, cx, cy).filter(|m| m.rect.contains_point(cx, cy)) {
                     let min = chup_ui::preview::min_size(m.scale);
-                    return Some((preview::open_in_box(img, bx, m.work, min), m.work));
+                    return Some((preview::open_near(img, bx, m.work, p.open_zoom(img, m.work), min), m.work));
                 }
             }
         }
@@ -740,12 +743,13 @@ impl App {
             })
             .or(mons.first())?;
         let min = chup_ui::preview::min_size(mon.scale);
+        let zoom = p.open_zoom(img, mon.work);
         let view = if p.position == PreviewPosition::Center {
-            preview::open_center(img, mon.work, p.size, min)
+            preview::open_center(img, mon.work, zoom, min)
         } else {
             let edge_right = self.model.config.stack.edge == Edge::Right;
             let gap = (12.0 * mon.scale).round() as i32;
-            preview::open_beside_stack(img, mon.work, p.size, min, self.stack.window_rect(), edge_right, gap)
+            preview::open_beside_stack(img, mon.work, zoom, min, self.stack.window_rect(), edge_right, gap)
         };
         Some((view, mon.work))
     }

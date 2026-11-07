@@ -358,13 +358,13 @@ strings! {
     st_pv_opacity: "Opacity", "Opacity";
     st_pv_opacity_hint: "Ctrl + lăn chuột để chỉnh tạm.", "Ctrl + scroll to adjust temporarily.";
     st_pv_position: "Chỗ mở", "Opens at";
-    st_pv_pos_last: "Chỗ và cỡ lần trước", "Last position and size";
+    st_pv_pos_last: "Chỗ lần trước", "Last position";
     st_pv_pos_stack: "Cạnh stack", "Next to the stack";
     st_pv_pos_center: "Giữa màn hình", "Center of the screen";
     st_pv_size: "Cỡ khi mở", "Size when opened";
-    st_pv_size_hint: "Kéo mép để đổi cỡ; lăn chuột phóng to ảnh trong khung.",
-        "Drag the edges to resize; scroll to zoom the image inside the frame.";
-    st_pv_size_max: "Tối đa {}% màn hình", "Up to {}% of the screen";
+    st_pv_size_hint: "Chup tự tính cỡ theo từng ảnh. Kéo mép để to, nhỏ hơn: ảnh sau theo tỉ lệ đó.",
+        "Chup sizes each image automatically. Drag the edges to change it: later images follow that ratio.";
+    st_pv_size_max: "Khoảng {}% màn hình", "About {}% of the screen";
     st_about_desc: "Chụp màn hình theo vùng cho Windows: stack ảnh kéo thả, chụp đóng băng, Preview, copy chữ từ ảnh.",
         "Region screenshots for Windows: a drag-and-drop stack, freeze capture, Preview, copy text from images.";
     st_about_version: "Phiên bản {}", "Version {}";

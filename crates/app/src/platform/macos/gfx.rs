@@ -104,10 +104,6 @@ impl Surface {
         &mut self.buf
     }
 
-    pub fn data(&self) -> &[u32] {
-        &self.buf
-    }
-
     /// View pixel để vẽ trực tiếp (overlay, frame).
     pub fn px(&mut self) -> Pixels<'_> {
         let (w, h) = (self.w, self.h);

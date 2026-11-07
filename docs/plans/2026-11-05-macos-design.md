@@ -137,6 +137,12 @@ Crate mới (target macOS, pin `=`, kiểm signature trên docs.rs trước khi 
 | frame | `NSPanel` | `.statusBar` | Normal: có; Faded: `ignoresMouseEvents = true` | không |
 | toolbar, stack | `NSPanel` | `.statusBar` | có | không |
 | Cài đặt | `NSWindow` thường | normal | có | có (activate app khi mở, trả về `.accessory` khi đóng) |
+| Preview | `NSPanel` không viền, **không** `.nonactivatingPanel` | `.floating` (hoặc normal) | có | có: app thành `.regular` + activate khi mở, bấm vào cũng activate; trả về `.accessory` khi đóng |
+
+Preview khác các panel khác vì chụm 2 ngón (đo trên macOS 27, 2026-11-07): `magnifyWithEvent:` không còn được gọi,
+chỉ `NSMagnificationGestureRecognizer` nhận chụm; cử chỉ trackpad chỉ đến app đang active và không đến app
+`.accessory`; `NSApplication.activate()` gọi từ app thường bị từ chối (activation hợp tác của macOS 14+), nên phải
+để chính cú bấm vào cửa sổ activate app.
 
 Mọi panel: `collectionBehavior = canJoinAllSpaces | fullScreenAuxiliary | stationary | ignoresCycle` (hiện trên mọi
 Space và trên app toàn màn hình), `hasShadow = false`, `isOpaque = false`, nền trong suốt.

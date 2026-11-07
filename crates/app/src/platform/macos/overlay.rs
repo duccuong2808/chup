@@ -178,7 +178,7 @@ pub struct Overlay {
 
 impl Overlay {
     pub fn create(mtm: MainThreadMarker, mon: MonitorInfo) -> Rc<Overlay> {
-        let panel = Panel::new(mtm, Opts { key: true, level: LEVEL_OVERLAY });
+        let panel = Panel::new(mtm, Opts { key: true, level: LEVEL_OVERLAY, activating: false });
         panel.set_rect(mon.rect);
         let o = Rc::new(Overlay { mon, panel, st: RefCell::new(State::default()), frozen_mode: Cell::new(false) });
         let weak: std::rc::Weak<dyn Handler> = Rc::downgrade(&o) as _;

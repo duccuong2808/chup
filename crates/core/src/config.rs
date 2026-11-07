@@ -146,7 +146,7 @@ impl Default for StackConfig {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum PreviewPosition {
-    /// Vị trí và cỡ lần trước (người dùng kéo, đổi cỡ là nhớ). Chưa có thì như `Stack`.
+    /// Chỗ lần trước (người dùng kéo là nhớ), cỡ tự tính theo ảnh. Chưa có chỗ thì như `Stack`.
     Remember,
     /// Sát cạnh stack, căn đáy.
     Stack,
@@ -171,15 +171,17 @@ pub struct PreviewConfig {
     /// %, 20–100.
     pub opacity: u8,
     pub position: PreviewPosition,
-    /// Cỡ khi mở (khi không có khung lần trước): ảnh tối đa bấy nhiêu % work area mỗi chiều, 20–100.
+    /// Cỡ khi mở: diện tích tối đa bằng ảnh rộng, cao bấy nhiêu % work area, 20–100 (`preview::auto_zoom`).
     pub size: u8,
-    /// Khung lần trước, dùng khi `position = remember`.
+    /// Khung lần trước, dùng khi `position = remember`. Chỉ quyết định chỗ mở, không quyết định cỡ.
     pub last: Option<SavedRect>,
+    /// % so với cỡ tự tính người dùng đã chọn bằng cách kéo mép, 50–200. Dùng khi `position = remember`.
+    pub size_scale: u16,
 }
 
 impl Default for PreviewConfig {
     fn default() -> Self {
-        Self { always_on_top: true, opacity: 100, position: PreviewPosition::Remember, size: 50, last: None }
+        Self { always_on_top: true, opacity: 100, position: PreviewPosition::Remember, size: 50, last: None, size_scale: 100 }
     }
 }
 
@@ -187,6 +189,13 @@ impl PreviewConfig {
     fn clamp(&mut self) {
         self.opacity = crate::preview::clamp_opacity(self.opacity);
         self.size = self.size.clamp(20, 100);
+        self.size_scale = self.size_scale.clamp(crate::preview::MIN_SIZE_SCALE, crate::preview::MAX_SIZE_SCALE);
+    }
+
+    /// Zoom mở ảnh `img` trên work area `work` (SPEC 17.2).
+    pub fn open_zoom(&self, img: (u32, u32), work: crate::coords::Rect) -> f64 {
+        let user = if self.position == PreviewPosition::Remember { self.size_scale } else { 100 };
+        crate::preview::auto_zoom(img, work, self.size, user)
     }
 }
 
@@ -539,6 +548,31 @@ mod tests {
         }
         // Mặc định phải parse được và không trùng nhau.
         assert!(apply_patch(&Config::with_save_dir(Path::new("/x")), &json!({})).is_ok());
+    }
+
+    #[test]
+    fn preview_size_scale_defaults_clamps_and_patches() {
+        let cfg = Config::with_save_dir(Path::new("/x"));
+        assert_eq!(cfg.preview.size_scale, 100);
+        let old: Config = serde_json::from_value(json!({ "version": 4, "preview": { "size": 50 } })).unwrap();
+        assert_eq!(old.preview.size_scale, 100, "config cũ thiếu field: 100%");
+        let next = apply_patch(&cfg, &json!({ "preview": { "sizeScale": 999 } })).unwrap();
+        assert_eq!(next.preview.size_scale, 200);
+    }
+
+    #[test]
+    fn preview_open_zoom_ignores_previous_box_and_uses_scale_only_when_remembering() {
+        let work = crate::coords::Rect::new(0, 0, 3600, 2264);
+        let img = (3600, 2128);
+        let mut p = PreviewConfig::default();
+        let base = p.open_zoom(img, work);
+        // Khung dải mỏng của ảnh trước không làm nhỏ ảnh sau.
+        p.last = Some(SavedRect { x: 1784, y: 2064, w: 1400, h: 120 });
+        assert_eq!(p.open_zoom(img, work), base);
+        p.size_scale = 150;
+        assert!((p.open_zoom(img, work) - base * 1.5).abs() < 1e-9);
+        p.position = PreviewPosition::Center;
+        assert_eq!(p.open_zoom(img, work), base);
     }
 
     #[test]

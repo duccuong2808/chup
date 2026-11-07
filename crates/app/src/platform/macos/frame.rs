@@ -38,7 +38,7 @@ pub struct Frame {
 
 impl Frame {
     pub fn create(mtm: MainThreadMarker) -> Rc<Frame> {
-        let panel = Panel::new(mtm, Opts { key: false, level: LEVEL_UI });
+        let panel = Panel::new(mtm, Opts { key: false, level: LEVEL_UI, activating: false });
         let f = Rc::new(Frame { panel, st: RefCell::new(State::default()) });
         let weak: std::rc::Weak<dyn Handler> = Rc::downgrade(&f) as _;
         f.panel.set_handler(weak);

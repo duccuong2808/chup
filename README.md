@@ -39,7 +39,7 @@ Ngôn ngữ giao diện mặc định theo Windows, đổi ở Cài đặt > Chu
 
 ## macOS
 
-Cần **macOS 26** trở lên. Chup chạy nền với icon trên menu bar (không có icon ở Dock); bấm icon để mở menu.
+Cần **macOS 26** trở lên. Chup chạy nền với icon trên menu bar (không có icon ở Dock, trừ lúc Preview đang mở); bấm icon để mở menu.
 
 - **Cài**: mở `Chup-<ver>.dmg`, kéo `Chup.app` vào Applications. Bản build tự ký / ký ad-hoc chưa notarize: lần đầu mở
   bằng chuột phải > Mở (hoặc Cài đặt hệ thống > Quyền riêng tư & Bảo mật > Vẫn mở).

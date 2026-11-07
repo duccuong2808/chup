@@ -20,7 +20,7 @@ Lõi (`chup-core`) và code vẽ (`chup-ui`, trait `Canvas`) tách riêng, khôn
   Full/Lite (`chup-0oa`): đã vào main, thử trên Windows 11 x64 thật.
 - Phase 3.1 macOS (SPEC 11, 12; thiết kế `docs/plans/2026-11-05-macos-design.md`, epic beads `chup-mac`): code đủ 5 mốc
   (crate `ui`, vỏ `platform/macos`, Preview, OCR Vision, tự chọn vùng, `.dmg`, CI macOS), đã chạy `CHUP_SELFTEST` trên máy
-  dev. Còn: test tay trên Mac có quyền Ghi màn hình (`chup-mac.7`), test VM Windows sau refactor (`chup-mac.6`).
+  dev. Test VM Windows sau refactor (`chup-mac.6`) xong, kết quả ở `docs/testing.md`. Còn: test tay trên Mac có quyền Ghi màn hình (`chup-mac.7`).
 
 ## Lệnh
 

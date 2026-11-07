@@ -24,9 +24,10 @@ use chup_ui::{
 use image::RgbaImage;
 use objc2::{define_class, msg_send, rc::Retained, runtime::AnyObject, sel, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{NSMenu, NSMenuItem};
-use objc2_core_foundation::CFRetained;
+use objc2_core_foundation::{CFRetained, CGPoint, CGRect, CGSize};
 use objc2_core_graphics::CGImage;
 use objc2_foundation::{NSObject, NSPoint, NSString};
+use objc2_quartz_core::{kCAFilterTrilinear, CALayer, CATransaction};
 
 use super::{
     app::Action,
@@ -53,7 +54,6 @@ struct State {
     topmost: bool,
     opacity: u8,
     cfg: Option<(bool, u8)>,
-    base: Option<Surface>,
     image: Option<CFRetained<CGImage>>,
     hover: Option<Btn>,
     hovering: bool,
@@ -106,9 +106,59 @@ define_class!(
     }
 );
 
+/// Cây layer của Preview, nằm trên layer gốc của view (layer gốc chứa bóng đổ và nền, xem `rescale`):
+/// `clip` (khung ảnh, bo góc) chứa `img` (cả ảnh gốc, GPU co giãn), rồi `top` (viền, chữ chọn, nút, nhãn).
+/// Phóng to và dời ảnh chỉ đổi khung của `img`: GPU vẽ lại, CPU không đụng tới pixel nào (mượt như app Preview).
+struct Stage {
+    /// Hệ toạ độ y hướng xuống, gốc ở góc trên-trái cửa sổ (đơn vị point).
+    root: Retained<CALayer>,
+    clip: Retained<CALayer>,
+    img: Retained<CALayer>,
+    top: Retained<CALayer>,
+}
+
+impl Stage {
+    fn new(parent: &CALayer) -> Stage {
+        let root = CALayer::new();
+        // Lật sao cho layer con có y hướng xuống trên màn hình, bất kể layer của view đã lật hay chưa.
+        root.setGeometryFlipped(!parent.contentsAreFlipped());
+        let clip = CALayer::new();
+        clip.setMasksToBounds(true);
+        let img = CALayer::new();
+        // Thu nhỏ nhiều (ảnh 4K vừa khung) dùng mipmap: không răng cưa.
+        img.setMinificationFilter(unsafe { kCAFilterTrilinear });
+        clip.addSublayer(&img);
+        root.addSublayer(&clip);
+        let top = CALayer::new();
+        root.addSublayer(&top);
+        parent.addSublayer(&root);
+        Stage { root, clip, img, top }
+    }
+
+    fn clear(&self) {
+        unsafe {
+            self.img.setContents(None);
+            self.top.setContents(None);
+        }
+    }
+}
+
+/// Đổi layer trong `f` không có hiệu ứng chuyển động, đưa lên màn hình cùng lúc.
+fn no_anim(f: impl FnOnce()) {
+    CATransaction::begin();
+    CATransaction::setDisableActions(true);
+    f();
+    CATransaction::commit();
+}
+
+fn cg_rect(x: f64, y: f64, w: f64, h: f64) -> CGRect {
+    CGRect::new(CGPoint::new(x, y), CGSize::new(w, h))
+}
+
 pub struct Preview {
     mtm: MainThreadMarker,
     panel: Panel,
+    stage: RefCell<Option<Stage>>,
     open: Cell<bool>,
     st: RefCell<State>,
     menu_target: Retained<MenuTarget>,
@@ -117,12 +167,13 @@ pub struct Preview {
 
 impl Preview {
     pub fn create(mtm: MainThreadMarker) -> Rc<Preview> {
-        let panel = Panel::new(mtm, Opts { key: true, level: LEVEL_FLOATING });
+        let panel = Panel::new(mtm, Opts { key: true, level: LEVEL_FLOATING, activating: true });
         let t = MenuTarget::alloc(mtm).set_ivars(MenuIvars { owner: RefCell::new(Weak::new()) });
         let menu_target: Retained<MenuTarget> = unsafe { msg_send![super(t), init] };
         let p = Rc::new(Preview {
             mtm,
             panel,
+            stage: RefCell::new(None),
             open: Cell::new(false),
             st: RefCell::new(State::default()),
             menu_target,
@@ -132,6 +183,7 @@ impl Preview {
         *p.menu_target.ivars().owner.borrow_mut() = Rc::downgrade(&p);
         let weak: Weak<dyn Handler> = Rc::downgrade(&p) as _;
         p.panel.set_handler(weak);
+        p.panel.enable_pinch();
         p
     }
 
@@ -177,14 +229,14 @@ impl Preview {
             st.clear_text();
         }
         self.open.set(true);
-        if !self.rescale() {
+        if !self.rebuild() {
             self.close();
             emit(Action::Toast(chup_core::model::Toast::error(chup_core::i18n::t().err_preview_memory)));
             return;
         }
-        self.paint();
         self.apply_z(topmost);
         self.panel.show(true);
+        self.panel.activate_app();
     }
 
     pub fn apply_config(&self, topmost: bool, opacity: u8) {
@@ -213,12 +265,16 @@ impl Preview {
     pub fn close(&self) {
         let was_open = self.open.replace(false);
         self.panel.hide();
+        if let Some(stage) = self.stage.borrow().as_ref() {
+            no_anim(|| stage.clear());
+        }
         {
             let mut st = self.st.borrow_mut();
             let pending = None;
             *st = State { pending, ..State::default() };
         }
         if was_open {
+            self.panel.release_app();
             emit(Action::PreviewClosed);
         }
     }
@@ -227,37 +283,93 @@ impl Preview {
         self.panel.set_level(if topmost { LEVEL_FLOATING } else { LEVEL_NORMAL });
     }
 
-    /// Vẽ lại lớp nền theo view. `false` = không cấp được bộ nhớ.
+    /// Cỡ cửa sổ đổi (mở, kéo mép): vẽ lại nền, đặt lại ảnh và lớp trên. `false` = không cấp được bộ nhớ.
+    fn rebuild(&self) -> bool {
+        let mut ok = false;
+        no_anim(|| {
+            ok = self.rescale();
+            if ok {
+                self.place_image();
+                self.paint();
+            }
+        });
+        ok
+    }
+
+    /// Vẽ lớp nền (bóng đổ, nền tối) theo cỡ cửa sổ, đưa cửa sổ tới `view.rect`. Ảnh nạp lên GPU một lần.
     fn rescale(&self) -> bool {
         let k = self.scale();
         let theme = gfx::theme();
-        let mut st = self.st.borrow_mut();
-        let st = &mut *st;
-        let (Some(v), Some(img)) = (st.view, st.img.as_ref()) else { return false };
-        let m = ui_preview::margin(k);
-        st.margin = m;
-        let (w, h) = (v.rect.w as i32 + 2 * m, v.rect.h as i32 + 2 * m);
-        let Some(base) = Surface::new(w, h) else { return false };
-        let Some(c) = Canvas::new(&base) else { return false };
-        if st.image.is_none() {
-            st.image = c.image(img);
+        let (base, pos, new_image) = {
+            let mut st = self.st.borrow_mut();
+            let st = &mut *st;
+            let (Some(v), Some(img)) = (st.view, st.img.as_ref()) else { return false };
+            let m = ui_preview::margin(k);
+            st.margin = m;
+            let (w, h) = (v.rect.w as i32 + 2 * m, v.rect.h as i32 + 2 * m);
+            let Some(base) = Surface::new(w, h) else { return false };
+            let Some(c) = Canvas::new(&base) else { return false };
+            let new_image = if st.image.is_none() {
+                st.image = c.image(img);
+                st.image.clone()
+            } else {
+                None
+            };
+            if st.image.is_none() {
+                return false;
+            }
+            c.begin(Color::CLEAR);
+            // grab: vùng ảnh ở lớp nền trong suốt (ảnh nằm ở layer riêng), phủ alpha 1/255 cho chắc nhận chuột.
+            ui_preview::paint_back(&c, &theme, v, img.dimensions(), m, k, true);
+            c.end();
+            (base, v.rect.expand(m), new_image)
+        };
+        self.panel.present(&base, pos);
+        let mut stage = self.stage.borrow_mut();
+        if stage.is_none() {
+            let Some(layer) = self.panel.view.layer() else { return false };
+            *stage = Some(Stage::new(&layer));
         }
-        let Some(image) = st.image.as_ref() else { return false };
-        c.begin(Color::CLEAR);
-        ui_preview::paint_base(&c, &theme, v, img.dimensions(), image, m, k, false);
-        c.end();
-        st.base = Some(base);
+        let Some(stage) = stage.as_ref() else { return false };
+        stage.root.setFrame(cg_rect(0.0, 0.0, pos.w as f64 / k as f64, pos.h as f64 / k as f64));
+        if let Some(image) = new_image {
+            let obj: &AnyObject = unsafe { &*(&*image as *const CGImage).cast::<AnyObject>() };
+            unsafe { stage.img.setContents(Some(obj)) };
+        }
         true
     }
 
-    /// Chép lớp nền, vẽ vùng chọn chữ, toolbar, nhãn, rồi đưa lên cửa sổ.
+    /// Đặt khung cắt và ảnh theo `view` (zoom, dời ảnh). Chỉ đổi khung layer: GPU co giãn ảnh.
+    fn place_image(&self) {
+        let k = self.scale() as f64;
+        let st = self.st.borrow();
+        let (Some(v), Some(img)) = (st.view, st.img.as_ref()) else { return };
+        let stage = self.stage.borrow();
+        let Some(stage) = stage.as_ref() else { return };
+        let (iw, ih) = img.dimensions();
+        let p = ui_preview::image_place(v, (iw, ih), st.margin, k as f32);
+        let (cx, cy) = (p.clip.left as f64, p.clip.top as f64);
+        let (cw, ch) = ((p.clip.right - p.clip.left) as f64, (p.clip.bottom - p.clip.top) as f64);
+        no_anim(|| {
+            stage.clip.setFrame(cg_rect(cx / k, cy / k, cw / k, ch / k));
+            stage.clip.setCornerRadius(p.radius as f64 / k);
+            let s = p.scale as f64;
+            stage.img.setFrame(cg_rect(
+                (p.origin.0 as f64 - cx) / k,
+                (p.origin.1 as f64 - cy) / k,
+                iw as f64 * s / k,
+                ih as f64 * s / k,
+            ));
+        });
+    }
+
+    /// Vẽ lớp trên: viền, vùng chọn chữ, toolbar, nhãn. Không đụng tới ảnh.
     fn paint(&self) {
         let k = self.scale();
-        let out = {
+        let top = {
             let mut st = self.st.borrow_mut();
             let st = &mut *st;
             let Some(v) = st.view else { return };
-            let Some(base) = st.base.as_ref() else { return };
             let m = st.margin;
             let (w, h) = (v.rect.w as f32, v.rect.h as f32);
             st.hits = ui_preview::bar_hits(w, k);
@@ -265,9 +377,10 @@ impl Preview {
                 (Some(t), Some(sel), Some(img)) => ui_preview::sel_rects(t, sel, v, img.dimensions(), m, k),
                 _ => vec![],
             };
-            let Some(mut out) = Surface::new(base.w, base.h) else { return };
-            out.pixels().copy_from_slice(base.data());
+            let (sw, sh) = (v.rect.w as i32 + 2 * m, v.rect.h as i32 + 2 * m);
+            let Some(out) = Surface::new(sw, sh) else { return };
             if let Some(c) = Canvas::new(&out) {
+                let theme = gfx::theme();
                 let pill_font = st.pill.as_ref().and_then(|_| Font::from_spec(ui_preview::pill_font(k)));
                 let top = ui_preview::Top {
                     k,
@@ -280,15 +393,22 @@ impl Preview {
                     topmost: st.topmost,
                     pill: st.pill.as_deref().zip(pill_font.as_ref()),
                 };
-                c.begin_over();
-                ui_preview::paint_top(&c, &gfx::theme(), &top);
+                c.begin(Color::CLEAR);
+                ui_preview::paint_border(&c, &theme, v, m, k);
+                ui_preview::paint_top(&c, &theme, &top);
                 c.end();
             }
-            let pos = v.rect.expand(m);
             self.panel.set_alpha(preview::alpha(st.opacity) as f64 / 255.0);
-            (out, pos)
+            out.image((sw, sh))
         };
-        self.panel.present(&out.0, out.1);
+        let stage = self.stage.borrow();
+        let Some(stage) = stage.as_ref() else { return };
+        no_anim(|| {
+            stage.top.setFrame(stage.root.bounds());
+            stage.top.setContentsScale(k as f64);
+            let obj = top.as_ref().map(|i| unsafe { &*(&**i as *const CGImage).cast::<AnyObject>() });
+            unsafe { stage.top.setContents(obj) };
+        });
     }
 
     /// Cửa sổ có thể đã bị kéo đi: đọc lại vị trí.
@@ -311,6 +431,15 @@ impl Preview {
         self.sync_pos();
         if let Some(r) = self.st.borrow().view.map(|v| v.rect) {
             emit(Action::PreviewBox(r));
+        }
+    }
+
+    /// Kéo mép xong: báo App để nhớ tỉ lệ so với cỡ tự tính.
+    fn save_size(&self) {
+        self.sync_pos();
+        let st = self.st.borrow();
+        if let (Some(v), Some(img)) = (st.view, st.img.as_ref()) {
+            emit(Action::PreviewResized { rect: v.rect, img: img.dimensions(), zoom: v.zoom });
         }
     }
 
@@ -346,13 +475,18 @@ impl Preview {
     }
 
     fn magnify(&self, steps: Option<i32>, anchor: (i32, i32)) {
+        self.set_zoom(|v, dims| match steps {
+            Some(n) => preview::magnify_at(v, dims, n, anchor),
+            None => preview::unmagnify(v),
+        });
+    }
+
+    /// Đổi zoom, hiện nhãn % rồi vẽ lại. Cửa sổ giữ nguyên cỡ và chỗ.
+    fn set_zoom(&self, f: impl FnOnce(View, (u32, u32)) -> View) {
         let scale = {
             let mut st = self.st.borrow_mut();
             let (Some(v), Some(img)) = (st.view, st.img.as_ref()) else { return };
-            let nv = match steps {
-                Some(n) => preview::magnify_at(v, img.dimensions(), n, anchor),
-                None => preview::unmagnify(v),
-            };
+            let nv = f(v, img.dimensions());
             st.view = Some(nv);
             nv.scale()
         };
@@ -360,13 +494,13 @@ impl Preview {
         self.redraw();
     }
 
+    /// Zoom / dời ảnh đổi: đặt lại ảnh (GPU) và vẽ lớp trên. Cỡ cửa sổ không đổi.
     fn redraw(&self) {
         self.sync_pos();
-        if !self.rescale() {
-            self.close();
-            return;
-        }
-        self.paint();
+        no_anim(|| {
+            self.place_image();
+            self.paint();
+        });
     }
 
     fn local_center(&self) -> (i32, i32) {
@@ -385,11 +519,9 @@ impl Preview {
             }
             st.view = Some(nv);
         }
-        if !self.rescale() {
+        if !self.rebuild() {
             self.close();
-            return;
         }
-        self.paint();
     }
 
     fn pan_move(&self) {
@@ -672,9 +804,18 @@ impl Preview {
         }
         let (resized, panned, moved) = {
             let mut st = self.st.borrow_mut();
-            (st.resize.take().is_some(), st.pan.take().is_some(), st.moving.take().is_some())
+            // Chỉ nhớ khung khi cửa sổ thật sự đổi chỗ: bấm suông không được ghi đè khung người dùng đã chọn.
+            let moved = st.moving.take().is_some_and(|(r, _)| r != self.panel.rect());
+            // Bấm vào mép mà không kéo: không phải chọn cỡ.
+            let view = st.view;
+            let resized = st.resize.take().is_some_and(|(_, s, _)| view.is_some_and(|v| (v.rect.w, v.rect.h) != (s.rect.w, s.rect.h)));
+            (resized, st.pan.take().is_some(), moved)
         };
-        if resized || moved {
+        if resized {
+            self.save_size();
+            return;
+        }
+        if moved {
             self.save_box();
             return;
         }
@@ -689,7 +830,13 @@ impl Preview {
         }
     }
 
-    fn on_scroll(&self, wp: (i32, i32), dy: f64, lines: bool, mods: Mods) {
+    /// Chuột có nấc: phóng to/thu nhỏ như Windows. Trackpad (cuộn mịn): dời ảnh đang phóng to theo 2 ngón, như
+    /// app Preview của macOS (SPEC 17). Ctrl + cuộn: đổi opacity ở cả hai.
+    fn on_scroll(&self, wp: (i32, i32), dy: f64, lines: bool, content: (f64, f64), mods: Mods) {
+        if !lines && !mods.ctrl {
+            self.scroll_pan(content);
+            return;
+        }
         let steps = {
             let mut st = self.st.borrow_mut();
             if lines {
@@ -711,6 +858,32 @@ impl Preview {
             self.sync_pos();
             self.magnify(Some(steps), self.local(wp));
         }
+    }
+
+    fn scroll_pan(&self, (dx, dy): (f64, f64)) {
+        if (dx == 0.0 && dy == 0.0) || self.st.borrow().pan.is_some() {
+            return;
+        }
+        let changed = {
+            let mut st = self.st.borrow_mut();
+            let (Some(v), Some(img)) = (st.view, st.img.as_ref()) else { return };
+            let nv = preview::pan_by(v, img.dimensions(), dx, dy);
+            st.view = Some(nv);
+            nv.off != v.off
+        };
+        if changed {
+            self.redraw();
+        }
+    }
+
+    /// Chụm/xoè 2 ngón: phóng to quanh con trỏ như lăn chuột (SPEC 17). `delta` cộng dồn được nên dùng `exp`.
+    fn on_pinch(&self, wp: (i32, i32), delta: f64) {
+        if self.st.borrow().pan.is_some() {
+            return;
+        }
+        self.sync_pos();
+        let anchor = self.local(wp);
+        self.set_zoom(|v, dims| preview::zoom_at(v, dims, delta.exp(), anchor));
     }
 
     fn on_key(&self, code: u16, mods: Mods) {
@@ -772,7 +945,8 @@ impl Handler for Preview {
             Ev::Drag { p } => self.on_drag(p),
             Ev::Up { p } => self.on_up(p),
             Ev::RightDown { p } => self.context_menu(p),
-            Ev::Scroll { p, dy, lines, mods } => self.on_scroll(p, dy, lines, mods),
+            Ev::Scroll { p, dy, lines, content, mods } => self.on_scroll(p, dy, lines, content, mods),
+            Ev::Magnify { p, delta } => self.on_pinch(p, delta),
             Ev::Key { code, mods } => self.on_key(code, mods),
             _ => {}
         }
@@ -807,7 +981,8 @@ impl Preview {
         Handler::event(self, ev);
     }
 
+    /// Ghép cả cây layer (nền, ảnh, lớp trên) như trên màn hình.
     pub fn snapshot(&self) -> Option<RgbaImage> {
-        self.panel.snapshot()
+        self.panel.snapshot_layers()
     }
 }

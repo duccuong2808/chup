@@ -652,7 +652,8 @@ impl Settings {
                 let v = ["remember", "stack", "center"][selected(sender).min(2)];
                 self.patch(json!({ "preview": { "position": v } }));
             }
-            ID_PV_SIZE => self.patch(json!({ "preview": { "size": SIZES[selected(sender).min(SIZES.len() - 1)] } })),
+            // Chọn mức mới thì bỏ tỉ lệ đã học từ lần kéo mép trước.
+            ID_PV_SIZE => self.patch(json!({ "preview": { "size": SIZES[selected(sender).min(SIZES.len() - 1)], "sizeScale": 100 } })),
             ID_WEB => emit(Action::Open(PROJECT_URL.into())),
             ID_LOG => emit(Action::Open(super::util::dirs().log_dir.join("chup.log"))),
             _ => {}

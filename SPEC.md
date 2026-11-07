@@ -168,7 +168,7 @@ thẻ nền trắng trên nền xám. Cửa sổ cỡ cố định theo trang ca
 | Chụp ảnh | Tự động chọn vùng (SPEC 16); sau khi chụp (copy clipboard, giữ/đóng vùng chọn); ẩn toolbar/stack lúc chụp |
 | Copy chữ (OCR) | Ngôn ngữ, trạng thái + nút tải/xoá gói tiếng Việt, tự nhận diện khi mở Preview |
 | Stack và Preview | Cạnh và màn hình của stack; các mục Preview (SPEC 17.4) |
-| Giới thiệu | Tên, phiên bản, commit (7 ký tự đầu; build tay lấy từ git, đánh dấu "bản build tay"), thời điểm build (UTC), mô tả; nút Trang dự án, Mở thư mục log; nguồn engine/dữ liệu OCR tiếng Việt, nút Giấy phép (`NOTICE-ocr.txt`) |
+| Giới thiệu | Đầu trang: icon app 48 px (macOS 64 pt), tên, "Phiên bản X"; dòng nhỏ commit (7 ký tự đầu; build tay lấy từ git, đánh dấu "bản build tay") · thời điểm build (UTC); mô tả; nút Trang dự án, Có gì mới (trang Releases), Báo lỗi, góp ý (Issues), Mở thư mục log. Mục Cập nhật (mục 18): tự kiểm tra mỗi ngày, "Kiểm tra lần cuối: …", nút Kiểm tra cập nhật. Windows: nguồn engine/dữ liệu OCR tiếng Việt, nút Giấy phép (`NOTICE-ocr.txt`) (chup-jpf) |
 
 Các mục:
 - **Folder lưu ảnh**: nút chọn folder (dialog), kèm đường dẫn hiện tại.

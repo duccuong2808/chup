@@ -24,7 +24,7 @@ use objc2::{
 use objc2_app_kit::NSAppearanceCustomization;
 use objc2_app_kit::{
     NSApplication, NSBackingStoreType, NSButton, NSControlStateValueOff, NSControlStateValueOn, NSEvent,
-    NSEventMask, NSEventModifierFlags, NSFont, NSLayoutAttribute, NSOpenPanel, NSPopUpButton, NSStackView,
+    NSEventMask, NSEventModifierFlags, NSFont, NSImageView, NSLayoutAttribute, NSOpenPanel, NSPopUpButton, NSStackView,
     NSTabView, NSTabViewItem, NSTextField, NSUserInterfaceLayoutOrientation, NSView, NSWindow, NSWindowDelegate,
     NSWindowStyleMask,
 };
@@ -72,6 +72,8 @@ const ID_WEB: isize = 70;
 const ID_LOG: isize = 71;
 const ID_UPD_AUTO: isize = 72;
 const ID_UPD_CHECK: isize = 73;
+const ID_NEWS: isize = 74;
+const ID_ISSUES: isize = 75;
 
 /// Chữ lấy theo ngôn ngữ giao diện hiện hành.
 type Text = fn(&Strings) -> &'static str;
@@ -146,6 +148,7 @@ struct Controls {
     pv_pos: Option<Retained<NSPopUpButton>>,
     pv_size: Option<Retained<NSPopUpButton>>,
     upd_auto: Option<Retained<NSButton>>,
+    upd_last: Option<Retained<NSTextField>>,
     status: Option<Retained<NSTextField>>,
 }
 
@@ -487,22 +490,44 @@ impl Settings {
         c.pv_pos = Some(pv_pos);
         c.pv_size = Some(pv_size);
 
-        // Giới thiệu.
-        let title = self.section("Chup");
-        let desc = self.hint(t.mac_st_about_desc);
-        let mut ver = fill(t.st_about_version, &[&env!("CARGO_PKG_VERSION")]);
+        // Giới thiệu: icon + tên + phiên bản, dòng build nhỏ, mô tả, liên kết; rồi mục Cập nhật.
+        let name = self.label("Chup");
+        name.setFont(Some(&NSFont::boldSystemFontOfSize(20.0)));
+        let version = self.label(&fill(t.st_about_version, &[&env!("CARGO_PKG_VERSION")]));
+        let mut build = vec![];
         if !env!("CHUP_COMMIT").is_empty() {
-            ver += &format!(" · {}", env!("CHUP_COMMIT"));
+            build.push(format!("commit {}", env!("CHUP_COMMIT")));
         }
-        ver += &format!(" · {}", fill(t.st_about_built, &[&env!("CHUP_BUILD_TIME")]));
-        let version = self.hint(&ver);
+        build.push(fill(t.st_about_built, &[&env!("CHUP_BUILD_TIME")]));
+        let build = self.hint(&build.join(" · "));
+        let names = self.stack(&[&name, &version, &build], true);
+        names.setSpacing(2.0);
+        let mut head_views: Vec<Retained<NSView>> = vec![];
+        // Icon nhúng sẵn (chạy rời ngoài Chup.app thì applicationIconImage là icon chung của hệ thống).
+        let png = objc2_foundation::NSData::with_bytes(include_bytes!("../../../icons/128x128@2x.png"));
+        if let Some(img) = objc2_app_kit::NSImage::initWithData(<objc2_app_kit::NSImage as objc2::AnyThread>::alloc(), &png) {
+            let icon = NSImageView::imageViewWithImage(&img, self.mtm);
+            icon.setTranslatesAutoresizingMaskIntoConstraints(false);
+            icon.widthAnchor().constraintEqualToConstant(64.0).setActive(true);
+            icon.heightAnchor().constraintEqualToConstant(64.0).setActive(true);
+            head_views.push(Retained::into_super(Retained::into_super(icon)));
+        }
+        head_views.push(Retained::into_super(names));
+        let head_refs: Vec<&NSView> = head_views.iter().map(|v| &**v).collect();
+        let head = self.stack(&head_refs, false);
+        head.setSpacing(12.0);
+        let desc = self.hint(t.mac_st_about_desc);
         let web = self.button(t.st_about_web, ID_WEB);
+        let news = self.button(t.st_about_whats_new, ID_NEWS);
+        let issues = self.button(t.st_about_issues, ID_ISSUES);
         let log = self.button(t.st_about_log, ID_LOG);
-        let links = self.stack(&[&web, &log], false);
+        let links = self.stack(&[&web, &news, &issues, &log], false);
         let sec_upd = self.section(t.st_sec_update);
         let upd_auto = self.check(t.st_update_auto, ID_UPD_AUTO);
+        let upd_last = self.hint("");
         let upd_check = self.button(t.st_update_check, ID_UPD_CHECK);
-        self.page(&tabs, t.page_about, &[&title, &desc, &version, &links, &sec_upd, &upd_auto, &upd_check]);
+        self.page(&tabs, t.page_about, &[&head, &desc, &links, &sec_upd, &upd_auto, &upd_last, &upd_check]);
+        c.upd_last = Some(upd_last);
         c.upd_auto = Some(upd_auto);
 
         let status = self.hint("");
@@ -562,6 +587,9 @@ impl Settings {
             select(&c.ocr_lang, (cfg.ocr.language == OcrLanguage::Vi) as usize);
             set_on(&c.ocr_auto, cfg.ocr.auto_preview);
             set_on(&c.upd_auto, cfg.update.auto_check);
+            if let Some(l) = &c.upd_last {
+                l.setStringValue(&ns(&chup_core::update::last_check_text(cfg.update.last_check)));
+            }
             select(&c.edge, (cfg.stack.edge == Edge::Left) as usize);
             select(&c.mon, (cfg.stack.monitor == StackMonitor::Cursor) as usize);
             set_on(&c.pv_top, cfg.preview.always_on_top);
@@ -663,6 +691,8 @@ impl Settings {
             // Chọn mức mới thì bỏ tỉ lệ đã học từ lần kéo mép trước.
             ID_PV_SIZE => self.patch(json!({ "preview": { "size": SIZES[selected(sender).min(SIZES.len() - 1)], "sizeScale": 100 } })),
             ID_WEB => emit(Action::Open(PROJECT_URL.into())),
+            ID_NEWS => emit(Action::Open(format!("{PROJECT_URL}/releases").into())),
+            ID_ISSUES => emit(Action::Open(format!("{PROJECT_URL}/issues").into())),
             ID_LOG => emit(Action::Open(super::util::dirs().log_dir.join("chup.log"))),
             ID_UPD_AUTO => self.patch(json!({ "update": { "autoCheck": is_on(sender) } })),
             ID_UPD_CHECK => emit(Action::CheckUpdateNow),

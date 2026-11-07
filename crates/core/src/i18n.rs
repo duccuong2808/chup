@@ -391,6 +391,10 @@ strings! {
     st_sec_update: "Cập nhật", "Updates";
     st_update_auto: "Tự kiểm tra bản mới mỗi ngày (hỏi trước khi cài)", "Check for new versions daily (asks before installing)";
     st_update_check: "Kiểm tra cập nhật", "Check for updates";
+    st_update_last: "Kiểm tra lần cuối: {}.", "Last checked: {}.";
+    st_update_never: "Chưa kiểm tra lần nào.", "Never checked.";
+    st_about_whats_new: "Có gì mới", "What's new";
+    st_about_issues: "Báo lỗi, góp ý", "Report an issue";
     st_about_notice: "Giấy phép Tesseract và thư viện", "Tesseract and library licenses";
     st_about_tesseract: "Tesseract, giấy phép Apache-2.0.", "Tesseract, Apache-2.0 license.";
     st_about_engine_installed: "Engine: chup-ocr.exe cài cùng Chup (bộ cài Full).", "Engine: chup-ocr.exe installed with Chup (Full installer).";

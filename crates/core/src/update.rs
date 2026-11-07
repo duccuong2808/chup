@@ -136,6 +136,15 @@ pub fn check_due(last: u64, now: u64) -> bool {
     now < last || now - last >= CHECK_EVERY_SECS
 }
 
+/// Dòng "Kiểm tra lần cuối: …" của trang Giới thiệu (`last`: giây Unix, 0 = chưa), giờ máy.
+pub fn last_check_text(last: u64) -> String {
+    let t = crate::i18n::t();
+    match chrono::DateTime::from_timestamp(last as i64, 0).filter(|_| last > 0) {
+        Some(d) => crate::i18n::fill(t.st_update_last, &[&d.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M")]),
+        None => t.st_update_never.to_string(),
+    }
+}
+
 /// Dọn bộ cài đã tải (sau khi cập nhật xong, hoặc trước lần tải mới).
 pub fn cleanup(root: &Path) {
     if root.exists() {
@@ -200,6 +209,13 @@ mod tests {
         assert!(parse_latest("{", Package::WindowsLite).is_err());
         let old = parse_latest(&release("v0.0.1", ""), Package::WindowsLite).unwrap();
         assert!(!old.is_newer());
+    }
+
+    #[test]
+    fn last_check_line() {
+        assert_eq!(last_check_text(0), crate::i18n::t().st_update_never);
+        let s = last_check_text(1_800_000_000);
+        assert!(s.contains("2027-01-1"), "{s}");
     }
 
     #[test]

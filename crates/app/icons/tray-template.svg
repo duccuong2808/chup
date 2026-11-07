@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36">
+  <!-- Icon menu bar macOS (template image: chỉ dùng kênh alpha, macOS tự tô màu theo nền sáng/tối).
+       Cùng hình với icon app (khung chọn vùng 4 góc + chấm chụp), không có nền. 36×36 px = 18 pt @2x. -->
+  <g fill="none" stroke="#000" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M5 13 V5 H13"/>
+    <path d="M23 5 H31 V13"/>
+    <path d="M31 23 V31 H23"/>
+    <path d="M13 31 H5 V23"/>
+  </g>
+  <circle cx="18" cy="18" r="4.6" fill="#000"/>
+</svg>

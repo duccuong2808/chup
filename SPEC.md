@@ -365,7 +365,8 @@ Mục tiêu; đo thực tế ở bước 1.4 rồi chỉnh lại.
   - Hỗ trợ **macOS 26 Tahoe trở lên**. Bản đầu ký bằng chứng chỉ tự tạo (dùng cá nhân, chưa notarize); đổi sang Developer ID sau.
   - Cần xin quyền Screen Recording: kiểm tra trước khi mở overlay, chưa có quyền thì không mở overlay và hướng dẫn mở System Settings.
   - Chụp bằng ScreenCaptureKit (`SCScreenshotManager`), loại cửa sổ của Chup khỏi ảnh (mục 6.4).
-  - Tray thành icon trên menu bar (icon template). App không có icon ở Dock (`LSUIElement`), trừ lúc Preview đang mở
+  - Tray thành icon trên menu bar: template image đơn sắc 18 pt (`icons/tray-template.svg`, cùng hình khung 4 góc +
+    chấm của icon app, không nền), macOS tự tô màu theo menu bar sáng / tối; đang đếm ngược Freeze thì icon mờ. App không có icon ở Dock (`LSUIElement`), trừ lúc Preview đang mở
     (mục 17.2).
   - Hotkey mặc định dùng `Ctrl+Cmd`: `Ctrl+Cmd+A` (chọn vùng), `Ctrl+Cmd+X` (chụp), `Ctrl+Cmd+Z` (Freeze). Tránh `Cmd+Shift+3/4/5` của hệ thống; không dùng F1 (phím độ sáng).
   - Màn hình Retina có scale 2. `Rect` vẫn là physical px toàn desktop: gốc mỗi màn hình = gốc (point) × scale lớn nhất, kích thước = point × scale của chính màn hình đó (không bao giờ chồng nhau).

@@ -10,6 +10,7 @@ pub mod color;
 pub mod frame;
 pub mod geom;
 pub mod overlay;
+pub mod path;
 pub mod pixels;
 pub mod preview;
 pub mod stack;

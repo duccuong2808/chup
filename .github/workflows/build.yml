@@ -1,4 +1,5 @@
-# CI/CD cho Chup (Win32 native, không WebView).
+# CI/CD cho Chup (Win32 native + AppKit native, không WebView).
+# - macOS: test + clippy, đóng gói Chup.app trong .dmg (ký ad-hoc), artifact `chup-macos-<sha>`.
 # - Mỗi PR và mỗi lần push lên main: test + clippy trên Windows, build bản release, đóng gói 2 installer NSIS:
 #   Full (có sẵn OCR tiếng Việt) và Lite (chỉ chup.exe, OCR tiếng Việt tải khi cần). Đính kèm vào run làm artifact.
 # - Nhánh khác chỉ chạy qua PR (trước đây push nhánh + PR chạy 2 lần cho cùng commit). Nhánh chưa có PR mà cần
@@ -56,6 +57,35 @@ jobs:
 
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+  macos:
+    name: Test + clippy + Chup.app (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo test
+        run: cargo test --workspace
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # CI không có chứng chỉ của máy dev: ký ad-hoc (bản dùng thật build + ký trên máy dev, xem README).
+      - name: Đóng gói Chup.app + .dmg
+        env:
+          CHUP_SIGN_ID: "-"
+        run: scripts/macos-bundle.sh --dmg
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: chup-macos-${{ github.sha }}
+          path: target/macos/Chup-*.dmg
 
   ocr-helper:
     name: Build chup-ocr.exe (Tesseract, Windows)

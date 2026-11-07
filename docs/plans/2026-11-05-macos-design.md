@@ -137,6 +137,12 @@ Crate mới (target macOS, pin `=`, kiểm signature trên docs.rs trước khi 
 | frame | `NSPanel` | `.statusBar` | Normal: có; Faded: `ignoresMouseEvents = true` | không |
 | toolbar, stack | `NSPanel` | `.statusBar` | có | không |
 | Cài đặt | `NSWindow` thường | normal | có | có (activate app khi mở, trả về `.accessory` khi đóng) |
+| Preview | `NSPanel` không viền, **không** `.nonactivatingPanel` | `.floating` (hoặc normal) | có | có: app thành `.regular` + activate khi mở, bấm vào cũng activate; trả về `.accessory` khi đóng |
+
+Preview khác các panel khác vì chụm 2 ngón (đo trên macOS 27, 2026-11-07): `magnifyWithEvent:` không còn được gọi,
+chỉ `NSMagnificationGestureRecognizer` nhận chụm; cử chỉ trackpad chỉ đến app đang active và không đến app
+`.accessory`; `NSApplication.activate()` gọi từ app thường bị từ chối (activation hợp tác của macOS 14+), nên phải
+để chính cú bấm vào cửa sổ activate app.
 
 Mọi panel: `collectionBehavior = canJoinAllSpaces | fullScreenAuxiliary | stationary | ignoresCycle` (hiện trên mọi
 Space và trên app toàn màn hình), `hasShadow = false`, `isOpaque = false`, nền trong suốt.
@@ -273,3 +279,21 @@ Như SPEC 10, đổi các chỗ riêng Windows:
 - Mục 11: viết lại theo tài liệu này (cửa sổ, toạ độ, quyền, hotkey mặc định, đóng gói).
 - Mục 12: thay bước 3.1 bằng các mốc 3.1.0 – 3.1.4.
 - Mục 13: thêm các quyết định ngày 2026-11-05.
+
+## 10. Kết quả thực hiện (2026-11-05)
+
+Code của cả 5 mốc đã xong trên các nhánh `macos-ui-crate` (Mốc 0, PR #16) và `macos-mvp` (Mốc 1–4). Khác với kế hoạch:
+
+- **Không có spike riêng** (`tools/mac-spike/`): các câu hỏi ở mục 2.1 được trả lời ngay trong vỏ thật, kiểm bằng chế độ
+  tự kiểm tra `CHUP_SELFTEST` (bơm sự kiện vào handler của cửa sổ, xuất ảnh từng cửa sổ ra PNG). Câu hỏi cần quyền Ghi
+  màn hình / phím tắt thật / kéo thả thật vẫn mở (máy dev chạy từ terminal không có quyền Ghi màn hình).
+- **Toạ độ:** thêm `MacLayout::cg_to_px` / `px_to_cg` cho toạ độ CoreGraphics (gốc trên-trái, `kCGWindowBounds`,
+  Accessibility).
+- **Vẽ:** mỗi lần cập nhật cửa sổ chép cả surface thành `CGImage` rồi gán `layer.contents` (không theo vùng bẩn).
+  Overlay 3600×2338: hiện 76 ms, kéo chọn vẫn mượt trên M-series; chưa cần chia tile.
+- **Pixel trong suốt nhận chuột:** giữ mẹo alpha 1/255 như Windows cho lề frame; overlay luôn nhận chuột.
+- **Tự chọn vùng Live chưa có khung từ ảnh** (cần chụp ngầm từ worker; Freeze có).
+- **`logger`, `hotkeys`, `tray`** chuyển sang `platform/common/` dùng chung hai vỏ.
+- **Đo:** RAM rảnh ~70 MB, overlay mở ~235 MB (surface + ảnh của layer), Freeze 48 ms từ phím tắt tới lúc ảnh hiện,
+  OCR Vision ~0,2 s cho ảnh 1400×120 (lần đầu tiếng Việt ~50 s để macOS chuẩn bị model).
+

@@ -215,14 +215,44 @@ strings! {
     err_open_explorer: "Không mở được Explorer: {}", "Couldn't open Explorer: {}";
     err_run_key: "Không mở được khoá Run: {}", "Couldn't open the Run registry key: {}";
     err_autostart: "Không đổi được chế độ khởi động cùng Windows: {}", "Couldn't change start with Windows: {}";
+
+    // ---- macOS (SPEC 11) ----
+    mac_err_autostart: "Không đổi được chế độ mở cùng macOS: {}", "Couldn't change open at login: {}";
+    mac_err_autostart_bundle: "Chỉ bật được khi chạy Chup.app (bản đóng gói)",
+        "Only available when running Chup.app (the packaged app)";
+    mac_perm_title: "Chup cần quyền ghi màn hình", "Chup needs Screen Recording permission";
+    mac_perm_body: "Mở Cài đặt hệ thống > Quyền riêng tư & Bảo mật > Ghi màn hình & âm thanh hệ thống, bật Chup. Nếu macOS yêu cầu thì thoát và mở lại Chup.",
+        "Open System Settings > Privacy & Security > Screen & System Audio Recording and turn on Chup. Quit and reopen Chup if macOS asks you to.";
+    mac_perm_open: "Mở Cài đặt hệ thống", "Open System Settings";
+    mac_perm_later: "Để sau", "Later";
+    mac_err_capture: "Không chụp được màn hình: {}", "Couldn't capture the screen: {}";
+    mac_st_autostart: "Mở cùng macOS (khi đăng nhập)", "Open at login";
+    mac_st_hide_ui_note: "Thường không cần bật: macOS đã loại cửa sổ của Chup khỏi ảnh chụp.",
+        "Usually not needed: macOS already keeps Chup's windows out of the screenshot.";
+    mac_st_ocr_en: "Tiếng Anh", "English";
+    mac_st_ocr_note: "Dùng Apple Vision có sẵn trong macOS, không cần tải thêm.",
+        "Uses Apple Vision built into macOS, nothing to download.";
+    mac_st_about_desc: "Chụp màn hình theo vùng cho macOS: stack ảnh kéo thả, chụp đóng băng, Preview, copy chữ từ ảnh.",
+        "Region screenshots for macOS: a drag-and-drop stack, freeze capture, Preview, copy text from images.";
+    mac_st_hotkeys_hint: "Bấm vào ô rồi nhấn tổ hợp phím (cần ⌃, ⌥ hoặc ⌘; F1–F20 dùng một mình được). Delete để tắt, Esc để huỷ.",
+        "Click a box and press the keys (needs ⌃, ⌥ or ⌘; F1–F20 work alone). Delete turns it off, Esc cancels.";
+    mac_st_clear: "Xoá", "Clear";
+    mac_st_ui_language_system: "Theo macOS", "Same as macOS";
+    mac_st_auto_img_note: "Trên macOS, khung từ hình ảnh chỉ dùng khi chụp đóng băng.",
+        "On macOS, frames from the image are only used in freeze capture.";
+    mac_st_ax_ok: "Quyền Trợ năng: đã có (nhận được nút, ô nhập, đoạn chữ trong cửa sổ).",
+        "Accessibility permission: granted (buttons, fields and text inside windows are detected).";
+    mac_st_ax_missing: "Quyền Trợ năng: chưa có. Chỉ nhận được khung cửa sổ.",
+        "Accessibility permission: not granted. Only whole windows are detected.";
+    mac_st_ax_grant: "Cấp quyền Trợ năng…", "Grant Accessibility…";
     err_hotkey_init: "Không khởi tạo được phím tắt: {}", "Couldn't set up shortcuts: {}";
     err_tray: "Không tạo được icon khay: {}", "Couldn't create the tray icon: {}";
-    hotkey_taken: "Không dùng được {} vì app khác (hoặc Windows) đang dùng tổ hợp này. Hãy chọn tổ hợp khác.",
-        "Can't use {} because another app (or Windows) uses it. Choose a different shortcut.";
+    hotkey_taken: "Không dùng được {} vì app khác (hoặc hệ thống) đang dùng tổ hợp này. Hãy chọn tổ hợp khác.",
+        "Can't use {} because another app (or the system) uses it. Choose a different shortcut.";
     hotkey_invalid: "Phím tắt \"{}\" không hợp lệ. Hãy bấm vào ô và nhấn lại tổ hợp phím.",
         "Shortcut \"{}\" is invalid. Click the box and press the keys again.";
-    hotkey_taken_recording: "{} đang được app khác (hoặc Windows) dùng nên Chup không đăng ký được. Hãy chọn tổ hợp khác.",
-        "{} is used by another app (or Windows), so Chup can't register it. Choose a different shortcut.";
+    hotkey_taken_recording: "{} đang được app khác (hoặc hệ thống) dùng nên Chup không đăng ký được. Hãy chọn tổ hợp khác.",
+        "{} is used by another app (or the system), so Chup can't register it. Choose a different shortcut.";
 
     // ---- Overlay, toolbar, stack, Preview ----
     hint_select: "Kéo để chọn vùng · Esc hoặc chuột phải để huỷ", "Drag to select a region · Esc or right-click to cancel";
@@ -328,13 +358,13 @@ strings! {
     st_pv_opacity: "Opacity", "Opacity";
     st_pv_opacity_hint: "Ctrl + lăn chuột để chỉnh tạm.", "Ctrl + scroll to adjust temporarily.";
     st_pv_position: "Chỗ mở", "Opens at";
-    st_pv_pos_last: "Chỗ và cỡ lần trước", "Last position and size";
+    st_pv_pos_last: "Chỗ lần trước", "Last position";
     st_pv_pos_stack: "Cạnh stack", "Next to the stack";
     st_pv_pos_center: "Giữa màn hình", "Center of the screen";
     st_pv_size: "Cỡ khi mở", "Size when opened";
-    st_pv_size_hint: "Kéo mép để đổi cỡ; lăn chuột phóng to ảnh trong khung.",
-        "Drag the edges to resize; scroll to zoom the image inside the frame.";
-    st_pv_size_max: "Tối đa {}% màn hình", "Up to {}% of the screen";
+    st_pv_size_hint: "Chup tự tính cỡ theo từng ảnh. Kéo mép để to, nhỏ hơn: ảnh sau theo tỉ lệ đó.",
+        "Chup sizes each image automatically. Drag the edges to change it: later images follow that ratio.";
+    st_pv_size_max: "Khoảng {}% màn hình", "About {}% of the screen";
     st_about_desc: "Chụp màn hình theo vùng cho Windows: stack ảnh kéo thả, chụp đóng băng, Preview, copy chữ từ ảnh.",
         "Region screenshots for Windows: a drag-and-drop stack, freeze capture, Preview, copy text from images.";
     st_about_version: "Phiên bản {}", "Version {}";

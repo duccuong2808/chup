@@ -106,31 +106,59 @@ pub fn paint_base<C: Canvas>(
     k: f32,
     grab: bool,
 ) {
+    paint_back(c, theme, v, dims, m, k, grab);
+    let p = image_place(v, dims, m, k);
+    c.image_at(img, p.clip, p.radius, p.origin, p.scale);
+    paint_border(c, theme, v, m, k);
+}
+
+/// Chỗ đặt ảnh trong surface (toạ độ surface, gồm lề `m`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ImagePlace {
+    /// Khung cắt ảnh.
+    pub clip: RectF,
+    /// Bo góc khung cắt (0 khi ảnh nhỏ nằm giữa nền tối).
+    pub radius: f32,
+    /// Toạ độ điểm (0, 0) của ảnh gốc.
+    pub origin: (f32, f32),
+    /// Tỉ lệ hiển thị / ảnh gốc.
+    pub scale: f32,
+}
+
+pub fn image_place(v: View, dims: (u32, u32), m: i32, k: f32) -> ImagePlace {
+    let mf = m as f32;
+    let fr = v.frame(dims);
+    let fills = fr.w == v.rect.w && fr.h == v.rect.h;
+    let (ox, oy) = v.origin(dims);
+    ImagePlace {
+        clip: rectf(fr.x as f32 + mf, fr.y as f32 + mf, fr.w as f32, fr.h as f32),
+        radius: if fills { RADIUS * k } else { 0.0 },
+        origin: (ox as f32 + mf, oy as f32 + mf),
+        scale: v.scale() as f32,
+    }
+}
+
+/// Lớp dưới ảnh: bóng đổ, nền tối khi ảnh nhỏ hơn cỡ tối thiểu. Chỉ đổi khi cỡ cửa sổ đổi.
+pub fn paint_back<C: Canvas>(c: &C, theme: &Theme, v: View, dims: (u32, u32), m: i32, k: f32, grab: bool) {
     let rad = RADIUS * k;
-    let (mf, vw, vh) = (m as f32, v.rect.w as f32, v.rect.h as f32);
-    let full = rectf(mf, mf, vw, vh);
+    let full = rectf(m as f32, m as f32, v.rect.w as f32, v.rect.h as f32);
     c.shadow(full, rad, SHADOW_SPREAD * k, SHADOW_DY * k, theme.shadow);
     if grab {
         c.fill_round(full, rad, Color::rgba(0, 0, 0, 1.0 / 255.0));
     }
     let fr = v.frame(dims);
-    let fills = fr.w == v.rect.w && fr.h == v.rect.h;
-    if !fills {
+    if fr.w != v.rect.w || fr.h != v.rect.h {
         // Ảnh nhỏ hơn cỡ tối thiểu: nằm giữa trên nền tối.
         c.fill_round(full, rad, Color::rgba(24, 24, 27, 1.0));
     }
-    let img_r = rectf(fr.x as f32 + mf, fr.y as f32 + mf, fr.w as f32, fr.h as f32);
-    let (ox, oy) = v.origin(dims);
-    c.image_at(
-        img,
-        img_r,
-        if fills { rad } else { 0.0 },
-        (ox as f32 + mf, oy as f32 + mf),
-        v.scale() as f32,
-    );
+}
+
+/// Viền 1 px quanh cửa sổ, vẽ đè lên ảnh.
+pub fn paint_border<C: Canvas>(c: &C, theme: &Theme, v: View, m: i32, k: f32) {
+    let mf = m as f32;
     c.stroke_round(
-        rectf(mf + 0.5, mf + 0.5, vw - 1.0, vh - 1.0),
-        rad,
+        rectf(mf + 0.5, mf + 0.5, v.rect.w as f32 - 1.0, v.rect.h as f32 - 1.0),
+        RADIUS * k,
         1.0,
         theme.line,
     );

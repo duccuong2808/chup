@@ -1,4 +1,5 @@
 //! Icon khay hệ thống (SPEC 5.5).
+//! Dùng chung cho Windows và macOS (`#[path]`): cần `super::app::Action` và `super::win::emit` của vỏ OS.
 
 use std::cell::Cell;
 
@@ -96,16 +97,20 @@ impl Tray {
         menu.append_items(&items).map_err(|e| e.to_string())?;
 
         MenuEvent::set_event_handler(Some(|e: MenuEvent| emit(Action::Menu(e.id.0.clone()))));
+        // Windows: click trái icon tray = chọn vùng. macOS: click là mở menu (không chọn vùng cùng lúc).
         TrayIconEvent::set_event_handler(Some(|e: TrayIconEvent| {
             if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = e {
-                emit(Action::StartSelection);
+                if cfg!(windows) {
+                    emit(Action::StartSelection);
+                }
             }
         }));
 
         let mut b = TrayIconBuilder::new()
             .with_tooltip("Chup")
             .with_menu(Box::new(menu))
-            .with_menu_on_left_click(false);
+            // Windows: bấm trái = chọn vùng, phải = menu. macOS: bấm icon trên menu bar là mở menu (thói quen của Mac).
+            .with_menu_on_left_click(cfg!(target_os = "macos"));
         let (normal, waiting) = app_icons().unzip();
         if let Some(i) = normal.clone() {
             b = b.with_icon(i);
@@ -136,8 +141,9 @@ impl Tray {
     fn retext_shortcuts(&self) {
         for s in &self.shortcuts {
             let (name, k) = ((s.text)(t()), s.key.borrow());
-            // Windows vẽ phần sau tab ở cột phải của menu, như phím tắt chuẩn.
-            let text = if k.is_empty() { name.to_string() } else { format!("{name}\t{k}") };
+            // Windows vẽ phần sau tab ở cột phải của menu, như phím tắt chuẩn. macOS không có cột đó.
+            let sep = if cfg!(target_os = "macos") { "   " } else { "\t" };
+            let text = if k.is_empty() { name.to_string() } else { format!("{name}{sep}{}", show_key(&k)) };
             s.item.set_text(text);
         }
     }
@@ -164,7 +170,7 @@ impl Tray {
 
     fn retext_freeze_toggle(&self) {
         let (name, key) = (t().tray_freeze_toggle, self.freeze_key.borrow());
-        self.freeze_toggle.set_text(if key.is_empty() { name.to_string() } else { format!("{name} ({key})") });
+        self.freeze_toggle.set_text(if key.is_empty() { name.to_string() } else { format!("{name} ({})", show_key(&key)) });
     }
 
     /// Đang đếm ngược "Chụp đóng băng sau 3 giây": đổi icon và tooltip, không hiện gì lên màn hình (SPEC 14.4).
@@ -187,4 +193,23 @@ impl Tray {
         let text = if n == 0 { "Chup".to_string() } else { fill(t().tray_hotkey_errors, &[&n]) };
         let _ = self.icon.set_tooltip(Some(text));
     }
+}
+
+/// Phím tắt để hiện trên menu: macOS dùng ký hiệu quen thuộc (`⌃⌘A`), Windows giữ nguyên (`Ctrl+Alt+A`).
+fn show_key(accel: &str) -> String {
+    if !cfg!(target_os = "macos") {
+        return accel.to_string();
+    }
+    let mut mods = String::new();
+    let mut key = "";
+    for part in accel.split('+').map(str::trim) {
+        match part.to_ascii_lowercase().as_str() {
+            "ctrl" | "control" => mods.push('⌃'),
+            "alt" | "option" => mods.push('⌥'),
+            "shift" => mods.push('⇧'),
+            "super" | "cmd" | "command" => mods.push('⌘'),
+            _ => key = part,
+        }
+    }
+    format!("{mods}{key}")
 }

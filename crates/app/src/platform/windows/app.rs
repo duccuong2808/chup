@@ -89,6 +89,8 @@ pub enum Action {
     PreviewClosed,
     /// Người dùng vừa kéo, đổi cỡ hoặc zoom Preview: khung mới.
     PreviewBox(Rect),
+    /// Kéo mép Preview xong: khung, cỡ ảnh, zoom mới.
+    PreviewResized { rect: Rect, img: (u32, u32), zoom: f64 },
     /// Nút [T] trên Preview: OCR ảnh đang xem, hoặc huỷ nếu đang OCR nó.
     PreviewOcr(std::path::PathBuf),
     /// Worker OCR xong job (chữ đã sắp theo thứ tự đọc, hoặc câu lỗi cho người dùng).
@@ -413,6 +415,7 @@ impl App {
             },
             Action::PreviewClosed => self.model.preview_closed(),
             Action::PreviewBox(r) => self.model.set_preview_box(r),
+            Action::PreviewResized { rect, img, zoom } => self.model.preview_resized(rect, img, zoom),
             Action::PreviewOcr(path) => match &self.model.ocr_busy {
                 Some(OcrJob { source: OcrSource::Preview(p), copy: true, .. }) if *p == path => self.model.ocr_cancel(),
                 _ => self.model.ocr_request(OcrSource::Preview(path)),
@@ -815,7 +818,7 @@ impl App {
                 // Màn hình chứa khung cũ đã bị rút thì mở như "cạnh stack".
                 if let Some(m) = monitor_at(mons, cx, cy).filter(|m| m.rect.contains_point(cx, cy)) {
                     let min = super::preview::min_size(m.scale);
-                    return Some((preview::open_in_box(img, bx, m.work, min), m.work));
+                    return Some((preview::open_near(img, bx, m.work, p.open_zoom(img, m.work), min), m.work));
                 }
             }
         }
@@ -830,12 +833,13 @@ impl App {
             })
             .or(mons.first())?;
         let min = super::preview::min_size(mon.scale);
+        let zoom = p.open_zoom(img, mon.work);
         let view = if p.position == PreviewPosition::Center {
-            preview::open_center(img, mon.work, p.size, min)
+            preview::open_center(img, mon.work, zoom, min)
         } else {
             let edge_right = self.model.config.stack.edge == Edge::Right;
             let gap = (12.0 * mon.scale).round() as i32;
-            preview::open_beside_stack(img, mon.work, p.size, min, self.stack.window_rect(), edge_right, gap)
+            preview::open_beside_stack(img, mon.work, zoom, min, self.stack.window_rect(), edge_right, gap)
         };
         Some((view, mon.work))
     }

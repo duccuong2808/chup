@@ -36,7 +36,7 @@ pub struct Toolbar {
 
 impl Toolbar {
     pub fn create(mtm: MainThreadMarker) -> Rc<Toolbar> {
-        let panel = Panel::new(mtm, Opts { key: false, level: LEVEL_UI });
+        let panel = Panel::new(mtm, Opts { key: false, level: LEVEL_UI, activating: false });
         let t = Rc::new(Toolbar { panel, st: RefCell::new(State::default()) });
         let weak: std::rc::Weak<dyn Handler> = Rc::downgrade(&t) as _;
         t.panel.set_handler(weak);

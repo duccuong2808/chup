@@ -178,10 +178,13 @@ impl App {
                 p.inject(Ev::Down { p: (190, 80), clicks: 2, mods: Mods::default() });
                 p.inject(Ev::Up { p: (190, 80) });
                 save(&dir, "15-preview-select-word.png", p.snapshot());
-                p.inject(Ev::Scroll { p: (300, 80), dy: 3.0, lines: true, mods: Mods::default() });
+                p.inject(Ev::Scroll { p: (300, 80), dy: 3.0, lines: true, content: (0.0, 0.0), mods: Mods::default() });
                 save(&dir, "16-preview-zoom.png", p.snapshot());
                 p.inject(Ev::Magnify { p: (300, 80), delta: 0.4 });
                 save(&dir, "17-preview-pinch.png", p.snapshot());
+                // Vuốt 2 ngón lên-trái (trackpad): ảnh đi theo, thấy phần dưới-phải hơn.
+                p.inject(Ev::Scroll { p: (300, 80), dy: 0.0, lines: false, content: (-200.0, -150.0), mods: Mods::default() });
+                save(&dir, "18-preview-swipe.png", p.snapshot());
                 p.inject(Ev::Key { code: key::ESCAPE, mods: Mods::default() });
                 p.inject(Ev::Key { code: key::ESCAPE, mods: Mods::default() });
                 log::info!("selftest: Preview đóng: {}", !p.is_visible());

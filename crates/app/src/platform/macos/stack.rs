@@ -53,7 +53,7 @@ pub struct StackWin {
 
 impl StackWin {
     pub fn create(mtm: MainThreadMarker) -> Rc<StackWin> {
-        let panel = Panel::new(mtm, Opts { key: false, level: LEVEL_UI });
+        let panel = Panel::new(mtm, Opts { key: false, level: LEVEL_UI, activating: false });
         let s = Rc::new(StackWin {
             panel,
             st: RefCell::new(State { edge_right: true, scale: 1.0, ..Default::default() }),

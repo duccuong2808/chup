@@ -187,9 +187,15 @@ pub fn zoom_at(v: View, img: (u32, u32), factor: f64, anchor: (i32, i32)) -> Vie
 
 /// Kéo ảnh đang phóng to: con trỏ đi `(dx, dy)` px màn hình kể từ lúc bấm (view lúc bấm là `start`).
 pub fn pan(start: View, img: (u32, u32), dx: i32, dy: i32) -> View {
-    let s = start.scale().max(1e-9);
-    let off = (start.off.0 - dx as f64 / s, start.off.1 - dy as f64 / s);
-    View { off, ..start }.clamped(img)
+    pan_by(start, img, dx as f64, dy as f64)
+}
+
+/// Dời ảnh đang phóng to `(dx, dy)` px màn hình (lẻ được: vuốt 2 ngón trên trackpad gửi từng chút một).
+/// Ảnh đi cùng chiều `(dx, dy)`; vừa khung thì không dời được.
+pub fn pan_by(v: View, img: (u32, u32), dx: f64, dy: f64) -> View {
+    let s = v.scale().max(1e-9);
+    let off = (v.off.0 - dx / s, v.off.1 - dy / s);
+    View { off, ..v }.clamped(img)
 }
 
 /// Về vừa khung (thấy cả ảnh).
@@ -438,6 +444,20 @@ mod tests {
         // Ảnh 4K mở ở zoom nhỏ: vẫn phóng được tới 800%.
         let v = open_center((3840, 2160), WORK, zoom((3840, 2160), 50), MIN);
         assert!((magnify_at(v, (3840, 2160), 100, (0, 0)).scale() - 8.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn pan_by_accumulates_fractions_and_needs_magnify() {
+        let img = (800, 600);
+        let fit = open_center(img, WORK, 1.0, MIN);
+        // Vừa khung: vuốt không làm gì.
+        assert_eq!(pan_by(fit, img, 30.0, -20.0).off, (0.0, 0.0));
+        let v = magnify_at(fit, img, 3, (400, 300));
+        // 10 lần 0,4 px = 4 px: không mất phần lẻ.
+        let p = (0..10).fold(v, |p, _| pan_by(p, img, 0.4, 0.0));
+        assert!((p.off.0 - (v.off.0 - 4.0 / v.scale())).abs() < 1e-9);
+        // Vuốt lên (dy âm): ảnh đi lên, thấy phần dưới hơn.
+        assert!(pan_by(v, img, 0.0, -30.0).off.1 > v.off.1);
     }
 
     #[test]

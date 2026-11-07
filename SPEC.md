@@ -365,7 +365,8 @@ Mục tiêu; đo thực tế ở bước 1.4 rồi chỉnh lại.
   - Hỗ trợ **macOS 26 Tahoe trở lên**. Bản đầu ký bằng chứng chỉ tự tạo (dùng cá nhân, chưa notarize); đổi sang Developer ID sau.
   - Cần xin quyền Screen Recording: kiểm tra trước khi mở overlay, chưa có quyền thì không mở overlay và hướng dẫn mở System Settings.
   - Chụp bằng ScreenCaptureKit (`SCScreenshotManager`), loại cửa sổ của Chup khỏi ảnh (mục 6.4).
-  - Tray thành icon trên menu bar (icon template). App không có icon ở Dock (`LSUIElement`).
+  - Tray thành icon trên menu bar (icon template). App không có icon ở Dock (`LSUIElement`), trừ lúc Preview đang mở
+    (mục 17.2).
   - Hotkey mặc định dùng `Ctrl+Cmd`: `Ctrl+Cmd+A` (chọn vùng), `Ctrl+Cmd+X` (chụp), `Ctrl+Cmd+Z` (Freeze). Tránh `Cmd+Shift+3/4/5` của hệ thống; không dùng F1 (phím độ sáng).
   - Màn hình Retina có scale 2. `Rect` vẫn là physical px toàn desktop: gốc mỗi màn hình = gốc (point) × scale lớn nhất, kích thước = point × scale của chính màn hình đó (không bao giờ chồng nhau).
   - Overlay, frame, toolbar, stack là `NSPanel` không lấy focus (overlay thành key window để nhận Esc mà không activate app), hiện trên mọi Space và trên app toàn màn hình.
@@ -773,8 +774,12 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-preview-design.md`.
     tỉ lệ ảnh, mép đối diện đứng yên. Đổi cỡ khi đang phóng to thì vẫn thấy đúng phần ảnh đó.
   - Lăn chuột: phóng to/thu nhỏ ảnh **trong khung** quanh con trỏ (×1,25 mỗi nấc), cửa sổ giữ nguyên cỡ và chỗ.
     Nhỏ nhất là vừa khung (thấy cả ảnh), lớn nhất 800% ảnh gốc.
-  - macOS: chụm/xoè 2 ngón trên trackpad cũng phóng to/thu nhỏ quanh con trỏ, đổi mượt không theo nấc. Cuộn (chuột,
-    2 ngón) tính theo chiều tay thật, không theo Natural Scrolling: đẩy lên là phóng to.
+  - macOS, như app Preview của máy: chụm 2 ngón trên trackpad là thu nhỏ, xoè ra là phóng to quanh con trỏ, đổi mượt
+    không theo nấc. Vuốt 2 ngón (lên, xuống, trái, phải) dời ảnh đang phóng to theo chiều cuộn của máy (bật Natural
+    Scrolling, mặc định, thì ảnh đi theo ngón tay); vừa khung thì vuốt không làm gì. Chuột có nấc vẫn phóng to như
+    Windows, tính theo chiều tay thật (đẩy lên là phóng to). Mở Preview hoặc bấm vào Preview thì Chup thành app đang
+    dùng, và có icon ở Dock tới khi đóng Preview: macOS chỉ gửi cử chỉ trackpad cho app thường (không phải app chỉ có
+    icon menu bar) đang dùng.
   - Đang phóng to: kéo (ngoài nút, mép, chữ) để kéo ảnh, con trỏ hình mũi tên 4 chiều; ảnh không kéo ra ngoài khung.
     `Alt` + kéo vẫn di chuyển cửa sổ.
   - `+`/`-` phóng to/thu nhỏ quanh tâm khung, `0` về vừa khung.
@@ -828,6 +833,8 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-preview-design.md`.
 - [ ] Kéo di chuyển, kéo 4 mép và 4 góc đổi cỡ giữ tỉ lệ.
 - [ ] Lăn chuột phóng to quanh con trỏ, cửa sổ không đổi cỡ; đang phóng to thì kéo ảnh được, `Alt` + kéo di chuyển
       cửa sổ; `0` về vừa khung. Chọn chữ vẫn đúng chỗ khi phóng to.
+- [ ] macOS: chụm 2 ngón thu nhỏ, xoè ra phóng to; vuốt 2 ngón 4 hướng dời ảnh theo ngón tay. Bấm sang app khác rồi
+      quay lại bấm vào Preview: chụm vẫn được.
 - [ ] Đóng rồi mở ảnh khác: nằm đúng chỗ lần trước, cỡ tự tính theo ảnh mới. Đổi "Chỗ mở" sang Cạnh stack / Giữa màn hình: đúng chỗ.
 - [ ] Kéo di chuyển Preview của ảnh dải rồi mở ảnh lớn: ảnh lớn không bị nhỏ theo. Kéo mép ảnh lớn rồi mở ảnh lớn khác: to, nhỏ theo tỉ lệ đó.
 - [ ] Ctrl + lăn chuột đổi opacity; Cài đặt đổi opacity và "luôn nằm trên" thì áp ngay cho Preview đang mở.

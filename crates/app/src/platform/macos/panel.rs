@@ -19,7 +19,7 @@ use objc2::{
     DefinedClass, MainThreadMarker, MainThreadOnly,
 };
 use objc2_app_kit::{
-    NSBackingStoreType, NSColor, NSCursor, NSCursorFrameResizeDirections, NSCursorFrameResizePosition, NSEvent, NSEventModifierFlags, NSPanel, NSResponder, NSTrackingArea,
+    NSBackingStoreType, NSColor, NSCursor, NSCursorFrameResizeDirections, NSCursorFrameResizePosition, NSEvent, NSEventModifierFlags, NSMagnificationGestureRecognizer, NSPanel, NSResponder, NSTrackingArea,
     NSTrackingAreaOptions, NSView, NSWindowAnimationBehavior, NSWindowCollectionBehavior, NSWindowLevel,
     NSWindowStyleMask,
 };
@@ -65,7 +65,9 @@ pub enum Ev {
     RightDown { p: (i32, i32) },
     RightUp,
     /// `dy` > 0: tay đẩy lên, bất kể Natural Scrolling. `lines`: chuột có nấc (không phải trackpad).
-    Scroll { p: (i32, i32), dy: f64, lines: bool, mods: Mods },
+    /// `content`: nội dung nên dời bao nhiêu px (y hướng xuống) theo cài đặt cuộn của máy: bật Natural Scrolling
+    /// (mặc định) thì ảnh đi theo ngón tay.
+    Scroll { p: (i32, i32), dy: f64, lines: bool, content: (f64, f64), mods: Mods },
     /// Chụm/xoè 2 ngón trên trackpad. `delta` > 0: xoè ra (`NSEvent.magnification`).
     Magnify { p: (i32, i32), delta: f64 },
     Key { code: u16, mods: Mods },
@@ -136,6 +138,8 @@ pub trait Handler {
 pub struct ViewIvars {
     handler: RefCell<Option<Weak<dyn Handler>>>,
     tracking: RefCell<Option<Retained<NSTrackingArea>>>,
+    /// Hệ số phóng cộng dồn lần trước của `NSMagnificationGestureRecognizer` (`None`: không đang chụm).
+    pinch: Cell<Option<f64>>,
 }
 
 define_class!(
@@ -207,14 +211,45 @@ define_class!(
         #[unsafe(method(scrollWheel:))]
         fn scroll_wheel(&self, e: &NSEvent) {
             let lines = !e.hasPreciseScrollingDeltas();
+            // Đang chụm: ảnh không vừa phóng vừa trượt.
+            if !lines && self.ivars().pinch.get().is_some() {
+                return;
+            }
             // Natural Scrolling (mặc định của macOS) đảo dấu delta: trả về chiều tay thật.
             let dy = if e.isDirectionInvertedFromDevice() { -e.scrollingDeltaY() } else { e.scrollingDeltaY() };
-            self.send(Ev::Scroll { p: self.px(e), dy, lines, mods: Mods::from_flags(e.modifierFlags()) });
+            // scrollingDelta > 0 = cuộn về đầu tài liệu = nội dung đi xuống/sang phải (view đã lật trục y).
+            let k = self.scale();
+            let content = (e.scrollingDeltaX() * k, e.scrollingDeltaY() * k);
+            self.send(Ev::Scroll { p: self.px(e), dy, lines, content, mods: Mods::from_flags(e.modifierFlags()) });
         }
 
+        // macOS cũ: chụm đến thẳng view. Recognizer đang chụm thì bỏ (kẻo phóng 2 lần).
         #[unsafe(method(magnifyWithEvent:))]
         fn magnify_with_event(&self, e: &NSEvent) {
-            self.send(Ev::Magnify { p: self.px(e), delta: e.magnification() });
+            if self.ivars().pinch.get().is_none() {
+                self.send(Ev::Magnify { p: self.px(e), delta: e.magnification() });
+            }
+        }
+
+        // macOS 27 chỉ báo chụm qua gesture recognizer (`magnifyWithEvent:` không còn được gọi).
+        #[unsafe(method(chupMagnify:))]
+        fn chup_magnify(&self, g: &NSMagnificationGestureRecognizer) {
+            use objc2_app_kit::NSGestureRecognizerState as S;
+            let state = g.state();
+            let m = 1.0 + g.magnification();
+            if state == S::Began {
+                self.ivars().pinch.set(Some(m));
+            } else if state == S::Changed {
+                if let Some(last) = self.ivars().pinch.get() {
+                    self.ivars().pinch.set(Some(m));
+                    if m > 0.01 && last > 0.01 {
+                        let p = self.px_at(g.locationInView(Some(self)));
+                        self.send(Ev::Magnify { p, delta: (m / last).ln() });
+                    }
+                }
+            } else {
+                self.ivars().pinch.set(None);
+            }
         }
 
         #[unsafe(method(keyDown:))]
@@ -265,7 +300,11 @@ define_class!(
 
 impl ChupView {
     fn new(mtm: MainThreadMarker) -> Retained<Self> {
-        let this = Self::alloc(mtm).set_ivars(ViewIvars { handler: RefCell::new(None), tracking: RefCell::new(None) });
+        let this = Self::alloc(mtm).set_ivars(ViewIvars {
+            handler: RefCell::new(None),
+            tracking: RefCell::new(None),
+            pinch: Cell::new(None),
+        });
         let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1.0, 1.0));
         unsafe { msg_send![super(this), initWithFrame: frame] }
     }
@@ -276,7 +315,11 @@ impl ChupView {
 
     /// Điểm của sự kiện -> px trong cửa sổ (gốc trên-trái).
     fn px(&self, e: &NSEvent) -> (i32, i32) {
-        let p = self.convertPoint_fromView(e.locationInWindow(), None);
+        self.px_at(self.convertPoint_fromView(e.locationInWindow(), None))
+    }
+
+    /// Điểm trong view -> px trong cửa sổ.
+    fn px_at(&self, p: NSPoint) -> (i32, i32) {
         let k = self.scale();
         ((p.x * k).floor() as i32, (p.y * k).floor() as i32)
     }
@@ -318,6 +361,9 @@ pub struct Opts {
     /// Được làm key window (nhận phím) mà không activate app.
     pub key: bool,
     pub level: NSWindowLevel,
+    /// Bấm vào cửa sổ thì activate app (Preview: macOS 27 chỉ giao cử chỉ trackpad cho app đang active, và
+    /// `NSApplication.activate()` gọi từ app thường bị từ chối). Còn lại: panel không activate.
+    pub activating: bool,
 }
 
 /// Trên menu bar và Dock (overlay chọn vùng).
@@ -338,7 +384,11 @@ pub struct Panel {
 
 impl Panel {
     pub fn new(mtm: MainThreadMarker, opts: Opts) -> Panel {
-        let style = NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel;
+        let style = if opts.activating {
+            NSWindowStyleMask::Borderless
+        } else {
+            NSWindowStyleMask::Borderless | NSWindowStyleMask::NonactivatingPanel
+        };
         let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(1.0, 1.0));
         let this = ChupPanel::alloc(mtm).set_ivars(Cell::new(opts.key));
         let window: Retained<ChupPanel> = unsafe {
@@ -410,6 +460,43 @@ impl Panel {
         }
     }
 
+    /// Nhận chụm 2 ngón trên trackpad (Preview). Chỉ đến khi app là `.regular` và đang active (`activate_app`).
+    pub fn enable_pinch(&self) {
+        let target: &AnyObject = self.view.as_ref();
+        let g = unsafe {
+            NSMagnificationGestureRecognizer::initWithTarget_action(
+                NSMagnificationGestureRecognizer::alloc(MainThreadMarker::from(&*self.window)),
+                Some(target),
+                Some(objc2::sel!(chupMagnify:)),
+            )
+        };
+        self.view.addGestureRecognizer(&g);
+    }
+
+    /// Đưa Chup thành app thường (có icon ở Dock) và đang active. macOS 27 không giao cử chỉ trackpad (chụm 2
+    /// ngón) cho app accessory, kể cả khi app đang active, và cho app không active (đo trên máy thật). `activate()` có
+    /// thể bị từ chối (activation hợp tác của macOS 14+): cửa sổ dùng hàm này nên là `Opts::activating` để cú bấm
+    /// của người dùng activate app. Chỉ dùng cho cửa sổ người dùng thao tác lâu (Preview); đóng thì gọi `release_app`.
+    pub fn activate_app(&self) {
+        use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy as P};
+        let app = NSApplication::sharedApplication(MainThreadMarker::from(&*self.window));
+        if app.activationPolicy() != P::Regular {
+            app.setActivationPolicy(P::Regular);
+        }
+        if !app.isActive() {
+            app.activate();
+        }
+    }
+
+    /// Trả Chup về app accessory (chỉ có icon trên menu bar).
+    pub fn release_app(&self) {
+        use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy as P};
+        let app = NSApplication::sharedApplication(MainThreadMarker::from(&*self.window));
+        if app.activationPolicy() != P::Accessory {
+            app.setActivationPolicy(P::Accessory);
+        }
+    }
+
     pub fn hide(&self) {
         self.window.orderOut(None);
         *self.last.borrow_mut() = None;
@@ -437,6 +524,42 @@ impl Panel {
     /// Ảnh đang hiện (RGBA), cho chế độ tự kiểm tra.
     pub fn snapshot(&self) -> Option<image::RgbaImage> {
         self.last.borrow().as_ref().and_then(|i| super::capture::to_rgba(i))
+    }
+
+    /// Tự kiểm tra: vẽ cả cây layer của view (gồm layer con) bằng CPU, ra ảnh px.
+    pub fn snapshot_layers(&self) -> Option<image::RgbaImage> {
+        use objc2_core_graphics::{CGBitmapContextCreate, CGColorSpace, CGContext, CGImageAlphaInfo, CGImageByteOrderInfo};
+        let layer = self.view.layer()?;
+        let r = self.rect.get();
+        let (w, h) = (r.w as usize, r.h as usize);
+        if w == 0 || h == 0 {
+            return None;
+        }
+        let b = layer.bounds();
+        let k = w as f64 / b.size.width.max(1.0);
+        let mut buf = vec![0u8; w * h * 4];
+        let cs = CGColorSpace::with_name(Some(unsafe { objc2_core_graphics::kCGColorSpaceSRGB }))?;
+        let info = CGImageAlphaInfo::PremultipliedLast.0 | CGImageByteOrderInfo::Order32Big.0;
+        let ctx = unsafe { CGBitmapContextCreate(buf.as_mut_ptr().cast(), w, h, 8, w * 4, Some(&cs), info) }?;
+        // Bitmap có y hướng lên; layer của view lật thì lật lại để ảnh ra đúng chiều màn hình.
+        if layer.contentsAreFlipped() {
+            CGContext::translate_ctm(Some(&ctx), 0.0, h as f64);
+            CGContext::scale_ctm(Some(&ctx), k, -k);
+        } else {
+            CGContext::scale_ctm(Some(&ctx), k, k);
+        }
+        layer.renderInContext(&ctx);
+        drop(ctx);
+        // Hàng 0 của buffer là hàng trên cùng của bitmap (y lớn nhất) — đúng thứ tự ảnh.
+        for p in buf.chunks_exact_mut(4) {
+            let a = p[3] as u32;
+            if a != 0 && a != 255 {
+                for c in &mut p[..3] {
+                    *c = (*c as u32 * 255 + a / 2).checked_div(a).map_or(0, |v| v.min(255) as u8);
+                }
+            }
+        }
+        image::RgbaImage::from_raw(w as u32, h as u32, buf)
     }
 
     pub fn raw_handle(&self) -> ViewHandle {

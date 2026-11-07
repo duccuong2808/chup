@@ -87,6 +87,9 @@ impl App {
                 next(2, 700);
             }
             2 => {
+                // Chọn vùng xong: frame giữ bàn phím, nút Chụp có "↵" (chup-48i).
+                log::info!("selftest: frame giữ bàn phím sau khi chọn vùng: {}", self.model.frame_keys);
+                self.frame_ref().inject(Ev::Focus(true));
                 save(&dir, "02-frame.png", self.frame_ref().snapshot());
                 save(&dir, "02-toolbar.png", self.toolbar_ref().snapshot());
                 // Rê chuột lên nút đầu (Chụp).
@@ -169,6 +172,11 @@ impl App {
                 p.inject(Ev::Enter);
                 p.inject(Ev::Move { p: (40, 40) });
                 save(&dir, "14-preview-hover.png", p.snapshot());
+                // Đang OCR (chup-27e): chuột ra ngoài vẫn thấy nút [T] quay và nhãn "Đang nhận diện chữ…".
+                p.inject(Ev::Leave);
+                p.set_ocr_busy(Some(dir.join("12-ocr-input.png")));
+                save(&dir, "14b-preview-busy.png", p.snapshot());
+                p.set_ocr_busy(None);
                 // OCR nền khi mở Preview (SPEC 17.2).
                 next(11, 2500);
             }

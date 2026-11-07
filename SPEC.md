@@ -83,7 +83,12 @@
    - Overlay ẩn đi.
    - Frame hiện quanh region, Toolbar hiện cạnh frame.
    - Frame ở **Normal mode**.
-5. Bấm **[Chụp]** trên toolbar hoặc nhấn hotkey **Chụp** (`Ctrl+Alt+X`; trước v3 là `Ctrl+Alt+S`, hay bị app khác giữ):
+   - Frame **nhận bàn phím** (chup-48i): Windows là foreground window, macOS là key window của panel nonactivating
+     (không activate app). Trong lúc đó `Enter` = **[Chụp]**, `Esc` = đóng vùng, nút Chụp trên toolbar ghi
+     **"Chụp ↵"**. Bấm (hay chuyển) sang app khác là frame mất bàn phím: `Enter` lại thuộc về app đó, nút về "Chụp".
+     Bấm viền frame (kéo / đổi cỡ) thì frame nhận lại bàn phím. Faded mode bỏ qua `Enter` / `Esc` (người dùng đang làm
+     việc ở app bên dưới). Không đăng ký `Enter` làm hotkey toàn cục. Logic ở `Model::frame_focus` / `frame_key`.
+5. Bấm **[Chụp]** trên toolbar, nhấn `Enter` khi frame đang giữ bàn phím, hoặc nhấn hotkey **Chụp** (`Ctrl+Alt+X`; trước v3 là `Ctrl+Alt+S`, hay bị app khác giữ):
    - Chụp nội dung **tại thời điểm bấm**.
    - Lưu PNG vào folder đã cấu hình.
    - Copy ảnh vào clipboard nếu bật cấu hình.
@@ -93,8 +98,9 @@
    - Faded mode: **giữ nguyên** frame để chụp tiếp.
 7. Huỷ:
    - Đang chọn vùng: nhấn `Esc`, hoặc click phải lên overlay.
-   - Sau khi đã có frame: bấm **[✕]** trên toolbar.
-   - **Không đăng ký `Esc` làm hotkey toàn cục** vì sẽ phá phím Esc của mọi app khác. `Esc` chỉ xử lý local khi overlay đang có focus.
+   - Sau khi đã có frame: bấm **[✕]** trên toolbar, hoặc `Esc` khi frame đang giữ bàn phím (bước 4).
+   - **Không đăng ký `Esc` làm hotkey toàn cục** vì sẽ phá phím Esc của mọi app khác. `Esc` chỉ xử lý local khi overlay
+     hoặc frame đang có focus.
 
 ### 5.2 Chế độ mờ (Faded mode)
 
@@ -162,7 +168,7 @@ thẻ nền trắng trên nền xám. Cửa sổ cỡ cố định theo trang ca
 | Chụp ảnh | Tự động chọn vùng (SPEC 16); sau khi chụp (copy clipboard, giữ/đóng vùng chọn); ẩn toolbar/stack lúc chụp |
 | Copy chữ (OCR) | Ngôn ngữ, trạng thái + nút tải/xoá gói tiếng Việt, tự nhận diện khi mở Preview |
 | Stack và Preview | Cạnh và màn hình của stack; các mục Preview (SPEC 17.4) |
-| Giới thiệu | Tên, phiên bản, commit (7 ký tự đầu; build tay lấy từ git, đánh dấu "bản build tay"), thời điểm build (UTC), mô tả; nút Trang dự án, Mở thư mục log; nguồn engine/dữ liệu OCR tiếng Việt, nút Giấy phép (`NOTICE-ocr.txt`) |
+| Giới thiệu | Đầu trang: icon app 48 px (macOS 64 pt), tên, "Phiên bản X"; dòng nhỏ commit (7 ký tự đầu; build tay lấy từ git, đánh dấu "bản build tay") · thời điểm build (UTC); mô tả; nút Trang dự án, Có gì mới (trang Releases), Báo lỗi, góp ý (Issues), Mở thư mục log. Mục Cập nhật (mục 18): tự kiểm tra mỗi ngày, "Kiểm tra lần cuối: …", nút Kiểm tra cập nhật. Windows: nguồn engine/dữ liệu OCR tiếng Việt, nút Giấy phép (`NOTICE-ocr.txt`) (chup-jpf) |
 
 Các mục:
 - **Folder lưu ảnh**: nút chọn folder (dialog), kèm đường dẫn hiện tại.
@@ -353,7 +359,9 @@ Mục tiêu; đo thực tế ở bước 1.4 rồi chỉnh lại.
 - [ ] Faded mode: click, gõ phím, cuộn ở app bên dưới bình thường. Hotkey Chụp vẫn chụp đúng vùng.
 - [ ] Chụp 7 lần liên tiếp: stack chỉ còn 5 ảnh mới nhất, đủ 7 file trên ổ đĩa.
 - [ ] Kéo thumbnail thả vào được các đích sau: Explorer (copy file), ô upload của Chrome hoặc Arc, Zalo PC, Slack, Word, VS Code.
-- [ ] Chụp xong thì app đang dùng **không** mất focus.
+- [ ] Đang gõ ở app khác (đã bấm vào nó sau khi chọn vùng) rồi bấm [Chụp] hay hotkey Chụp: app đó **không** mất focus.
+- [ ] Chọn vùng xong nhấn `Enter`: chụp (nút ghi "Chụp ↵"). Chọn vùng, bấm sang Notepad / TextEdit gõ `Enter`: xuống dòng
+      bình thường, Chup không chụp, nút về "Chụp". Bấm viền frame rồi `Enter`: chụp. Faded: `Enter` không chụp.
 - [ ] Đổi folder lưu trong settings: ảnh tiếp theo vào folder mới, không cần restart.
 - [ ] Rút màn hình phụ khi frame đang nằm trên đó: không crash, frame đóng.
 - [ ] Đặt hotkey trùng với app khác: có báo lỗi, app vẫn chạy.
@@ -365,11 +373,12 @@ Mục tiêu; đo thực tế ở bước 1.4 rồi chỉnh lại.
   - Hỗ trợ **macOS 26 Tahoe trở lên**. Bản đầu ký bằng chứng chỉ tự tạo (dùng cá nhân, chưa notarize); đổi sang Developer ID sau.
   - Cần xin quyền Screen Recording: kiểm tra trước khi mở overlay, chưa có quyền thì không mở overlay và hướng dẫn mở System Settings.
   - Chụp bằng ScreenCaptureKit (`SCScreenshotManager`), loại cửa sổ của Chup khỏi ảnh (mục 6.4).
-  - Tray thành icon trên menu bar (icon template). App không có icon ở Dock (`LSUIElement`), trừ lúc Preview đang mở
+  - Tray thành icon trên menu bar: template image đơn sắc 18 pt (`icons/tray-template.svg`, cùng hình khung 4 góc +
+    chấm của icon app, không nền), macOS tự tô màu theo menu bar sáng / tối; đang đếm ngược Freeze thì icon mờ. App không có icon ở Dock (`LSUIElement`), trừ lúc Preview đang mở
     (mục 17.2).
   - Hotkey mặc định dùng `Ctrl+Cmd`: `Ctrl+Cmd+A` (chọn vùng), `Ctrl+Cmd+X` (chụp), `Ctrl+Cmd+Z` (Freeze). Tránh `Cmd+Shift+3/4/5` của hệ thống; không dùng F1 (phím độ sáng).
   - Màn hình Retina có scale 2. `Rect` vẫn là physical px toàn desktop: gốc mỗi màn hình = gốc (point) × scale lớn nhất, kích thước = point × scale của chính màn hình đó (không bao giờ chồng nhau).
-  - Overlay, frame, toolbar, stack là `NSPanel` không lấy focus (overlay thành key window để nhận Esc mà không activate app), hiện trên mọi Space và trên app toàn màn hình.
+  - Overlay, frame, toolbar, stack là `NSPanel` không lấy focus (overlay và frame thành key window để nhận Esc / Enter mà không activate app), hiện trên mọi Space và trên app toàn màn hình.
   - OCR dùng Apple Vision cho cả tiếng Việt và tiếng Anh: không có gói tải thêm, không có `chup-ocr.exe`.
   - Tự chọn vùng: `CGWindowListCopyWindowInfo` cho cửa sổ, `AXUIElement` cho phần tử (cần quyền Accessibility; chưa có thì chỉ khung cửa sổ). Khung từ ảnh chỉ ở Freeze (Live chưa chụp ngầm màn hình).
   - Mở cùng hệ thống bằng `SMAppService`. Phát hành `.app` trong `.dmg`.
@@ -591,6 +600,12 @@ pub trait OcrEngine {
   để chọn chữ (không quay "bận", không toast, tiếng Việt thiếu gói thì bỏ qua không hỏi). Bấm [T] lúc đó thì đợi
   job nền xong rồi copy. Job khác (Freeze, Chụp text) thay job nền; xong thì job nền chạy lại nếu Preview còn mở.
   Đóng Preview huỷ job nền.
+- **Đang OCR ảnh của Preview** (job người dùng yêu cầu, chup-27e): nút [T] hiện cả khi chuột ở ngoài cửa sổ, quay vòng
+  chấm, kèm nhãn "Đang nhận diện chữ…" ở chỗ nhãn zoom; sau 4 s nhãn báo thêm "Lần đầu có thể mất khoảng 1 phút".
+  Preview vẫn phóng, kéo, đóng được (OCR chạy ở worker). Bấm [T] lần nữa thì huỷ.
+- **macOS: làm nóng Vision.** Lần đầu sau khi cài hay cập nhật Chup, Vision biên dịch model gần 1 phút (cache theo bản
+  build). 3 s sau khi khởi động, worker OCR nhận diện một ảnh chữ nhỏ ở nền để lần dùng đầu không phải chờ; job thật tới
+  trước khi nó bắt đầu thì thay nó.
 - Bbox (dòng, từ, ký tự) được đổi về toạ độ ảnh gốc (bỏ hệ số phóng ×2 hoặc thu nhỏ của Windows OCR).
   Tesseract trả vị trí từng ký tự; Windows OCR chỉ có bbox từ nên vị trí ký tự được ước lượng theo độ rộng chữ.
 
@@ -845,3 +860,47 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-preview-design.md`.
 - [ ] Chọn chữ: kéo trên chữ tiếng Anh và tiếng Việt (một phần từ, nhiều dòng, sau khi zoom), bấm đúp, bấm 3 lần,
   `Shift` + bấm, `Ctrl+A`, `Ctrl+C`,
   menu chuột phải, `Alt` + kéo, `Esc`. Tắt "Tự nhận diện" thì chỉ chọn được sau khi bấm [T].
+
+## 18. Tự cập nhật (chup-22n)
+
+### 18.1 Nguồn bản mới
+
+- GitHub Release mới nhất (đã phát hành, không draft, không pre-release) của repo Chup, qua API
+  `https://api.github.com/repos/duccuong2808/chup/releases/latest`. Tag `v<major>.<minor>.<patch>`; mới hơn
+  `CARGO_PKG_VERSION` mới là bản mới.
+- Bộ cài theo máy: Windows `Chup_<v>_x64-setup.exe` (đang có `chup-ocr.exe` cạnh `chup.exe`, tức cài bản Full) hoặc
+  `Chup_<v>_x64-setup-lite.exe`; macOS `Chup-<v>.dmg`. Chỉ nhận file của Release repo này có SHA-256 (`digest` của API).
+  Thiếu file hay thiếu SHA-256 thì không tự cài, chỉ mời mở trang Release.
+- Logic (đọc API, so phiên bản, chọn file, hạn kiểm tra) ở `core::update`, có test. Tải bộ cài dùng `ocr::pack::Pack`
+  (kiểm tra kích thước + SHA-256, ghi vào thư mục tạm rồi mới đổi tên) vào `<cache>/update/chup-<v>/`; mỗi lần kiểm tra
+  dọn bộ cài cũ.
+
+### 18.2 Khi nào kiểm tra, khi nào hỏi
+
+- Cài đặt > Giới thiệu > Cập nhật: "Tự kiểm tra bản mới mỗi ngày" (mặc định bật, `"update": { "autoCheck": true,
+  "lastCheck": <giây Unix> }`) và nút "Kiểm tra cập nhật".
+- Tự kiểm tra: 30 s sau khi khởi động rồi cứ 10 phút xem đã quá 24 giờ kể từ lần kiểm tra trước chưa (lỗi mạng cũng
+  tính là đã kiểm tra, không thử dồn dập). Lỗi hay không có bản mới: im lặng (chỉ ghi log).
+- Có bản mới: hỏi bằng hộp thoại "Đã có Chup X (đang dùng Y). Cập nhật bây giờ?" [Cập nhật] [Để sau]. Đang chọn vùng,
+  có frame, Freeze hay Preview thì **chưa hỏi**, đợi tới lúc rảnh. "Để sau": hỏi lại ở lần kiểm tra sau (ngày hôm sau).
+- Bấm nút: luôn báo kết quả (toast "đang kiểm tra", "X là bản mới nhất", "không kiểm tra được") và hỏi ngay nếu có bản mới.
+
+### 18.3 Cài
+
+- Toast "Đang tải Chup X…", tải ở thread nền. Lỗi: toast "Không cập nhật được Chup…", chi tiết ghi log.
+- **Windows**: chạy bộ cài `/S /RELAUNCH` rồi Chup thoát. Bộ cài NSIS per-user tự đóng Chup cũ, cài đè vào
+  `%LOCALAPPDATA%\Chup` (dữ liệu OCR đã tải giữ nguyên), không tạo lại shortcut Desktop đã bị xoá, xong thì mở lại Chup.
+  `chup.exe` chạy rời (không nằm trong thư mục cài) thì chỉ mở trang Release.
+- **macOS**: tải `.dmg` bằng `/usr/bin/curl`, `hdiutil attach` (không hiện ra Finder), `ditto` `Chup.app` thành
+  `.Chup.app.new` cạnh bản đang chạy, `codesign --verify`, đổi tên bản cũ rồi đặt bản mới vào đúng chỗ (lỗi thì trả lại),
+  mở lại sau khi process cũ thoát. Không chạy từ `.app` (dev) hoặc không ghi được thư mục chứa app thì chỉ mở trang
+  Release. `.dmg` phải ký bằng cùng chứng chỉ với bản đang dùng để giữ quyền Ghi màn hình / Trợ năng.
+- Không bao giờ cập nhật mà không hỏi; không cập nhật giữa lúc đang chụp / Preview mở.
+
+### 18.4 Nghiệm thu
+
+- [ ] Tắt "Tự kiểm tra": không gọi GitHub (log không có `update:`). Bật: 30 s sau khởi động có dòng log kết quả.
+- [ ] Release mới hơn (tag thử): hộp thoại hỏi; "Để sau" thì không hỏi lại trong ngày; "Cập nhật" thì Chup đóng, cài,
+      mở lại đúng bản mới (Giới thiệu ghi phiên bản mới), cấu hình và OCR tiếng Việt đã tải còn nguyên.
+- [ ] Đang có frame / Preview khi tìm thấy bản mới: chỉ hỏi sau khi đóng.
+- [ ] Mất mạng, bấm "Kiểm tra cập nhật": toast lỗi, app vẫn chạy.

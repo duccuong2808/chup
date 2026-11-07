@@ -44,7 +44,8 @@ use windows::{
             },
             WindowsAndMessaging::{
                 CreateWindowExW, DestroyWindow, GetClientRect, GetDlgCtrlID, GetWindowLongPtrW, GetWindowTextLengthW,
-                GetWindowTextW, KillTimer, SendMessageW, SetForegroundWindow, SetTimer,
+                GetWindowTextW, KillTimer, LoadImageW, SendMessageW, SetForegroundWindow, SetTimer, IMAGE_ICON, LR_DEFAULTCOLOR,
+                STM_SETICON,
                 SetWindowPos, SetWindowTextW, ShowWindow, BM_GETCHECK, BM_SETCHECK, BN_CLICKED, BS_AUTOCHECKBOX,
                 BS_PUSHBUTTON, CBN_SELCHANGE, CBS_DROPDOWNLIST, CB_ADDSTRING, CB_GETCURSEL, CB_RESETCONTENT, CB_SETCURSEL, CW_USEDEFAULT,
                 DLGC_WANTALLKEYS, EN_CHANGE, ES_AUTOHSCROLL, ES_READONLY, GWLP_USERDATA, GWL_EXSTYLE, GWL_STYLE, HMENU,
@@ -114,6 +115,13 @@ const ID_ABOUT_LOG: u16 = 125;
 const ID_ABOUT_NOTICE: u16 = 126;
 const ID_HK_FREEZE_ON: u16 = 127;
 const ID_UI_LANG: u16 = 128;
+const ID_UPD_AUTO: u16 = 129;
+const ID_UPD_CHECK: u16 = 130;
+const ID_ABOUT_NEWS: u16 = 131;
+/// Kiểu control STATIC (WinUser.h): hiện icon, co icon theo cỡ control.
+const SS_ICON: u32 = 0x0003;
+const SS_REALSIZECONTROL: u32 = 0x0040;
+const ID_ABOUT_ISSUES: u16 = 132;
 const TIMER_PATTERN: usize = 1;
 
 
@@ -313,14 +321,22 @@ struct Handles {
     hint_pv_size: HWND,
     pv_size: HWND,
     // Giới thiệu
+    about_icon: HWND,
     about_name: HWND,
     about_ver: HWND,
+    about_build: HWND,
     about_desc: HWND,
     about_web: HWND,
+    about_news: HWND,
+    about_issues: HWND,
     about_log: HWND,
     sec_about_ocr: HWND,
     about_engine: HWND,
     about_notice: HWND,
+    sec_upd: HWND,
+    upd_auto: HWND,
+    upd_last: HWND,
+    upd_check: HWND,
 }
 
 thread_local! {
@@ -382,19 +398,21 @@ fn current_mods() -> Mods {
     }
 }
 
-/// "Phiên bản 0.2.0 · commit 2f451f1 · build 2026-11-04 08:15 UTC"; build tay thêm "(bản build tay)",
-/// không có git thì không có commit.
-fn version_text() -> String {
+/// "commit 2f451f1 · build lúc 2026-11-04 08:15 UTC"; build tay thêm "(bản build tay)", không có git thì không có
+/// commit. Dòng nhỏ dưới "Phiên bản 0.2.0" ở trang Giới thiệu.
+fn build_text() -> String {
     let t = t();
-    let mut s = fill(t.st_about_version, &[&env!("CARGO_PKG_VERSION")]);
+    let mut parts = vec![];
     let commit = env!("CHUP_COMMIT");
     if !commit.is_empty() {
-        s += &format!(" · commit {commit}");
+        parts.push(format!("commit {commit}"));
     }
+    parts.push(fill(t.st_about_built, &[&env!("CHUP_BUILD_TIME")]));
+    let mut s = parts.join(" · ");
     if !env!("CHUP_LOCAL_BUILD").is_empty() {
         s += &format!(" ({})", t.st_about_local_build);
     }
-    s + " · " + &fill(t.st_about_built, &[&env!("CHUP_BUILD_TIME")])
+    s
 }
 
 /// File giấy phép đi cùng engine đang dùng, nếu có.
@@ -715,8 +733,16 @@ impl Settings {
         h.pv_size = self.add(cb, |_| "", combo, none, ID_PV_SIZE, Kind::Control);
 
         self.building.set(Some(Page::About));
+        // Icon app (tài nguyên 1 trong chup.rc), co theo cỡ control (SS_REALSIZECONTROL).
+        h.about_icon = self.add(st, |_| "", WINDOW_STYLE(SS_ICON | SS_REALSIZECONTROL), none, 0, Kind::Label);
+        unsafe {
+            if let Ok(icon) = LoadImageW(Some(hinstance()), PCWSTR(1 as *const u16), IMAGE_ICON, 96, 96, LR_DEFAULTCOLOR) {
+                SendMessageW(h.about_icon, STM_SETICON, Some(WPARAM(icon.0 as usize)), None);
+            }
+        }
         h.about_name = self.add(st, |_| "Chup", s, none, 0, Kind::Title);
         h.about_ver = self.add(st, |_| "", s, none, 0, Kind::Label);
+        h.about_build = self.add(st, |_| "", s, none, 0, Kind::Hint);
         h.about_desc = self.add(
             st,
             |t| t.st_about_desc,
@@ -726,7 +752,13 @@ impl Settings {
             Kind::Hint,
         );
         h.about_web = self.add(bt, |t| t.st_about_web, button, none, ID_ABOUT_WEB, Kind::Control);
+        h.about_news = self.add(bt, |t| t.st_about_whats_new, button, none, ID_ABOUT_NEWS, Kind::Control);
+        h.about_issues = self.add(bt, |t| t.st_about_issues, button, none, ID_ABOUT_ISSUES, Kind::Control);
         h.about_log = self.add(bt, |t| t.st_about_log, button, none, ID_ABOUT_LOG, Kind::Control);
+        h.sec_upd = self.add(st, |t| t.st_sec_update, s, none, 0, Kind::Section);
+        h.upd_auto = self.add(bt, |t| t.st_update_auto, check, none, ID_UPD_AUTO, Kind::Control);
+        h.upd_last = self.add(st, |_| "", s, none, 0, Kind::Hint);
+        h.upd_check = self.add(bt, |t| t.st_update_check, button, none, ID_UPD_CHECK, Kind::Control);
         h.sec_about_ocr = self.add(st, |t| t.st_about_sec_ocr, s, none, 0, Kind::Section);
         h.about_engine = self.add(st, |_| "", s, none, 0, Kind::Hint);
         h.about_notice =
@@ -979,14 +1011,29 @@ impl Settings {
                     l.end_card();
                 }
                 Page::About => {
+                    // Đầu trang: icon 48 + tên, phiên bản, dòng build nhỏ; rồi mô tả và các liên kết.
                     l.card(None);
-                    l.full(h.about_name, 36.0);
-                    l.caption(h.about_ver);
-                    l.y += 2.0;
+                    let (ix, iw) = l.inner();
+                    let top = l.y;
+                    let tx = ix + 60.0;
+                    l.mv(h.about_icon, ix, top, 48.0, 48.0);
+                    l.mv(h.about_name, tx, top - 4.0, iw - 60.0, 30.0);
+                    l.mv(h.about_ver, tx, top + 26.0, iw - 60.0, 20.0);
+                    l.y = top + 56.0;
+                    l.text(h.about_build, 0.0);
                     l.text(h.about_desc, 0.0);
+                    let mut x = ix;
+                    for (b, w) in [(h.about_web, 104.0), (h.about_news, 92.0), (h.about_issues, 124.0), (h.about_log, 128.0)] {
+                        l.mv(b, x, l.y, w, 28.0);
+                        x += w + 8.0;
+                    }
+                    l.y += 28.0 + ROW_GAP;
+                    l.end_card();
+                    l.card(Some(h.sec_upd));
+                    l.check(h.upd_auto, 0.0);
+                    l.text(h.upd_last, 20.0);
                     let (ix, _) = l.inner();
-                    l.mv(h.about_web, ix, l.y, 124.0, 28.0);
-                    l.mv(h.about_log, ix + 132.0, l.y, 140.0, 28.0);
+                    l.mv(h.upd_check, ix, l.y, 170.0, 28.0);
                     l.y += 28.0 + ROW_GAP;
                     l.end_card();
                     l.card(Some(h.sec_about_ocr));
@@ -1077,7 +1124,9 @@ impl Settings {
         set_checked(h.copy, c.copy_to_clipboard);
         set_checked(h.hk3_on, c.hotkeys.freeze_enabled);
         set_combo(h.ui_lang, UI_LANGS.iter().position(|(l, _)| *l == c.ui_language).unwrap_or(0) as i32);
-        set_text(h.about_ver, &version_text());
+        set_text(h.about_ver, &fill(t.st_about_version, &[&env!("CARGO_PKG_VERSION")]));
+        set_text(h.about_build, &build_text());
+        set_text(h.upd_last, &chup_core::update::last_check_text(c.update.last_check));
         unsafe {
             let _ = EnableWindow(h.hk3_on, !c.hotkeys.freeze.is_empty());
         }
@@ -1096,6 +1145,7 @@ impl Settings {
         set_combo(h.pv_size, ((c.preview.size as i32 - 20) / 20).clamp(0, 3));
         set_combo(h.ocr_lang, if c.ocr.language == OcrLanguage::Vi { 1 } else { 0 });
         set_checked(h.ocr_auto, c.ocr.auto_preview);
+        set_checked(h.upd_auto, c.update.auto_check);
         set_checked(h.auto_on, c.auto_detect.enabled);
         set_checked(h.auto_img, c.auto_detect.image_edges);
         unsafe {
@@ -1433,6 +1483,10 @@ impl Handler for Settings {
                     (ID_PICK, BN_CLICKED) => self.pick_folder(),
                     (ID_OPEN, BN_CLICKED) => emit(Action::OpenSaveDir),
                     (ID_ABOUT_WEB, BN_CLICKED) => emit(Action::Open(PathBuf::from(PROJECT_URL))),
+                    (ID_ABOUT_NEWS, BN_CLICKED) => emit(Action::Open(PathBuf::from(format!("{PROJECT_URL}/releases")))),
+                    (ID_ABOUT_ISSUES, BN_CLICKED) => emit(Action::Open(PathBuf::from(format!("{PROJECT_URL}/issues")))),
+                    (ID_UPD_CHECK, BN_CLICKED) => emit(Action::CheckUpdateNow),
+                    (ID_UPD_AUTO, BN_CLICKED) => self.patch(json!({ "update": { "autoCheck": checked(h.upd_auto) } })),
                     (ID_ABOUT_LOG | ID_ABOUT_NOTICE, BN_CLICKED) => {
                         let target = self.st.borrow().view.as_ref().and_then(|v| {
                             if id == ID_ABOUT_LOG {

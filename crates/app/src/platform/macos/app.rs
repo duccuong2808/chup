@@ -18,6 +18,7 @@ use super::{
     autoselect,
     capture as sck,
     frame::Frame,
+    gfx,
     hotkeys::{Hotkeys, Kind},
     overlay::Overlay,
     preview::Preview,
@@ -25,6 +26,7 @@ use super::{
     stack::StackWin,
     toolbar::Toolbar,
     tray::Tray,
+    update, updater,
     util::{self, cursor_pos},
     vision,
     win::{self, emit, Timer},
@@ -37,6 +39,10 @@ pub enum Action {
     FrameMoved(Rect),
     ToggleFade,
     CloseRegion,
+    /// Frame được / mất bàn phím (chup-48i).
+    FrameFocus(bool),
+    /// Phím Enter / Esc gửi tới frame.
+    FrameKey(chup_core::model::FrameKey),
     Capture,
     Grabbed(Result<RgbaImage, String>),
     /// Nút [T] trên toolbar Live.
@@ -85,6 +91,18 @@ pub enum Action {
     PreviewResized { rect: Rect, img: (u32, u32), zoom: f64 },
     PreviewOcr(std::path::PathBuf),
     OcrDone(u32, Result<chup_core::ocr::TextLayout, String>),
+    /// Rảnh sau khi khởi động: cho Vision chuẩn bị model (chup-27e).
+    OcrWarmUp,
+    /// Hẹn giờ tự cập nhật (SPEC 18).
+    UpdateTick,
+    /// Nút "Kiểm tra cập nhật" trong Cài đặt.
+    CheckUpdateNow,
+    /// Kết quả hỏi GitHub (`manual`: người dùng bấm nút).
+    UpdateChecked(Result<chup_core::update::Update, String>, bool),
+    /// Người dùng đồng ý cập nhật: tải và thay Chup.app.
+    UpdateAccepted(chup_core::update::Update),
+    /// Đã thay Chup.app (đường dẫn bundle để mở lại), hoặc lỗi.
+    UpdateReady(Result<std::path::PathBuf, String>),
     CopyText(String),
     /// Chưa có quyền Screen Recording: hỏi người dùng (sau khi App xử lý xong Action hiện tại).
     AskPermission,
@@ -182,6 +200,8 @@ impl App {
             Action::FrameMoved(outer) => self.model.frame_moved(outer),
             Action::ToggleFade => self.model.toggle_fade(),
             Action::CloseRegion => self.model.close_region(),
+            Action::FrameFocus(on) => self.model.frame_focus(on),
+            Action::FrameKey(k) => self.model.frame_key(k),
             Action::Capture => self.model.request_capture(),
             Action::Grabbed(res) => self.on_grabbed(res),
             Action::CaptureText => self.model.request_capture_text(),
@@ -377,6 +397,28 @@ impl App {
                 _ => self.model.ocr_request(OcrSource::Preview(path)),
             },
             Action::OcrDone(id, r) => self.model.ocr_done(id, r),
+            Action::OcrWarmUp => {
+                self.ocr_warm_up();
+                vec![]
+            }
+            Action::UpdateTick => self.model.update_tick(update::now_secs()),
+            Action::CheckUpdateNow => self.model.update_check_now(),
+            Action::UpdateChecked(r, manual) => self.model.update_checked(r, manual, update::now_secs()),
+            Action::UpdateAccepted(u) => {
+                let text = fill(t().upd_downloading, &[&u.version.to_string()]);
+                updater::download_and_install(u);
+                vec![Effect::Toast(Toast::info(text))]
+            }
+            Action::UpdateReady(r) => match r.and_then(|app| updater::relaunch(&app)) {
+                Ok(()) => {
+                    emit(Action::Quit);
+                    vec![]
+                }
+                Err(e) => {
+                    log::error!("update: {e}");
+                    vec![Effect::Toast(Toast::error(t().upd_failed))]
+                }
+            },
             Action::CopyText(text) => vec![Effect::CopyText(text)],
             Action::AskPermission => {
                 // Ngoài lúc App bận: hộp thoại modal chạy vòng lặp riêng, Action vẫn được xử lý.
@@ -466,10 +508,11 @@ impl App {
                 }
                 Effect::UpdateFrameMode => self.frame.set_faded(self.model.mode == FrameMode::Faded),
                 Effect::HideFrame => self.frame.hide(),
+                Effect::FocusFrame => self.frame.take_keys(),
                 Effect::LayoutToolbar => {
                     if let Some(r) = self.model.toolbar_rect() {
                         let faded = self.model.mode == FrameMode::Faded;
-                        self.toolbar.show(r, self.model.region_scale(), faded);
+                        self.toolbar.show(r, self.model.region_scale(), faded, self.model.enter_captures());
                     }
                 }
                 Effect::HideToolbar => self.toolbar.hide(),
@@ -539,6 +582,9 @@ impl App {
                     self.apply(fx);
                 }
                 Effect::PreviewText(path, text) => self.preview.set_text(&path, text),
+                Effect::CheckUpdate { manual } => updater::check(manual),
+                // Hộp thoại modal: chạy ngoài lúc App bận.
+                Effect::AskUpdate(u) => std::mem::forget(win::after(0, move || updater::ask(u))),
             }
         }
     }
@@ -871,13 +917,26 @@ impl App {
         self.apply(fx);
     }
 
+    /// Ảnh nhỏ có chữ (Vision chỉ nạp model nhận dạng khi tìm thấy vùng chữ) gửi cho worker làm nóng.
+    fn ocr_warm_up(&self) {
+        if self.model.ocr_busy.is_some() {
+            return;
+        }
+        let white = chup_ui::Color::WHITE;
+        let black = chup_ui::Color::rgba(0, 0, 0, 1.0);
+        let img = gfx::pill("Chụp màn hình Chup 2026", 28.0, 24.0, 16.0, 0.0, white, black).and_then(|s| gfx::to_rgba_image(&s));
+        if let Some(img) = img {
+            self.ocr.warm_up(self.model.config.ocr.language, img);
+        }
+    }
+
     fn start_ocr(&mut self, job: OcrJob) {
         let img = match &job.source {
             OcrSource::Preview(p) => self.preview.image_of(p).or_else(|| image::open(p).ok().map(|i| i.to_rgba8())),
             OcrSource::Image { .. } => self.ocr_image.take(),
         };
         match img {
-            Some(img) => self.ocr.submit(vision::Job { id: job.id, lang: job.lang, img }),
+            Some(img) => self.ocr.submit(vision::Job { id: job.id, lang: job.lang, img, warm: false }),
             None => {
                 let fx = self.model.ocr_done(job.id, Err(t().ocr_read_image_failed.into()));
                 self.apply(fx);

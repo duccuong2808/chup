@@ -18,7 +18,7 @@ use chup_core::{
     selection::Grip,
 };
 use chup_ui::{
-    preview::{self as ui_preview, Btn, EDGE, PILL_MS, TEXT_PAD},
+    preview::{self as ui_preview, Btn, EDGE, PILL_MS, SPIN_MS, TEXT_PAD},
     Canvas as _,
 };
 use image::RgbaImage;
@@ -67,6 +67,10 @@ struct State {
     /// Đang kéo nền để di chuyển cửa sổ: rect cửa sổ lúc bấm, con trỏ lúc bấm.
     moving: Option<(Rect, (i32, i32))>,
     ocr_busy: Option<PathBuf>,
+    /// Vòng "bận" của nút [T]: bước quay, lúc bắt đầu OCR (nhãn "lần đầu có thể lâu"), timer quay.
+    spin: u32,
+    busy_since: Option<std::time::Instant>,
+    spin_timer: Option<Timer>,
     text: Option<Arc<TextLayout>>,
     sel: Option<(Pos, Pos)>,
     text_press: Option<(Pos, (i32, i32))>,
@@ -381,7 +385,10 @@ impl Preview {
             let Some(out) = Surface::new(sw, sh) else { return };
             if let Some(c) = Canvas::new(&out) {
                 let theme = gfx::theme();
-                let pill_font = st.pill.as_ref().and_then(|_| Font::from_spec(ui_preview::pill_font(k)));
+                let busy = (st.ocr_busy.as_ref() == Some(&st.path)).then_some(st.spin);
+                let busy_text = busy.and(st.busy_since).map(|t0| ui_preview::busy_label(t0.elapsed().as_millis()));
+                let label = st.pill.as_deref().or(busy_text);
+                let pill_font = label.and_then(|_| Font::from_spec(ui_preview::pill_font(k)));
                 let top = ui_preview::Top {
                     k,
                     m,
@@ -389,9 +396,9 @@ impl Preview {
                     sel: &sel,
                     bar: st.hovering,
                     hover: st.hover,
-                    busy: st.ocr_busy.as_ref() == Some(&st.path),
+                    busy,
                     topmost: st.topmost,
-                    pill: st.pill.as_deref().zip(pill_font.as_ref()),
+                    pill: label.zip(pill_font.as_ref()),
                 };
                 c.begin(Color::CLEAR);
                 ui_preview::paint_border(&c, &theme, v, m, k);
@@ -558,16 +565,51 @@ impl Preview {
         self.paint();
     }
 
+    /// File đang được OCR (`None` = không OCR gì): nút [T] của đúng file đó quay vòng "bận", kèm nhãn
+    /// "Đang nhận diện chữ…" (chup-27e: lần đầu Vision chuẩn bị model gần 1 phút).
     pub fn set_ocr_busy(&self, busy: Option<PathBuf>) {
         let changed = {
             let mut st = self.st.borrow_mut();
             let changed = st.ocr_busy != busy;
+            if changed {
+                st.busy_since = busy.as_ref().map(|_| std::time::Instant::now());
+                st.spin = 0;
+                if busy.is_none() {
+                    st.spin_timer = None;
+                }
+            }
             st.ocr_busy = busy;
             changed
         };
-        if changed && self.open.get() {
+        if !changed {
+            return;
+        }
+        if self.st.borrow().ocr_busy.is_some() {
+            self.spin_later();
+        }
+        if self.open.get() {
             self.paint();
         }
+    }
+
+    /// Hẹn bước quay tiếp theo của vòng "bận". Dừng khi hết bận.
+    fn spin_later(&self) {
+        let me = self.me.borrow().clone();
+        let t = win::after(SPIN_MS, move || {
+            let Some(p) = me.upgrade() else { return };
+            let busy = {
+                let mut st = p.st.borrow_mut();
+                st.spin = st.spin.wrapping_add(1);
+                st.ocr_busy.is_some()
+            };
+            if busy {
+                if p.open.get() {
+                    p.paint();
+                }
+                p.spin_later();
+            }
+        });
+        self.st.borrow_mut().spin_timer = Some(t);
     }
 
     pub fn set_text(&self, path: &Path, text: Arc<TextLayout>) {

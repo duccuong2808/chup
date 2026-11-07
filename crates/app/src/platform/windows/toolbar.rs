@@ -35,6 +35,8 @@ struct State {
     rect: Rect,
     scale: f64,
     faded: bool,
+    /// Enter đang chụp được (frame giữ bàn phím): nút Chụp hiện "↵".
+    enter: bool,
     visible: bool,
     hover: Option<Btn>,
     pressed: Option<Btn>,
@@ -74,7 +76,7 @@ impl Toolbar {
     }
 
     /// Đặt toolbar tại `rect` (physical) và hiện, không lấy focus.
-    pub fn show(&self, rect: Rect, scale: f64, faded: bool) {
+    pub fn show(&self, rect: Rect, scale: f64, faded: bool, enter: bool) {
         let was_visible = {
             let mut st = self.st.borrow_mut();
             let resized = (st.rect.w, st.rect.h) != (rect.w, rect.h) || st.scale != scale;
@@ -85,6 +87,7 @@ impl Toolbar {
             st.rect = rect;
             st.scale = scale;
             st.faded = faded;
+            st.enter = enter;
             std::mem::replace(&mut st.visible, true)
         };
         self.render();
@@ -135,8 +138,8 @@ impl Toolbar {
         let k = st.scale as f32;
         let theme = gfx::theme();
         let font = Font::new(13.0 * k, false, Align::Leading, false);
-        let faded = st.faded;
-        let items = live_items(faded);
+        let (faded, enter) = (st.faded, st.enter);
+        let items = live_items(faded, enter);
         let idx = |b: Option<Btn>| b.and_then(|b| LIVE_BUTTONS.iter().position(|x| *x == b));
         let (hover, pressed, inside) = (idx(st.hover), idx(st.pressed), st.inside);
         let Some(c) = st.canvas.as_ref() else { return };

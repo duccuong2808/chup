@@ -196,6 +196,20 @@ strings! {
     ocr_pack_broken: "Gói OCR tiếng Việt bị lỗi. Hãy xoá gói rồi tải lại trong Cài đặt.",
         "The Vietnamese OCR files are damaged. Remove and download them again in Settings.";
     ocr_read_image_failed: "Không đọc được ảnh để OCR", "Couldn't read the image for OCR";
+    ocr_running: "Đang nhận diện chữ…", "Recognizing text…";
+    upd_title: "Cập nhật Chup", "Update Chup";
+    upd_ask: "Đã có Chup {} (đang dùng {}). Cập nhật bây giờ?\n\nChup sẽ tự đóng, cài bản mới rồi mở lại.",
+        "Chup {} is available (you have {}). Update now?\n\nChup will close, install the new version and reopen.";
+    upd_ask_page: "Đã có Chup {} (đang dùng {}). Mở trang tải về?", "Chup {} is available (you have {}). Open the download page?";
+    upd_now: "Cập nhật", "Update";
+    upd_open_page: "Mở trang tải", "Open download page";
+    upd_later: "Để sau", "Later";
+    upd_latest: "Chup {} là bản mới nhất.", "Chup {} is up to date.";
+    upd_check_failed: "Không kiểm tra được bản mới. Hãy thử lại sau.", "Couldn't check for updates. Try again later.";
+    upd_checking: "Đang kiểm tra bản mới…", "Checking for updates…";
+    upd_downloading: "Đang tải Chup {}…", "Downloading Chup {}…";
+    upd_failed: "Không cập nhật được Chup. Hãy tải bản mới từ trang dự án.", "Couldn't update Chup. Download the new version from the project page.";
+    ocr_running_slow: "Đang nhận diện chữ… Lần đầu có thể mất khoảng 1 phút", "Recognizing text… The first time can take about a minute";
     dl_title: "Chup – OCR tiếng Việt", "Chup – Vietnamese OCR";
     dl_confirm: "OCR tiếng Việt cần tải thêm {} từ GitHub.\n\nTải về bây giờ?",
         "Vietnamese OCR needs to download {} from GitHub.\n\nDownload now?";
@@ -265,6 +279,7 @@ strings! {
     hint_freeze_failed: "Không chụp được màn hình này · Esc để huỷ", "Couldn't capture this screen · Esc to cancel";
     hint_ocr: "Chụp text · Kéo để chọn vùng có chữ · Esc để huỷ", "Capture text · Drag over the text · Esc to cancel";
     btn_capture: "Chụp", "Capture";
+    btn_capture_enter: "Chụp ↵", "Capture ↵";
     btn_fade: "Mờ", "Fade";
     btn_save: "Lưu", "Save";
     btn_text: "Chữ", "Text";
@@ -373,6 +388,13 @@ strings! {
     st_about_web: "Trang dự án", "Project page";
     st_about_log: "Mở thư mục log", "Open log folder";
     st_about_sec_ocr: "OCR tiếng Việt", "Vietnamese OCR";
+    st_sec_update: "Cập nhật", "Updates";
+    st_update_auto: "Tự kiểm tra bản mới mỗi ngày (hỏi trước khi cài)", "Check for new versions daily (asks before installing)";
+    st_update_check: "Kiểm tra cập nhật", "Check for updates";
+    st_update_last: "Kiểm tra lần cuối: {}.", "Last checked: {}.";
+    st_update_never: "Chưa kiểm tra lần nào.", "Never checked.";
+    st_about_whats_new: "Có gì mới", "What's new";
+    st_about_issues: "Báo lỗi, góp ý", "Report an issue";
     st_about_notice: "Giấy phép Tesseract và thư viện", "Tesseract and library licenses";
     st_about_tesseract: "Tesseract, giấy phép Apache-2.0.", "Tesseract, Apache-2.0 license.";
     st_about_engine_installed: "Engine: chup-ocr.exe cài cùng Chup (bộ cài Full).", "Engine: chup-ocr.exe installed with Chup (Full installer).";

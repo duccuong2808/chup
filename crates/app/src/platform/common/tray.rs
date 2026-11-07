@@ -38,8 +38,15 @@ pub struct Tray {
     waiting_on: Cell<bool>,
 }
 
+/// macOS: icon menu bar là template image (chỉ dùng alpha, macOS tự tô màu theo menu bar sáng/tối và lúc được
+/// chọn), không dùng icon app có màu. Windows: icon app.
+const TEMPLATE: bool = cfg!(target_os = "macos");
+
 /// Icon thường và icon mờ (đang đếm ngược hẹn giờ Freeze).
 fn app_icons() -> Option<(Icon, Icon)> {
+    #[cfg(target_os = "macos")]
+    let png = include_bytes!("../../../icons/tray-template.png");
+    #[cfg(not(target_os = "macos"))]
     let png = include_bytes!("../../../icons/32x32.png");
     let img = image::load_from_memory(png).ok()?.to_rgba8();
     let (w, h) = img.dimensions();
@@ -113,7 +120,7 @@ impl Tray {
             .with_menu_on_left_click(cfg!(target_os = "macos"));
         let (normal, waiting) = app_icons().unzip();
         if let Some(i) = normal.clone() {
-            b = b.with_icon(i);
+            b = b.with_icon(i).with_icon_as_template(TEMPLATE);
         }
         let icon = b.build().map_err(|e| fill(t().err_tray, &[&e]))?;
         Ok(Tray {
@@ -176,7 +183,8 @@ impl Tray {
     /// Đang đếm ngược "Chụp đóng băng sau 3 giây": đổi icon và tooltip, không hiện gì lên màn hình (SPEC 14.4).
     pub fn set_waiting(&self, on: bool) {
         self.waiting_on.set(on);
-        let _ = self.icon.set_icon(if on { self.waiting.clone() } else { self.normal.clone() });
+        let icon = if on { self.waiting.clone() } else { self.normal.clone() };
+        let _ = self.icon.set_icon_with_as_template(icon, TEMPLATE);
         if on {
             let _ = self.icon.set_tooltip(Some(t().tray_waiting));
         } else {

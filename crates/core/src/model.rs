@@ -30,6 +30,13 @@ pub enum FrameMode {
     Faded,
 }
 
+/// Phím frame nhận khi đang giữ bàn phím (chup-48i).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FrameKey {
+    Enter,
+    Escape,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToastKind {
     Info,
@@ -116,6 +123,8 @@ pub enum Effect {
     HideOverlays,
     /// Hiện frame quanh `Model::frame_outer()` theo `Model::mode`.
     ShowFrame,
+    /// Vùng vừa chọn bằng chuột: frame nhận bàn phím (Enter chụp, Esc đóng vùng; chup-48i). Không activate app.
+    FocusFrame,
     /// Mode của frame đổi (Normal <-> Faded): vẽ lại, đổi click-through.
     UpdateFrameMode,
     HideFrame,
@@ -160,6 +169,10 @@ pub enum Effect {
     AskOcrDownload,
     /// Chữ nhận diện được của ảnh Preview này (để chọn chữ, SPEC 17.2).
     PreviewText(PathBuf, Arc<TextLayout>),
+    /// Hỏi GitHub bản mới nhất ở nền rồi báo `Model::update_checked` (SPEC 18). `manual`: người dùng bấm nút.
+    CheckUpdate { manual: bool },
+    /// Có bản mới: hỏi người dùng (Cập nhật / Để sau) rồi lớp platform tải, kiểm tra và cài.
+    AskUpdate(crate::update::Update),
 }
 
 pub struct Paths {
@@ -178,6 +191,9 @@ pub struct Model {
     pub mode: FrameMode,
     /// Lề physical của cửa sổ frame quanh region (chứa viền và handle).
     pub frame_margin: i32,
+    /// Frame đang giữ bàn phím (là cửa sổ nhận phím): Enter / Esc thuộc về Chup. Người dùng bấm sang app khác thì
+    /// mất, Enter lại thuộc về app đó (chup-48i, SPEC 5.1).
+    pub frame_keys: bool,
     pub stack: Stack,
     /// Lỗi đăng ký hotkey: tên hotkey (`selectRegion`, `capture`) -> câu báo lỗi.
     pub hotkey_errors: BTreeMap<String, String>,
@@ -200,6 +216,10 @@ pub struct Model {
     ocr_cache: Option<(PathBuf, OcrLanguage, Arc<TextLayout>)>,
     /// File Preview đang mở (ảnh đã giải mã xong): để nhận diện nền và gửi chữ cho Preview.
     preview_open: Option<PathBuf>,
+    /// Đang hỏi GitHub (không gửi yêu cầu thứ hai).
+    update_checking: bool,
+    /// Bản mới tìm thấy lúc người dùng đang bận (chọn vùng, Freeze, Preview): hỏi khi rảnh.
+    update_pending: Option<crate::update::Update>,
 }
 
 impl Model {
@@ -213,6 +233,7 @@ impl Model {
             last_region: None,
             mode: FrameMode::Hidden,
             frame_margin: 0,
+            frame_keys: false,
             stack: Stack::default(),
             hotkey_errors: BTreeMap::new(),
             capture_exclusion_ok: true,
@@ -226,6 +247,8 @@ impl Model {
             ocr_pending: None,
             ocr_cache: None,
             preview_open: None,
+            update_checking: false,
+            update_pending: None,
         }
     }
 
@@ -260,8 +283,39 @@ impl Model {
         let mut fx = vec![Effect::HideOverlays];
         if rect.w >= 4 && rect.h >= 4 {
             fx.extend(self.open_region(rect));
+            // Người dùng vừa thả chuột trên overlay (Chup đang giữ bàn phím): frame nhận tiếp để Enter chụp được.
+            fx.push(Effect::FocusFrame);
         }
         fx
+    }
+
+    /// Frame được / mất bàn phím (lớp platform báo theo sự kiện của cửa sổ). Toolbar vẽ lại gợi ý "↵".
+    pub fn frame_focus(&mut self, on: bool) -> Vec<Effect> {
+        let on = on && self.mode != FrameMode::Hidden;
+        if self.frame_keys == on {
+            return vec![];
+        }
+        self.frame_keys = on;
+        if self.mode == FrameMode::Hidden {
+            return vec![];
+        }
+        vec![Effect::LayoutToolbar]
+    }
+
+    /// Có gợi ý "Enter để chụp" trên toolbar không: frame giữ phím và không Faded.
+    pub fn enter_captures(&self) -> bool {
+        self.frame_keys && self.mode == FrameMode::Normal
+    }
+
+    /// Phím gửi tới frame (chỉ tới khi frame giữ bàn phím). Faded: người dùng đang làm việc ở app bên dưới, bỏ qua.
+    pub fn frame_key(&mut self, key: FrameKey) -> Vec<Effect> {
+        if !self.enter_captures() {
+            return vec![];
+        }
+        match key {
+            FrameKey::Enter => self.request_capture(),
+            FrameKey::Escape => self.close_region(),
+        }
     }
 
     fn open_region(&mut self, rect: Rect) -> Vec<Effect> {
@@ -307,6 +361,7 @@ impl Model {
         }
         self.region = None;
         self.mode = FrameMode::Hidden;
+        self.frame_keys = false;
         vec![Effect::HideFrame, Effect::HideToolbar]
     }
 
@@ -752,6 +807,75 @@ impl Model {
         }
     }
 
+    // ---------- tự cập nhật (SPEC 18) ----------
+
+    /// Không chọn vùng, không có frame, Freeze hay Preview: hỏi cập nhật lúc này không làm phiền.
+    fn idle_for_update(&self) -> bool {
+        !self.selecting && self.mode == FrameMode::Hidden && self.freeze.is_none() && self.preview_open.is_none()
+    }
+
+    /// Hẹn giờ định kỳ (`now`: giây Unix): hỏi bản mới đang chờ nếu đã rảnh; tới hạn thì tự kiểm tra.
+    pub fn update_tick(&mut self, now: u64) -> Vec<Effect> {
+        if self.update_pending.is_some() {
+            if !self.idle_for_update() {
+                return vec![];
+            }
+            return self.update_pending.take().map(Effect::AskUpdate).into_iter().collect();
+        }
+        let u = &self.config.update;
+        if !u.auto_check || self.update_checking || !crate::update::check_due(u.last_check, now) {
+            return vec![];
+        }
+        self.update_checking = true;
+        vec![Effect::CheckUpdate { manual: false }]
+    }
+
+    /// Nút "Kiểm tra cập nhật" trong Cài đặt.
+    pub fn update_check_now(&mut self) -> Vec<Effect> {
+        if self.update_checking {
+            return vec![Effect::Toast(Toast::info(t().upd_checking))];
+        }
+        self.update_checking = true;
+        self.update_pending = None;
+        vec![Effect::CheckUpdate { manual: true }, Effect::Toast(Toast::info(t().upd_checking))]
+    }
+
+    /// Kết quả kiểm tra. Ghi lại lúc kiểm tra (cả khi lỗi mạng: thử lại sau 1 ngày, không dồn dập).
+    pub fn update_checked(&mut self, result: Result<crate::update::Update, String>, manual: bool, now: u64) -> Vec<Effect> {
+        self.update_checking = false;
+        let mut fx = vec![];
+        let mut next = self.config.clone();
+        next.update.last_check = now;
+        match self.commit_config(next) {
+            Ok(f) => fx.extend(f),
+            Err(e) => log::warn!("update: không ghi được config: {e}"),
+        }
+        match result {
+            Err(e) => {
+                log::warn!("update: {e}");
+                if manual {
+                    fx.push(Effect::Toast(Toast::error(t().upd_check_failed)));
+                }
+            }
+            Ok(u) if !u.is_newer() => {
+                log::info!("update: bản mới nhất là {}, đang dùng {}", u.version, crate::update::Version::current());
+                if manual {
+                    let cur = crate::update::Version::current().to_string();
+                    fx.push(Effect::Toast(Toast::info(fill(t().upd_latest, &[&cur]))));
+                }
+            }
+            Ok(u) => {
+                log::info!("update: có bản {} (tự cài: {})", u.version, u.pack.is_some());
+                if manual || self.idle_for_update() {
+                    fx.push(Effect::AskUpdate(u));
+                } else {
+                    self.update_pending = Some(u);
+                }
+            }
+        }
+        fx
+    }
+
     // ---------- màn hình (SPEC 7) ----------
 
     pub fn set_monitors(&mut self, mons: Vec<MonitorInfo>) -> Vec<Effect> {
@@ -841,12 +965,103 @@ mod tests {
         assert_eq!(m.start_selection(), vec![Effect::ShowOverlays]);
         assert!(m.start_selection().is_empty(), "đang chọn thì bỏ qua");
         let fx = m.select_region(Rect::new(2000, 100, 400, 300));
-        assert_eq!(fx, vec![Effect::HideOverlays, Effect::ShowFrame, Effect::LayoutToolbar]);
+        assert_eq!(fx, vec![Effect::HideOverlays, Effect::ShowFrame, Effect::LayoutToolbar, Effect::FocusFrame]);
         assert_eq!(m.frame_margin, 18, "màn hình 150%");
         assert_eq!(m.frame_outer(), Some(Rect::new(1982, 82, 436, 336)));
         let tb = m.toolbar_rect().unwrap();
         assert_eq!((tb.w, tb.h), (378, 66));
         assert!(tb.y >= 400 + 18, "toolbar nằm dưới frame");
+    }
+
+    #[test]
+    fn enter_captures_only_while_frame_has_keys() {
+        let mut m = model();
+        assert!(m.frame_focus(true).is_empty(), "chưa có vùng: bỏ qua");
+        assert!(!m.frame_keys);
+        m.select_region(Rect::new(100, 100, 200, 100));
+        assert!(m.frame_key(FrameKey::Enter).is_empty(), "frame chưa báo nhận phím");
+        assert_eq!(m.frame_focus(true), vec![Effect::LayoutToolbar], "toolbar vẽ gợi ý Enter");
+        assert!(m.enter_captures());
+        assert!(m.frame_focus(true).is_empty(), "không đổi thì không làm gì");
+        assert!(matches!(m.frame_key(FrameKey::Enter)[0], Effect::StartCapture(j) if j.rect == Rect::new(100, 100, 200, 100)));
+    }
+
+    #[test]
+    fn enter_belongs_to_other_app_after_focus_lost() {
+        let mut m = model();
+        m.select_region(Rect::new(100, 100, 200, 100));
+        m.frame_focus(true);
+        // Người dùng bấm sang Notepad / TextEdit.
+        assert_eq!(m.frame_focus(false), vec![Effect::LayoutToolbar]);
+        assert!(!m.enter_captures());
+        assert!(m.frame_key(FrameKey::Enter).is_empty());
+    }
+
+    #[test]
+    fn faded_ignores_enter_and_escape_closes() {
+        let mut m = model();
+        m.select_region(Rect::new(100, 100, 200, 100));
+        m.frame_focus(true);
+        m.toggle_fade();
+        assert!(!m.enter_captures());
+        assert!(m.frame_key(FrameKey::Enter).is_empty());
+        assert!(m.frame_key(FrameKey::Escape).is_empty());
+        m.toggle_fade();
+        assert_eq!(m.frame_key(FrameKey::Escape), vec![Effect::HideFrame, Effect::HideToolbar]);
+        assert!(!m.frame_keys, "đóng vùng thì hết giữ phím");
+        assert!(m.frame_focus(false).is_empty(), "frame ẩn báo mất focus: không làm gì");
+    }
+
+    fn new_update(v: crate::update::Version) -> crate::update::Update {
+        crate::update::Update { version: v, page: "https://example/r".into(), pack: None }
+    }
+
+    #[test]
+    fn update_checks_once_a_day_and_records_time() {
+        let mut m = model();
+        let day = crate::update::CHECK_EVERY_SECS;
+        assert_eq!(m.update_tick(day * 10), vec![Effect::CheckUpdate { manual: false }]);
+        assert!(m.update_tick(day * 10).is_empty(), "đang kiểm tra");
+        let fx = m.update_checked(Err("mạng".into()), false, day * 10);
+        assert!(!fx.iter().any(|e| matches!(e, Effect::Toast(_))), "tự kiểm tra lỗi: không làm phiền");
+        assert_eq!(m.config.update.last_check, day * 10);
+        assert!(m.update_tick(day * 10 + 3600).is_empty(), "chưa tới hạn");
+        assert_eq!(m.update_tick(day * 11).len(), 1);
+        m.config.update.auto_check = false;
+        m.update_checking = false;
+        assert!(m.update_tick(day * 20).is_empty(), "tắt tự kiểm tra");
+    }
+
+    #[test]
+    fn update_found_while_busy_is_asked_when_idle() {
+        let mut m = model();
+        m.update_tick(1);
+        m.select_region(Rect::new(100, 100, 200, 100));
+        let u = new_update(crate::update::Version(999, 0, 0));
+        let fx = m.update_checked(Ok(u.clone()), false, 1);
+        assert!(!fx.iter().any(|e| matches!(e, Effect::AskUpdate(_))), "đang có frame: chưa hỏi");
+        assert!(m.update_tick(2).is_empty());
+        m.close_region();
+        assert_eq!(m.update_tick(3), vec![Effect::AskUpdate(u)]);
+        assert!(m.update_tick(4).is_empty(), "hỏi một lần");
+    }
+
+    #[test]
+    fn manual_check_reports_result() {
+        let mut m = model();
+        let fx = m.update_check_now();
+        assert_eq!(fx[0], Effect::CheckUpdate { manual: true });
+        assert!(matches!(&m.update_check_now()[0], Effect::Toast(_)), "đang kiểm tra");
+        let cur = crate::update::Version::current();
+        let fx = m.update_checked(Ok(new_update(cur)), true, 5);
+        assert!(fx.contains(&Effect::Toast(Toast::info(fill(t().upd_latest, &[&cur.to_string()])))));
+        m.update_check_now();
+        let fx = m.update_checked(Err("x".into()), true, 6);
+        assert!(fx.contains(&Effect::Toast(Toast::error(t().upd_check_failed))));
+        m.update_check_now();
+        m.select_region(Rect::new(100, 100, 200, 100));
+        let u = new_update(crate::update::Version(999, 0, 0));
+        assert!(m.update_checked(Ok(u.clone()), true, 7).contains(&Effect::AskUpdate(u)), "bấm tay: hỏi luôn");
     }
 
     #[test]

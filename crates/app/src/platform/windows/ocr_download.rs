@@ -260,7 +260,7 @@ fn non_null(h: *mut core::ffi::c_void, what: &str) -> Result<Inet, String> {
 }
 
 /// Tải HTTPS bằng WinHTTP (có sẵn trong Windows, dùng proxy hệ thống, tự theo redirect).
-struct WinHttp;
+pub(crate) struct WinHttp;
 
 impl Fetch for WinHttp {
     fn get(&mut self, url: &str, on_chunk: &mut dyn FnMut(&[u8]) -> bool) -> Result<(), String> {

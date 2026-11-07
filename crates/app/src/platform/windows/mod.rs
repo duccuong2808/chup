@@ -17,6 +17,9 @@ mod stack;
 mod toolbar;
 #[path = "../common/tray.rs"]
 mod tray;
+#[path = "../common/update.rs"]
+mod update;
+mod updater;
 mod util;
 mod win;
 
@@ -44,7 +47,7 @@ use windows::{
 
 use self::{
     app::{Action, App},
-    win::{emit, take_actions, Handler, WM_APP_ACTION, WM_APP_OCR_DOWNLOAD, WM_APP_SHOW_SETTINGS},
+    win::{emit, take_actions, Handler, WM_APP_ACTION, WM_APP_ASK_UPDATE, WM_APP_OCR_DOWNLOAD, WM_APP_SHOW_SETTINGS},
 };
 
 thread_local! {
@@ -58,6 +61,8 @@ const TIMER_WARM: usize = 3;
 /// Trim working set khi rảnh đủ lâu.
 const TIMER_TRIM: usize = 4;
 const TRIM_AFTER_MS: u32 = 15_000;
+/// Tự cập nhật: xem đã tới hạn kiểm tra / có bản mới chờ hỏi chưa (SPEC 18).
+const TIMER_UPDATE: usize = 7; // 5, 6: app::TIMER_FREEZE*
 
 /// Cửa sổ ẩn của app: nhận Action, broadcast đổi màn hình, yêu cầu mở Cài đặt từ instance khác.
 struct AppWindow;
@@ -71,6 +76,10 @@ impl Handler for AppWindow {
             }
             WM_APP_SHOW_SETTINGS => {
                 emit(Action::OpenSettings);
+                Some(LRESULT(0))
+            }
+            WM_APP_ASK_UPDATE => {
+                updater::ask_pending();
                 Some(LRESULT(0))
             }
             WM_APP_OCR_DOWNLOAD => {
@@ -101,6 +110,10 @@ impl Handler for AppWindow {
                     TIMER_WARM => {
                         gfx::warm_up();
                         arm_trim(hwnd);
+                    }
+                    TIMER_UPDATE => {
+                        emit(Action::UpdateTick);
+                        unsafe { SetTimer(Some(hwnd), TIMER_UPDATE, chup_core::update::TICK_MS, None) };
                     }
                     TIMER_TRIM => APP.with(|cell| {
                         if let Ok(guard) = cell.try_borrow() {
@@ -239,6 +252,7 @@ pub fn run() -> i32 {
     }
     log::info!("sẵn sàng");
     unsafe { SetTimer(Some(app_hwnd), TIMER_WARM, 1000, None) };
+    unsafe { SetTimer(Some(app_hwnd), TIMER_UPDATE, chup_core::update::FIRST_TICK_MS, None) };
 
     let mut msg = MSG::default();
     unsafe {

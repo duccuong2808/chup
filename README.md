@@ -108,8 +108,10 @@ trong `Cargo.toml` trước) tạo thêm GitHub Release dạng draft. Commit ch�
 
 Chup tự kiểm tra Release mới nhất (không draft, không pre-release) mỗi ngày và hỏi người dùng trước khi cài.
 
-1. Đổi `version` trong `Cargo.toml`, push tag `v<ver>`: CI tạo Release draft có 2 bộ cài Windows.
-2. macOS: trên máy dev `scripts/macos-bundle.sh --dmg` (ký bằng chứng chỉ "Chup Self-Signed", cùng chứng chỉ với bản
+1. Đổi `version` trong `Cargo.toml` (qua PR như mọi thay đổi), merge vào `main`. **Tag luôn đặt trên `main`**
+   (commit đã merge), không đặt trên nhánh tính năng: `git tag -a v<ver> origin/main -m "Chup <ver>"` rồi push tag.
+   CI tạo Release draft có 2 bộ cài Windows.
+2. macOS: trên máy dev, checkout đúng tag rồi `scripts/macos-bundle.sh --dmg` (ký bằng chứng chỉ "Chup Self-Signed", cùng chứng chỉ với bản
    người dùng đang có, để quyền Ghi màn hình không mất), rồi `gh release upload v<ver> target/macos/Chup-<ver>.dmg`.
    Không có `.dmg` thì bản macOS chỉ mời mở trang Release.
 3. Phát hành Release (bỏ draft). GitHub tự tính SHA-256 từng file; Chup chỉ cài file có SHA-256 khớp.

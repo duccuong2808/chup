@@ -860,3 +860,47 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-preview-design.md`.
 - [ ] Chọn chữ: kéo trên chữ tiếng Anh và tiếng Việt (một phần từ, nhiều dòng, sau khi zoom), bấm đúp, bấm 3 lần,
   `Shift` + bấm, `Ctrl+A`, `Ctrl+C`,
   menu chuột phải, `Alt` + kéo, `Esc`. Tắt "Tự nhận diện" thì chỉ chọn được sau khi bấm [T].
+
+## 18. Tự cập nhật (chup-22n)
+
+### 18.1 Nguồn bản mới
+
+- GitHub Release mới nhất (đã phát hành, không draft, không pre-release) của repo Chup, qua API
+  `https://api.github.com/repos/duccuong2808/chup/releases/latest`. Tag `v<major>.<minor>.<patch>`; mới hơn
+  `CARGO_PKG_VERSION` mới là bản mới.
+- Bộ cài theo máy: Windows `Chup_<v>_x64-setup.exe` (đang có `chup-ocr.exe` cạnh `chup.exe`, tức cài bản Full) hoặc
+  `Chup_<v>_x64-setup-lite.exe`; macOS `Chup-<v>.dmg`. Chỉ nhận file của Release repo này có SHA-256 (`digest` của API).
+  Thiếu file hay thiếu SHA-256 thì không tự cài, chỉ mời mở trang Release.
+- Logic (đọc API, so phiên bản, chọn file, hạn kiểm tra) ở `core::update`, có test. Tải bộ cài dùng `ocr::pack::Pack`
+  (kiểm tra kích thước + SHA-256, ghi vào thư mục tạm rồi mới đổi tên) vào `<cache>/update/chup-<v>/`; mỗi lần kiểm tra
+  dọn bộ cài cũ.
+
+### 18.2 Khi nào kiểm tra, khi nào hỏi
+
+- Cài đặt > Giới thiệu > Cập nhật: "Tự kiểm tra bản mới mỗi ngày" (mặc định bật, `"update": { "autoCheck": true,
+  "lastCheck": <giây Unix> }`) và nút "Kiểm tra cập nhật".
+- Tự kiểm tra: 30 s sau khi khởi động rồi cứ 10 phút xem đã quá 24 giờ kể từ lần kiểm tra trước chưa (lỗi mạng cũng
+  tính là đã kiểm tra, không thử dồn dập). Lỗi hay không có bản mới: im lặng (chỉ ghi log).
+- Có bản mới: hỏi bằng hộp thoại "Đã có Chup X (đang dùng Y). Cập nhật bây giờ?" [Cập nhật] [Để sau]. Đang chọn vùng,
+  có frame, Freeze hay Preview thì **chưa hỏi**, đợi tới lúc rảnh. "Để sau": hỏi lại ở lần kiểm tra sau (ngày hôm sau).
+- Bấm nút: luôn báo kết quả (toast "đang kiểm tra", "X là bản mới nhất", "không kiểm tra được") và hỏi ngay nếu có bản mới.
+
+### 18.3 Cài
+
+- Toast "Đang tải Chup X…", tải ở thread nền. Lỗi: toast "Không cập nhật được Chup…", chi tiết ghi log.
+- **Windows**: chạy bộ cài `/S /RELAUNCH` rồi Chup thoát. Bộ cài NSIS per-user tự đóng Chup cũ, cài đè vào
+  `%LOCALAPPDATA%\Chup` (dữ liệu OCR đã tải giữ nguyên), không tạo lại shortcut Desktop đã bị xoá, xong thì mở lại Chup.
+  `chup.exe` chạy rời (không nằm trong thư mục cài) thì chỉ mở trang Release.
+- **macOS**: tải `.dmg` bằng `/usr/bin/curl`, `hdiutil attach` (không hiện ra Finder), `ditto` `Chup.app` thành
+  `.Chup.app.new` cạnh bản đang chạy, `codesign --verify`, đổi tên bản cũ rồi đặt bản mới vào đúng chỗ (lỗi thì trả lại),
+  mở lại sau khi process cũ thoát. Không chạy từ `.app` (dev) hoặc không ghi được thư mục chứa app thì chỉ mở trang
+  Release. `.dmg` phải ký bằng cùng chứng chỉ với bản đang dùng để giữ quyền Ghi màn hình / Trợ năng.
+- Không bao giờ cập nhật mà không hỏi; không cập nhật giữa lúc đang chụp / Preview mở.
+
+### 18.4 Nghiệm thu
+
+- [ ] Tắt "Tự kiểm tra": không gọi GitHub (log không có `update:`). Bật: 30 s sau khởi động có dòng log kết quả.
+- [ ] Release mới hơn (tag thử): hộp thoại hỏi; "Để sau" thì không hỏi lại trong ngày; "Cập nhật" thì Chup đóng, cài,
+      mở lại đúng bản mới (Giới thiệu ghi phiên bản mới), cấu hình và OCR tiếng Việt đã tải còn nguyên.
+- [ ] Đang có frame / Preview khi tìm thấy bản mới: chỉ hỏi sau khi đóng.
+- [ ] Mất mạng, bấm "Kiểm tra cập nhật": toast lỗi, app vẫn chạy.

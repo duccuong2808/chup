@@ -22,6 +22,9 @@ mod stack;
 mod toolbar;
 #[path = "../common/tray.rs"]
 mod tray;
+#[path = "../common/update.rs"]
+mod update;
+mod updater;
 mod util;
 mod vision;
 mod win;
@@ -46,6 +49,8 @@ thread_local! {
     static APP: RefCell<Option<App>> = const { RefCell::new(None) };
     /// Hẹn giờ trả RAM khi rảnh, đếm lại sau mỗi lần có hoạt động.
     static TRIM: RefCell<Option<Timer>> = const { RefCell::new(None) };
+    /// Hẹn giờ tự cập nhật.
+    static UPDATE_TIMER: RefCell<Option<Timer>> = const { RefCell::new(None) };
     /// Hẹn giờ gộp các lần đổi màn hình liên tiếp.
     static DISPLAY: RefCell<Option<Timer>> = const { RefCell::new(None) };
 }
@@ -72,6 +77,15 @@ fn drain() {
         }
     });
     arm_trim();
+}
+
+/// Hẹn giờ tự cập nhật (SPEC 18): xem đã tới hạn kiểm tra / có bản mới chờ hỏi chưa.
+fn arm_update(ms: u32) {
+    let t = win::after(ms, || {
+        emit(Action::UpdateTick);
+        arm_update(chup_core::update::TICK_MS);
+    });
+    UPDATE_TIMER.with(|c| *c.borrow_mut() = Some(t));
 }
 
 fn arm_trim() {
@@ -153,6 +167,7 @@ fn init(mtm: MainThreadMarker) {
     std::mem::forget(win::after(1000, gfx::warm_up));
     // Sau CoreText: Vision (nặng hơn nhiều, chạy ở worker OCR) — chup-27e.
     std::mem::forget(win::emit_after(3000, || Action::OcrWarmUp));
+    arm_update(chup_core::update::FIRST_TICK_MS);
     log::info!("sẵn sàng");
     util::log_memory("khởi động xong");
     selftest::start();
@@ -183,6 +198,15 @@ pub fn run() -> i32 {
         let t0 = std::time::Instant::now();
         match vision::recognize(&img, chup_core::config::OcrLanguage::Vi) {
             Ok(lines) => println!("{} ({:?})", chup_core::ocr::TextLayout::build(lines, 1.0).all_text(), t0.elapsed()),
+            Err(e) => eprintln!("lỗi: {e}"),
+        }
+        return 0;
+    }
+    if args.len() == 2 && args[1] == "--check-update" {
+        // Thử tự cập nhật (SPEC 18): hỏi GitHub, in bản mới nhất và bộ cài sẽ dùng. Không tải, không cài.
+        let root = std::env::temp_dir().join("chup-check-update");
+        match updater::check_blocking(&root) {
+            Ok(u) => println!("{} (mới hơn bản đang chạy: {}) {} {:?}", u.version, u.is_newer(), u.page, u.pack),
             Err(e) => eprintln!("lỗi: {e}"),
         }
         return 0;

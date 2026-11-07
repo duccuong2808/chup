@@ -114,6 +114,8 @@ const ID_ABOUT_LOG: u16 = 125;
 const ID_ABOUT_NOTICE: u16 = 126;
 const ID_HK_FREEZE_ON: u16 = 127;
 const ID_UI_LANG: u16 = 128;
+const ID_UPD_AUTO: u16 = 129;
+const ID_UPD_CHECK: u16 = 130;
 const TIMER_PATTERN: usize = 1;
 
 
@@ -321,6 +323,9 @@ struct Handles {
     sec_about_ocr: HWND,
     about_engine: HWND,
     about_notice: HWND,
+    sec_upd: HWND,
+    upd_auto: HWND,
+    upd_check: HWND,
 }
 
 thread_local! {
@@ -727,6 +732,9 @@ impl Settings {
         );
         h.about_web = self.add(bt, |t| t.st_about_web, button, none, ID_ABOUT_WEB, Kind::Control);
         h.about_log = self.add(bt, |t| t.st_about_log, button, none, ID_ABOUT_LOG, Kind::Control);
+        h.sec_upd = self.add(st, |t| t.st_sec_update, s, none, 0, Kind::Section);
+        h.upd_auto = self.add(bt, |t| t.st_update_auto, check, none, ID_UPD_AUTO, Kind::Control);
+        h.upd_check = self.add(bt, |t| t.st_update_check, button, none, ID_UPD_CHECK, Kind::Control);
         h.sec_about_ocr = self.add(st, |t| t.st_about_sec_ocr, s, none, 0, Kind::Section);
         h.about_engine = self.add(st, |_| "", s, none, 0, Kind::Hint);
         h.about_notice =
@@ -989,6 +997,12 @@ impl Settings {
                     l.mv(h.about_log, ix + 132.0, l.y, 140.0, 28.0);
                     l.y += 28.0 + ROW_GAP;
                     l.end_card();
+                    l.card(Some(h.sec_upd));
+                    l.check(h.upd_auto, 0.0);
+                    let (ix, _) = l.inner();
+                    l.mv(h.upd_check, ix, l.y, 170.0, 28.0);
+                    l.y += 28.0 + ROW_GAP;
+                    l.end_card();
                     l.card(Some(h.sec_about_ocr));
                     l.text(h.about_engine, 0.0);
                     let (ix, _) = l.inner();
@@ -1096,6 +1110,7 @@ impl Settings {
         set_combo(h.pv_size, ((c.preview.size as i32 - 20) / 20).clamp(0, 3));
         set_combo(h.ocr_lang, if c.ocr.language == OcrLanguage::Vi { 1 } else { 0 });
         set_checked(h.ocr_auto, c.ocr.auto_preview);
+        set_checked(h.upd_auto, c.update.auto_check);
         set_checked(h.auto_on, c.auto_detect.enabled);
         set_checked(h.auto_img, c.auto_detect.image_edges);
         unsafe {
@@ -1433,6 +1448,8 @@ impl Handler for Settings {
                     (ID_PICK, BN_CLICKED) => self.pick_folder(),
                     (ID_OPEN, BN_CLICKED) => emit(Action::OpenSaveDir),
                     (ID_ABOUT_WEB, BN_CLICKED) => emit(Action::Open(PathBuf::from(PROJECT_URL))),
+                    (ID_UPD_CHECK, BN_CLICKED) => emit(Action::CheckUpdateNow),
+                    (ID_UPD_AUTO, BN_CLICKED) => self.patch(json!({ "update": { "autoCheck": checked(h.upd_auto) } })),
                     (ID_ABOUT_LOG | ID_ABOUT_NOTICE, BN_CLICKED) => {
                         let target = self.st.borrow().view.as_ref().and_then(|v| {
                             if id == ID_ABOUT_LOG {

@@ -29,6 +29,7 @@ use super::{
     stack::StackWin,
     toolbar::Toolbar,
     tray::Tray,
+    update, updater,
     util::{self, cursor_pos},
     win::{self, emit},
 };
@@ -68,6 +69,16 @@ pub enum Action {
     OpenSaveDir,
     /// Mở file, thư mục hoặc URL bằng app mặc định (trang Giới thiệu).
     Open(std::path::PathBuf),
+    /// Hẹn giờ tự cập nhật (SPEC 18).
+    UpdateTick,
+    /// Nút "Kiểm tra cập nhật" trong Cài đặt.
+    CheckUpdateNow,
+    /// Kết quả hỏi GitHub (`manual`: người dùng bấm nút).
+    UpdateChecked(Result<chup_core::update::Update, String>, bool),
+    /// Người dùng đồng ý cập nhật: tải bộ cài.
+    UpdateAccepted(chup_core::update::Update),
+    /// Bộ cài đã tải và kiểm tra xong (hoặc lỗi).
+    UpdateReady(Result<std::path::PathBuf, String>),
     DisplayChanged,
     FreezeTimerFired,
     /// Mục tray "Chụp đóng băng", sau khi chờ menu tray tắt hẳn.
@@ -427,6 +438,24 @@ impl App {
                 _ => self.model.ocr_request(OcrSource::Preview(path)),
             },
             Action::OcrDone(id, r) => self.model.ocr_done(id, r),
+            Action::UpdateTick => self.model.update_tick(update::now_secs()),
+            Action::CheckUpdateNow => self.model.update_check_now(),
+            Action::UpdateChecked(r, manual) => self.model.update_checked(r, manual, update::now_secs()),
+            Action::UpdateAccepted(u) => {
+                let text = fill(t().upd_downloading, &[&u.version.to_string()]);
+                updater::download(u);
+                vec![Effect::Toast(Toast::info(text))]
+            }
+            Action::UpdateReady(r) => match r.and_then(|p| updater::install(&p)) {
+                Ok(()) => {
+                    unsafe { PostQuitMessage(0) };
+                    vec![]
+                }
+                Err(e) => {
+                    log::error!("update: {e}");
+                    vec![Effect::Toast(Toast::error(t().upd_failed))]
+                }
+            },
             Action::CopyText(text) => vec![Effect::CopyText(text)],
             Action::OcrDownload => {
                 // Exe phụ còn sống (gói vừa hỏng/xoá dở) giữ thư mục gói: tắt trước để bước rename khi cài không lỗi.
@@ -622,6 +651,8 @@ impl App {
                     self.apply(fx);
                 }
                 Effect::PreviewText(path, text) => self.preview.set_text(&path, text),
+                Effect::CheckUpdate { manual } => updater::check(manual),
+                Effect::AskUpdate(u) => updater::post_ask(u),
             }
         }
     }

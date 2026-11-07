@@ -70,6 +70,8 @@ const ID_PV_POS: isize = 64;
 const ID_PV_SIZE: isize = 65;
 const ID_WEB: isize = 70;
 const ID_LOG: isize = 71;
+const ID_UPD_AUTO: isize = 72;
+const ID_UPD_CHECK: isize = 73;
 
 /// Chữ lấy theo ngôn ngữ giao diện hiện hành.
 type Text = fn(&Strings) -> &'static str;
@@ -143,6 +145,7 @@ struct Controls {
     pv_op: Option<Retained<NSPopUpButton>>,
     pv_pos: Option<Retained<NSPopUpButton>>,
     pv_size: Option<Retained<NSPopUpButton>>,
+    upd_auto: Option<Retained<NSButton>>,
     status: Option<Retained<NSTextField>>,
 }
 
@@ -496,7 +499,11 @@ impl Settings {
         let web = self.button(t.st_about_web, ID_WEB);
         let log = self.button(t.st_about_log, ID_LOG);
         let links = self.stack(&[&web, &log], false);
-        self.page(&tabs, t.page_about, &[&title, &desc, &version, &links]);
+        let sec_upd = self.section(t.st_sec_update);
+        let upd_auto = self.check(t.st_update_auto, ID_UPD_AUTO);
+        let upd_check = self.button(t.st_update_check, ID_UPD_CHECK);
+        self.page(&tabs, t.page_about, &[&title, &desc, &version, &links, &sec_upd, &upd_auto, &upd_check]);
+        c.upd_auto = Some(upd_auto);
 
         let status = self.hint("");
         c.status = Some(status.clone());
@@ -554,6 +561,7 @@ impl Settings {
             }
             select(&c.ocr_lang, (cfg.ocr.language == OcrLanguage::Vi) as usize);
             set_on(&c.ocr_auto, cfg.ocr.auto_preview);
+            set_on(&c.upd_auto, cfg.update.auto_check);
             select(&c.edge, (cfg.stack.edge == Edge::Left) as usize);
             select(&c.mon, (cfg.stack.monitor == StackMonitor::Cursor) as usize);
             set_on(&c.pv_top, cfg.preview.always_on_top);
@@ -656,6 +664,8 @@ impl Settings {
             ID_PV_SIZE => self.patch(json!({ "preview": { "size": SIZES[selected(sender).min(SIZES.len() - 1)], "sizeScale": 100 } })),
             ID_WEB => emit(Action::Open(PROJECT_URL.into())),
             ID_LOG => emit(Action::Open(super::util::dirs().log_dir.join("chup.log"))),
+            ID_UPD_AUTO => self.patch(json!({ "update": { "autoCheck": is_on(sender) } })),
+            ID_UPD_CHECK => emit(Action::CheckUpdateNow),
             _ => {}
         }
     }

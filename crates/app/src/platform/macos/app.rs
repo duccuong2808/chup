@@ -26,6 +26,7 @@ use super::{
     stack::StackWin,
     toolbar::Toolbar,
     tray::Tray,
+    update, updater,
     util::{self, cursor_pos},
     vision,
     win::{self, emit, Timer},
@@ -92,6 +93,16 @@ pub enum Action {
     OcrDone(u32, Result<chup_core::ocr::TextLayout, String>),
     /// Rảnh sau khi khởi động: cho Vision chuẩn bị model (chup-27e).
     OcrWarmUp,
+    /// Hẹn giờ tự cập nhật (SPEC 18).
+    UpdateTick,
+    /// Nút "Kiểm tra cập nhật" trong Cài đặt.
+    CheckUpdateNow,
+    /// Kết quả hỏi GitHub (`manual`: người dùng bấm nút).
+    UpdateChecked(Result<chup_core::update::Update, String>, bool),
+    /// Người dùng đồng ý cập nhật: tải và thay Chup.app.
+    UpdateAccepted(chup_core::update::Update),
+    /// Đã thay Chup.app (đường dẫn bundle để mở lại), hoặc lỗi.
+    UpdateReady(Result<std::path::PathBuf, String>),
     CopyText(String),
     /// Chưa có quyền Screen Recording: hỏi người dùng (sau khi App xử lý xong Action hiện tại).
     AskPermission,
@@ -390,6 +401,24 @@ impl App {
                 self.ocr_warm_up();
                 vec![]
             }
+            Action::UpdateTick => self.model.update_tick(update::now_secs()),
+            Action::CheckUpdateNow => self.model.update_check_now(),
+            Action::UpdateChecked(r, manual) => self.model.update_checked(r, manual, update::now_secs()),
+            Action::UpdateAccepted(u) => {
+                let text = fill(t().upd_downloading, &[&u.version.to_string()]);
+                updater::download_and_install(u);
+                vec![Effect::Toast(Toast::info(text))]
+            }
+            Action::UpdateReady(r) => match r.and_then(|app| updater::relaunch(&app)) {
+                Ok(()) => {
+                    emit(Action::Quit);
+                    vec![]
+                }
+                Err(e) => {
+                    log::error!("update: {e}");
+                    vec![Effect::Toast(Toast::error(t().upd_failed))]
+                }
+            },
             Action::CopyText(text) => vec![Effect::CopyText(text)],
             Action::AskPermission => {
                 // Ngoài lúc App bận: hộp thoại modal chạy vòng lặp riêng, Action vẫn được xử lý.
@@ -553,6 +582,9 @@ impl App {
                     self.apply(fx);
                 }
                 Effect::PreviewText(path, text) => self.preview.set_text(&path, text),
+                Effect::CheckUpdate { manual } => updater::check(manual),
+                // Hộp thoại modal: chạy ngoài lúc App bận.
+                Effect::AskUpdate(u) => std::mem::forget(win::after(0, move || updater::ask(u))),
             }
         }
     }

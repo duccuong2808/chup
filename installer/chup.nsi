@@ -3,6 +3,7 @@
 ;     makensis /DVERSION=0.2.0 /DEXE=path\chup.exe /DOCR_DIR=<chup-ocr.exe + NOTICE-ocr.txt>
 ;              /DDATA_DIR=<vie/eng.traineddata> /DDATA_PACK=vi-1 installer\chup.nsi
 ;   OCR_DIR, DATA_DIR lấy bằng installer\fetch-ocr.ps1 (đúng file ghim trong manifest); DATA_PACK = tên thư mục gói in ra.
+; - Cả hai nhận `/S /RELAUNCH` (Chup tự cập nhật, SPEC 18): cài im lặng rồi mở lại Chup.
 ; - Lite (/DLITE): chỉ chup.exe. Mục "OCR tiếng Việt" (mặc định bỏ trống) chạy `chup.exe --install-ocr` để tải engine
 ;   (Release ocr-engine-vN của repo Chup) và dữ liệu (tesseract-ocr/tessdata_fast). Không tích thì tải sau trong Cài đặt.
 
@@ -45,6 +46,7 @@ InstallDir "$LOCALAPPDATA\Chup"
 BrandingText "Chup ${VERSION} (${EDITION})"
 
 !include "MUI2.nsh"
+!include "FileFunc.nsh"
 !define MUI_ICON "..\crates\app\icons\icon.ico"
 !define MUI_UNICON "..\crates\app\icons\icon.ico"
 !define MUI_FINISHPAGE_RUN "$INSTDIR\chup.exe"
@@ -103,7 +105,12 @@ Section "Chup" SecChup
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
   CreateShortcut "$SMPROGRAMS\Chup.lnk" "$INSTDIR\chup.exe"
+  ; Cài im lặng (Chup tự cập nhật): người dùng đã xoá shortcut ngoài Desktop thì không tạo lại.
+  IfSilent 0 desktop_lnk
+  IfFileExists "$DESKTOP\Chup.lnk" desktop_lnk desktop_done
+  desktop_lnk:
   CreateShortcut "$DESKTOP\Chup.lnk" "$INSTDIR\chup.exe"
+  desktop_done:
 
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayName" "Chup"
   WriteRegStr HKCU "${UNINST_KEY}" "DisplayVersion" "${VERSION}"
@@ -115,6 +122,16 @@ Section "Chup" SecChup
   WriteRegDWORD HKCU "${UNINST_KEY}" "NoModify" 1
   WriteRegDWORD HKCU "${UNINST_KEY}" "NoRepair" 1
 SectionEnd
+
+; Tự cập nhật (SPEC 18): Chup chạy bộ cài với `/S /RELAUNCH` rồi thoát; cài xong thì mở lại Chup.
+Function .onInstSuccess
+  ${GetParameters} $R0
+  ClearErrors
+  ${GetOptions} $R0 "/RELAUNCH" $R1
+  IfErrors relaunch_done
+  Exec '"$INSTDIR\chup.exe"'
+  relaunch_done:
+FunctionEnd
 
 !ifdef LITE
 ; Mặc định bỏ trống (/o): ai cần OCR tiếng Việt mới tải. Không tích vẫn tải được sau trong Cài đặt của Chup.

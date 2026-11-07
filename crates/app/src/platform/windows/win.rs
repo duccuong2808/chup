@@ -35,6 +35,8 @@ pub const WM_APP_ACTION: u32 = WM_APP + 1;
 pub const WM_APP_SHOW_SETTINGS: u32 = WM_APP + 2;
 /// Hỏi/tải gói OCR tiếng Việt (wParam 1 = hỏi trước). Chạy ngoài lúc App đang bị borrow vì hộp thoại là modal.
 pub const WM_APP_OCR_DOWNLOAD: u32 = WM_APP + 3;
+/// Hỏi người dùng có cập nhật không (`updater::ask_pending`), cũng ngoài lúc App bị borrow.
+pub const WM_APP_ASK_UPDATE: u32 = WM_APP + 4;
 
 static QUEUE: Mutex<Vec<Action>> = Mutex::new(Vec::new());
 static APP_HWND: AtomicIsize = AtomicIsize::new(0);

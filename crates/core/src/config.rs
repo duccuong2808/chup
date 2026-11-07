@@ -110,6 +110,22 @@ impl Default for OcrConfig {
     }
 }
 
+/// Tự cập nhật (SPEC 18, chup-22n). Config cũ thiếu field: bật tự kiểm tra.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct UpdateConfig {
+    /// Mỗi ngày tự kiểm tra bản mới (có bản mới thì hỏi trước khi cài).
+    pub auto_check: bool,
+    /// Lần kiểm tra gần nhất (giây Unix, 0 = chưa).
+    pub last_check: u64,
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self { auto_check: true, last_check: 0 }
+    }
+}
+
 /// Tự động chọn vùng (SPEC 16). Config cũ thiếu field: bật cả 2.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -221,6 +237,8 @@ pub struct Config {
     pub auto_detect: AutoDetectConfig,
     /// Ngôn ngữ giao diện (v4, chup-81y). Cài mới: theo hệ điều hành; config cũ: tiếng Việt (xem `normalize`).
     pub ui_language: UiLanguage,
+    /// Tự cập nhật (chup-22n), không tăng version.
+    pub update: UpdateConfig,
 }
 
 impl Default for Config {
@@ -239,6 +257,7 @@ impl Default for Config {
             ocr: OcrConfig::default(),
             auto_detect: AutoDetectConfig::default(),
             ui_language: UiLanguage::System,
+            update: UpdateConfig::default(),
         }
     }
 }

@@ -16,3 +16,4 @@ pub mod ocr;
 pub mod preview;
 pub mod selection;
 pub mod stack;
+pub mod update;

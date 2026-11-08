@@ -424,7 +424,7 @@ impl Handler for StackWin {
                         if let Some(id) = self.shot_id(i) {
                             let (x, y) = cursor_pos();
                             // Menu chạy vòng message riêng: không giữ borrow nào lúc này.
-                            if let Some(kind) = super::share::pick(self.hwnd, x, y) {
+                            if let Some(kind) = super::share::pick(None, x, y) {
                                 emit(Action::ShotUpload(id, kind));
                             }
                         }

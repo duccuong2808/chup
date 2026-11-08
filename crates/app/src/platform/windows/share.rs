@@ -18,7 +18,7 @@ use windows::{
         UI::WindowsAndMessaging::{
             AppendMenuW, CreatePopupMenu, DestroyMenu, MessageBoxW, PostMessageW, SetForegroundWindow,
             TrackPopupMenu, IDOK, MB_ICONINFORMATION, MB_OKCANCEL, MB_SETFOREGROUND, MB_TOPMOST, MF_STRING,
-            TPM_RETURNCMD, TPM_RIGHTBUTTON,
+            TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_NULL,
         },
     },
 };
@@ -67,14 +67,18 @@ pub fn kind_of(cmd: usize, base: usize) -> Option<ShareKind> {
 }
 
 /// Menu chọn kiểu tại điểm màn hình `(x, y)` (chạy vòng message riêng: không giữ borrow khi gọi).
-pub fn pick(owner: HWND, x: i32, y: i32) -> Option<ShareKind> {
+/// `owner = None`: dùng cửa sổ ẩn của app, như menu tray (stack có `WS_EX_NOACTIVATE`, không làm foreground được,
+/// mà menu chỉ tự đóng khi bấm ra ngoài nếu cửa sổ sở hữu nó là foreground).
+pub fn pick(owner: Option<HWND>, x: i32, y: i32) -> Option<ShareKind> {
+    let owner = owner.unwrap_or_else(win::app_hwnd);
     unsafe {
         let menu = CreatePopupMenu().ok()?;
         append_items(menu, CMD_BASE);
-        // Cửa sổ không lấy focus (stack): phải là foreground thì menu mới tự đóng khi bấm ra ngoài.
         let _ = SetForegroundWindow(owner);
         let cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, x, y, None, owner, None);
         let _ = DestroyMenu(menu);
+        // Theo tài liệu TrackPopupMenu: gửi một message để lần mở menu sau không bị đóng ngay.
+        let _ = PostMessageW(Some(owner), WM_NULL, WPARAM(0), LPARAM(0));
         kind_of(cmd.0 as usize, CMD_BASE)
     }
 }

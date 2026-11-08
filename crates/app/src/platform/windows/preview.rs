@@ -868,7 +868,7 @@ impl Preview {
             Btn::Pin => self.toggle_pin(),
             Btn::Upload => {
                 let (x, y) = cursor_pos();
-                if let Some(kind) = super::share::pick(self.hwnd, x, y) {
+                if let Some(kind) = super::share::pick(Some(self.hwnd), x, y) {
                     emit(Action::PreviewUpload(path, kind));
                 }
             }

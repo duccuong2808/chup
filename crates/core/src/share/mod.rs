@@ -275,6 +275,11 @@ fn private(
     }
 }
 
+/// RNG của hệ điều hành (CSPRNG) cho [`run`]: khoá, IV, salt, boundary.
+pub fn system_rng(b: &mut [u8]) {
+    getrandom::fill(b).expect("CSPRNG của hệ điều hành");
+}
+
 /// PNG -> WebP lossless (giữ nguyên từng pixel).
 pub fn to_webp_lossless(png: &[u8]) -> Result<Vec<u8>, String> {
     let img = image::load_from_memory(png)

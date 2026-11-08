@@ -17,6 +17,7 @@ use chup_core::{
     hotkey_name::{self, Mods, Recorded},
     model::OcrViState,
     ocr::pack,
+    share::{Expiry, ShareKind},
 };
 use serde_json::json;
 use windows::{
@@ -48,7 +49,7 @@ use windows::{
                 STM_SETICON,
                 SetWindowPos, SetWindowTextW, ShowWindow, BM_GETCHECK, BM_SETCHECK, BN_CLICKED, BS_AUTOCHECKBOX,
                 BS_PUSHBUTTON, CBN_SELCHANGE, CBS_DROPDOWNLIST, CB_ADDSTRING, CB_GETCURSEL, CB_RESETCONTENT, CB_SETCURSEL, CW_USEDEFAULT,
-                DLGC_WANTALLKEYS, EN_CHANGE, ES_AUTOHSCROLL, ES_READONLY, GWLP_USERDATA, GWL_EXSTYLE, GWL_STYLE, HMENU,
+                DLGC_WANTALLKEYS, EN_CHANGE, ES_AUTOHSCROLL, ES_PASSWORD, ES_READONLY, GWLP_USERDATA, GWL_EXSTYLE, GWL_STYLE, HMENU,
                 LBN_SELCHANGE, LBS_HASSTRINGS, LBS_NOINTEGRALHEIGHT, LBS_NOTIFY, LBS_OWNERDRAWFIXED, LB_ADDSTRING,
                 LB_GETCURSEL, LB_RESETCONTENT, LB_SETCURSEL, LB_SETITEMHEIGHT, NONCLIENTMETRICSW, SPI_GETNONCLIENTMETRICS, SWP_NOACTIVATE,
                 SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOW, SW_SHOWNORMAL,
@@ -82,6 +83,24 @@ pub struct SettingsView {
     pub ocr_download: u64,
     pub ocr_engine: EngineInfo,
     pub ocr_root: PathBuf,
+}
+
+/// Kiểu chọn được làm mặc định: Link lâu dài chỉ khi đã có tài khoản catbox.
+fn share_kinds(account: bool) -> Vec<ShareKind> {
+    let mut v = vec![ShareKind::Image, ShareKind::Private];
+    if account {
+        v.push(ShareKind::Permanent);
+    }
+    v
+}
+
+fn kind_name(k: ShareKind) -> &'static str {
+    let t = t();
+    match k {
+        ShareKind::Image => t.share_kind_image,
+        ShareKind::Private => t.share_kind_private,
+        ShareKind::Permanent => t.share_kind_permanent,
+    }
 }
 
 /// Trang dự án (trang Giới thiệu).
@@ -122,7 +141,16 @@ const ID_ABOUT_NEWS: u16 = 131;
 const SS_ICON: u32 = 0x0003;
 const SS_REALSIZECONTROL: u32 = 0x0040;
 const ID_ABOUT_ISSUES: u16 = 132;
+const ID_SH_EXP: u16 = 133;
+const ID_SH_DEFAULT: u16 = 134;
+const ID_SH_BURN: u16 = 135;
+const ID_SH_INST: u16 = 136;
+const ID_SH_SAVE: u16 = 137;
+const ID_SH_CLEAR: u16 = 138;
+const ID_SH_MANAGE: u16 = 139;
 const TIMER_PATTERN: usize = 1;
+/// Gõ địa chỉ instance PrivateBin: lưu sau khi ngừng gõ.
+const TIMER_SH_INST: usize = 2;
 
 
 // Màu (COLORREF là 0x00BBGGRR), theo Cài đặt của Windows 11.
@@ -157,18 +185,20 @@ enum Page {
     Capture,
     Ocr,
     StackPreview,
+    Share,
     About,
 }
 
 /// Chữ lấy theo ngôn ngữ giao diện hiện hành.
 type Text = fn(&Strings) -> &'static str;
 
-const PAGES: [(Page, Text); 6] = [
+const PAGES: [(Page, Text); 7] = [
     (Page::General, |t| t.page_general),
     (Page::Hotkeys, |t| t.page_hotkeys),
     (Page::Capture, |t| t.page_capture),
     (Page::Ocr, |t| t.page_ocr),
     (Page::StackPreview, |t| t.page_stack_preview),
+    (Page::Share, |t| t.page_share),
     (Page::About, |t| t.page_about),
 ];
 
@@ -320,6 +350,24 @@ struct Handles {
     lbl_pv_size: HWND,
     hint_pv_size: HWND,
     pv_size: HWND,
+    // Chia sẻ (SPEC 19)
+    sh_intro: HWND,
+    lbl_sh_exp: HWND,
+    sh_exp: HWND,
+    lbl_sh_default: HWND,
+    sh_default: HWND,
+    sec_sh_private: HWND,
+    sh_burn: HWND,
+    lbl_sh_inst: HWND,
+    sh_inst: HWND,
+    sec_sh_catbox: HWND,
+    sh_catbox_note: HWND,
+    lbl_sh_hash: HWND,
+    sh_hash_state: HWND,
+    sh_hash: HWND,
+    sh_save: HWND,
+    sh_clear: HWND,
+    sh_manage: HWND,
     // Giới thiệu
     about_icon: HWND,
     about_name: HWND,
@@ -732,6 +780,26 @@ impl Settings {
         h.hint_pv_size = self.add(st, |t| t.st_pv_size_hint, s, none, 0, Kind::Hint);
         h.pv_size = self.add(cb, |_| "", combo, none, ID_PV_SIZE, Kind::Control);
 
+        self.building.set(Some(Page::Share));
+        h.sh_intro = self.add(st, |t| t.st_share_intro, s, none, 0, Kind::Hint);
+        h.lbl_sh_exp = self.add(st, |t| t.st_share_expiry, s, none, 0, Kind::Label);
+        h.sh_exp = self.add(cb, |_| "", combo, none, ID_SH_EXP, Kind::Control);
+        h.lbl_sh_default = self.add(st, |t| t.st_share_default, s, none, 0, Kind::Label);
+        h.sh_default = self.add(cb, |_| "", combo, none, ID_SH_DEFAULT, Kind::Control);
+        h.sec_sh_private = self.add(st, |t| t.st_share_private_card, s, none, 0, Kind::Section);
+        h.sh_burn = self.add(bt, |t| t.st_share_burn, check, none, ID_SH_BURN, Kind::Control);
+        h.lbl_sh_inst = self.add(st, |t| t.st_share_instance, s, none, 0, Kind::Label);
+        h.sh_inst = self.add(ed, |_| "", edit, WS_EX_CLIENTEDGE, ID_SH_INST, Kind::Control);
+        h.sec_sh_catbox = self.add(st, |t| t.st_share_catbox_card, s, none, 0, Kind::Section);
+        h.sh_catbox_note = self.add(st, |t| t.st_share_catbox_note, s, none, 0, Kind::Hint);
+        h.lbl_sh_hash = self.add(st, |t| t.st_share_userhash, s, none, 0, Kind::Label);
+        h.sh_hash_state = self.add(st, |_| "", s, none, 0, Kind::Hint);
+        // Ô mật khẩu: không hiện lại userhash đã lưu (chỉ báo "Đã lưu").
+        h.sh_hash = self.add(ed, |_| "", edit | WINDOW_STYLE(ES_PASSWORD as u32), WS_EX_CLIENTEDGE, 0, Kind::Control);
+        h.sh_save = self.add(bt, |t| t.st_share_save, button, none, ID_SH_SAVE, Kind::Control);
+        h.sh_clear = self.add(bt, |t| t.st_share_clear, button, none, ID_SH_CLEAR, Kind::Control);
+        h.sh_manage = self.add(bt, |t| t.st_share_manage, button, none, ID_SH_MANAGE, Kind::Control);
+
         self.building.set(Some(Page::About));
         // Icon app (tài nguyên 1 trong chup.rc), co theo cỡ control (SS_REALSIZECONTROL).
         h.about_icon = self.add(st, |_| "", WINDOW_STYLE(SS_ICON | SS_REALSIZECONTROL), none, 0, Kind::Label);
@@ -788,7 +856,8 @@ impl Settings {
         let pct = |n: u32| fill(t.st_pv_size_max, &[&n]);
         let ui_langs: Vec<String> =
             UI_LANGS.iter().map(|(_, name)| name.unwrap_or(t.st_ui_language_system).to_string()).collect();
-        let lists: [(HWND, bool, Vec<String>); 9] = [
+        let exps: Vec<String> = Expiry::ALL.iter().map(|e| e.label().to_string()).collect();
+        let lists: [(HWND, bool, Vec<String>); 10] = [
             (h.nav, true, pages),
             (h.after, false, vec![t.st_after_close.into(), t.st_after_keep.into()]),
             (h.edge, false, vec![t.st_edge_right.into(), t.st_edge_left.into()]),
@@ -798,6 +867,7 @@ impl Settings {
             (h.pv_pos, false, vec![t.st_pv_pos_last.into(), t.st_pv_pos_stack.into(), t.st_pv_pos_center.into()]),
             (h.pv_size, false, vec![pct(30), pct(50), pct(70), pct(90)]),
             (h.ui_lang, false, ui_langs),
+            (h.sh_exp, false, exps),
         ];
         for (c, is_list, items) in lists {
             let (reset, add) = if is_list { (LB_RESETCONTENT, LB_ADDSTRING) } else { (CB_RESETCONTENT, CB_ADDSTRING) };
@@ -1010,6 +1080,29 @@ impl Settings {
                     l.row(h.lbl_pv_size, Some(h.hint_pv_size), h.pv_size, COMBO_W, 24.0, true);
                     l.end_card();
                 }
+                Page::Share => {
+                    l.card(None);
+                    l.text(h.sh_intro, 0.0);
+                    l.row(h.lbl_sh_exp, None, h.sh_exp, COMBO_W, 24.0, true);
+                    l.row(h.lbl_sh_default, None, h.sh_default, COMBO_W, 24.0, true);
+                    l.end_card();
+                    l.card(Some(h.sec_sh_private));
+                    l.check(h.sh_burn, 0.0);
+                    l.caption(h.lbl_sh_inst);
+                    l.full(h.sh_inst, 26.0);
+                    l.end_card();
+                    l.card(Some(h.sec_sh_catbox));
+                    l.text(h.sh_catbox_note, 0.0);
+                    l.row(h.lbl_sh_hash, Some(h.sh_hash_state), h.sh_hash, COMBO_W, 26.0, false);
+                    let (ix, _) = l.inner();
+                    let mut x = ix;
+                    for (b, w) in [(h.sh_save, 80.0), (h.sh_clear, 80.0), (h.sh_manage, 200.0)] {
+                        l.mv(b, x, l.y, w, 28.0);
+                        x += w + 8.0;
+                    }
+                    l.y += 28.0 + ROW_GAP;
+                    l.end_card();
+                }
                 Page::About => {
                     // Đầu trang: icon 48 + tên, phiên bản, dòng build nhỏ; rồi mô tả và các liên kết.
                     l.card(None);
@@ -1146,6 +1239,24 @@ impl Settings {
         set_combo(h.ocr_lang, if c.ocr.language == OcrLanguage::Vi { 1 } else { 0 });
         set_checked(h.ocr_auto, c.ocr.auto_preview);
         set_checked(h.upd_auto, c.update.auto_check);
+        // Chia sẻ (SPEC 19).
+        let sc = &c.share;
+        set_combo(h.sh_exp, Expiry::ALL.iter().position(|e| *e == sc.expiry).unwrap_or(2) as i32);
+        let kinds = share_kinds(sc.catbox_account);
+        unsafe { SendMessageW(h.sh_default, CB_RESETCONTENT, None, None) };
+        for k in &kinds {
+            let w = wide(kind_name(*k));
+            unsafe { SendMessageW(h.sh_default, CB_ADDSTRING, None, Some(LPARAM(w.as_ptr() as isize))) };
+        }
+        set_combo(h.sh_default, kinds.iter().position(|k| *k == sc.default_kind).unwrap_or(0) as i32);
+        set_checked(h.sh_burn, sc.burn_after_reading);
+        if unsafe { GetFocus() } != h.sh_inst {
+            set_text(h.sh_inst, &sc.privatebin_url);
+        }
+        set_text(h.sh_hash_state, if sc.catbox_account { t.st_share_saved } else { t.st_share_not_saved });
+        unsafe {
+            let _ = EnableWindow(h.sh_clear, sc.catbox_account);
+        }
         set_checked(h.auto_on, c.auto_detect.enabled);
         set_checked(h.auto_img, c.auto_detect.image_edges);
         unsafe {
@@ -1547,12 +1658,46 @@ impl Handler for Settings {
                         let v = if combo_sel(h.edge) == 1 { "left" } else { "right" };
                         self.patch(json!({ "stack": { "edge": v } }))
                     }
+                    (ID_SH_EXP, CBN_SELCHANGE) => {
+                        if let Some(e) = Expiry::ALL.get(combo_sel(h.sh_exp).max(0) as usize) {
+                            self.patch(json!({ "share": { "expiry": e } }))
+                        }
+                    }
+                    (ID_SH_DEFAULT, CBN_SELCHANGE) => {
+                        let account = self.st.borrow().view.as_ref().is_some_and(|v| v.config.share.catbox_account);
+                        if let Some(k) = share_kinds(account).get(combo_sel(h.sh_default).max(0) as usize) {
+                            self.patch(json!({ "share": { "defaultKind": k } }))
+                        }
+                    }
+                    (ID_SH_BURN, BN_CLICKED) => {
+                        self.patch(json!({ "share": { "burnAfterReading": checked(h.sh_burn) } }))
+                    }
+                    (ID_SH_INST, EN_CHANGE) if !self.updating.get() => unsafe {
+                        SetTimer(Some(hwnd), TIMER_SH_INST, 800, None);
+                    },
+                    (ID_SH_SAVE, BN_CLICKED) => {
+                        let v = get_text(h.sh_hash);
+                        if !v.trim().is_empty() {
+                            set_text(h.sh_hash, "");
+                            emit(Action::CatboxUserhash(Some(v)));
+                        }
+                    }
+                    (ID_SH_CLEAR, BN_CLICKED) => emit(Action::CatboxUserhash(None)),
+                    (ID_SH_MANAGE, BN_CLICKED) => emit(Action::Open(PathBuf::from(chup_core::share::catbox::MANAGE_URL))),
                     (ID_MONITOR, CBN_SELCHANGE) => {
                         let v = if combo_sel(h.mon) == 1 { "cursor" } else { "primary" };
                         self.patch(json!({ "stack": { "monitor": v } }))
                     }
                     _ => return None,
                 }
+                Some(LRESULT(0))
+            }
+            WM_TIMER if wp.0 == TIMER_SH_INST => {
+                unsafe {
+                    let _ = KillTimer(Some(hwnd), TIMER_SH_INST);
+                }
+                let v = get_text(self.h.borrow().sh_inst);
+                self.patch(json!({ "share": { "privatebinUrl": v } }));
                 Some(LRESULT(0))
             }
             WM_TIMER if wp.0 == TIMER_PATTERN => {

@@ -24,8 +24,9 @@ use windows::{
         Foundation::{HWND, LPARAM, S_FALSE, S_OK, WPARAM},
         Networking::WinHttp::{
             WinHttpCloseHandle, WinHttpConnect, WinHttpOpen, WinHttpOpenRequest, WinHttpQueryHeaders, WinHttpReadData,
-            WinHttpReceiveResponse, WinHttpSendRequest, WinHttpSetTimeouts, INTERNET_DEFAULT_HTTPS_PORT,
-            WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_FLAG_SECURE, WINHTTP_QUERY_FLAG_NUMBER,
+            WinHttpReceiveResponse, WinHttpSendRequest, WinHttpSetOption, WinHttpSetTimeouts,
+            INTERNET_DEFAULT_HTTPS_PORT, WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_FLAG_SECURE,
+            WINHTTP_OPTION_REDIRECT_POLICY, WINHTTP_OPTION_REDIRECT_POLICY_NEVER, WINHTTP_QUERY_FLAG_NUMBER,
             WINHTTP_QUERY_STATUS_CODE,
         },
         UI::{
@@ -321,3 +322,74 @@ impl Fetch for WinHttp {
         }
     }
 }
+
+/// POST cho chia sẻ ảnh (SPEC 19). Không theo redirect (POST chỉ tới đúng host người dùng chọn); mọi mã HTTP đều
+/// trả về để `share::*::parse` đọc (413, `status: 1`…). Timeout gửi / nhận 60 s (ảnh vài MB, mạng chậm).
+impl chup_core::share::Http for WinHttp {
+    fn post(&mut self, r: &chup_core::share::HttpRequest) -> Result<chup_core::share::HttpResponse, String> {
+        let rest = r.url.strip_prefix("https://").ok_or("chỉ hỗ trợ https")?;
+        let (host, path) = rest.split_at(rest.find('/').unwrap_or(rest.len()));
+        let (host, path) = (wide(host), wide(if path.is_empty() { "/" } else { path }));
+        // Header "K: V\r\n…" không kèm NUL (WinHTTP nhận độ dài theo slice).
+        let headers: String = r.headers.iter().map(|(k, v)| format!("{k}: {v}\r\n")).collect();
+        let headers: Vec<u16> = headers.encode_utf16().collect();
+        unsafe {
+            let agent = wide(&format!("Chup/{}", env!("CARGO_PKG_VERSION")));
+            let session = non_null(
+                WinHttpOpen(PCWSTR(agent.as_ptr()), WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, PCWSTR::null(), PCWSTR::null(), 0),
+                "WinHttpOpen",
+            )?;
+            WinHttpSetTimeouts(session.0, 10_000, 15_000, 60_000, 60_000).map_err(|e| e.to_string())?;
+            let conn = non_null(
+                WinHttpConnect(session.0, PCWSTR(host.as_ptr()), INTERNET_DEFAULT_HTTPS_PORT, 0),
+                "WinHttpConnect",
+            )?;
+            let req = non_null(
+                WinHttpOpenRequest(
+                    conn.0,
+                    w!("POST"),
+                    PCWSTR(path.as_ptr()),
+                    PCWSTR::null(),
+                    PCWSTR::null(),
+                    std::ptr::null(),
+                    WINHTTP_FLAG_SECURE,
+                ),
+                "WinHttpOpenRequest",
+            )?;
+            let never = WINHTTP_OPTION_REDIRECT_POLICY_NEVER.to_ne_bytes();
+            WinHttpSetOption(Some(req.0), WINHTTP_OPTION_REDIRECT_POLICY, Some(&never))
+                .map_err(|e| format!("tắt redirect: {e}"))?;
+            let len = r.body.len() as u32;
+            WinHttpSendRequest(req.0, Some(&headers), Some(r.body.as_ptr() as *const _), len, len, 0)
+                .map_err(|e| format!("gửi yêu cầu: {e}"))?;
+            WinHttpReceiveResponse(req.0, std::ptr::null_mut()).map_err(|e| format!("nhận trả lời: {e}"))?;
+            let mut code = 0u32;
+            let mut size = 4u32;
+            WinHttpQueryHeaders(
+                req.0,
+                WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                PCWSTR::null(),
+                Some(&mut code as *mut u32 as *mut _),
+                &mut size,
+                std::ptr::null_mut(),
+            )
+            .map_err(|e| format!("đọc mã HTTP: {e}"))?;
+            let mut body = Vec::new();
+            let mut buf = vec![0u8; 64 << 10];
+            loop {
+                let mut read = 0u32;
+                WinHttpReadData(req.0, buf.as_mut_ptr() as *mut _, buf.len() as u32, &mut read)
+                    .map_err(|e| format!("đọc dữ liệu: {e}"))?;
+                if read == 0 {
+                    break;
+                }
+                // Kết quả của dịch vụ chia sẻ chỉ vài trăm byte: chặn trả lời quá dài.
+                if body.len() < 1 << 20 {
+                    body.extend_from_slice(&buf[..read as usize]);
+                }
+            }
+            Ok(chup_core::share::HttpResponse { status: code as u16, body })
+        }
+    }
+}
+

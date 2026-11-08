@@ -13,6 +13,7 @@ mod ocr_download;
 mod overlay;
 mod preview;
 mod settings;
+mod share;
 mod stack;
 mod toolbar;
 #[path = "../common/tray.rs"]
@@ -47,7 +48,10 @@ use windows::{
 
 use self::{
     app::{Action, App},
-    win::{emit, take_actions, Handler, WM_APP_ACTION, WM_APP_ASK_UPDATE, WM_APP_OCR_DOWNLOAD, WM_APP_SHOW_SETTINGS},
+    win::{
+        emit, take_actions, Handler, WM_APP_ACTION, WM_APP_ASK_UPDATE, WM_APP_OCR_DOWNLOAD, WM_APP_SHARE_CONSENT,
+        WM_APP_SHOW_SETTINGS,
+    },
 };
 
 thread_local! {
@@ -80,6 +84,10 @@ impl Handler for AppWindow {
             }
             WM_APP_ASK_UPDATE => {
                 updater::ask_pending();
+                Some(LRESULT(0))
+            }
+            WM_APP_SHARE_CONSENT => {
+                share::ask_pending();
                 Some(LRESULT(0))
             }
             WM_APP_OCR_DOWNLOAD => {

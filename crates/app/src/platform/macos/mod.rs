@@ -18,6 +18,7 @@ mod panel;
 mod preview;
 mod selftest;
 mod settings;
+mod share;
 mod stack;
 mod toolbar;
 #[path = "../common/tray.rs"]

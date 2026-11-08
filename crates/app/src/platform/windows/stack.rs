@@ -60,6 +60,8 @@ struct State {
     bitmaps: HashMap<String, ID2D1Bitmap>,
     hits: Vec<(Hit, Rect)>,
     size: (i32, i32),
+    /// File đang upload (nút Upload của thẻ đó quay vòng bận).
+    uploading: Option<std::path::PathBuf>,
 }
 
 pub struct StackWin {
@@ -139,6 +141,19 @@ impl StackWin {
         self.relayout();
     }
 
+    /// File đang upload (`None` = không upload gì).
+    pub fn set_uploading(&self, path: Option<std::path::PathBuf>) {
+        let changed = {
+            let mut st = self.st.borrow_mut();
+            let changed = st.uploading != path;
+            st.uploading = path;
+            changed
+        };
+        if changed {
+            self.relayout();
+        }
+    }
+
     pub fn set_hidden_for_capture(&self, hidden: bool) {
         let visible = {
             let mut st = self.st.borrow_mut();
@@ -185,6 +200,7 @@ impl StackWin {
             hovering: st.hovering,
             hover: st.hover,
             edge_right: st.edge_right,
+            uploading: st.uploading.as_deref(),
             k,
         };
         let Some(layout) = ui_stack::layout(&input, &fonts) else {
@@ -230,6 +246,7 @@ impl StackWin {
             hovering: st.hovering,
             hover: st.hover,
             edge_right: st.edge_right,
+            uploading: st.uploading.as_deref(),
             k,
         };
         c.begin(Color::CLEAR);
@@ -401,6 +418,15 @@ impl Handler for StackWin {
                     Hit::Card(i) => {
                         if let Some(id) = self.shot_id(i) {
                             emit(Action::ShotOpen(id));
+                        }
+                    }
+                    Hit::Upload(i) => {
+                        if let Some(id) = self.shot_id(i) {
+                            let (x, y) = cursor_pos();
+                            // Menu chạy vòng message riêng: không giữ borrow nào lúc này.
+                            if let Some(kind) = super::share::pick(self.hwnd, x, y) {
+                                emit(Action::ShotUpload(id, kind));
+                            }
                         }
                     }
                     Hit::Copy(i) => {

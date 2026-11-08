@@ -37,6 +37,8 @@ pub const WM_APP_SHOW_SETTINGS: u32 = WM_APP + 2;
 pub const WM_APP_OCR_DOWNLOAD: u32 = WM_APP + 3;
 /// Hỏi người dùng có cập nhật không (`updater::ask_pending`), cũng ngoài lúc App bị borrow.
 pub const WM_APP_ASK_UPDATE: u32 = WM_APP + 4;
+/// Hỏi người dùng có đồng ý gửi ảnh ra ngoài không (`share::ask_pending`, SPEC 19.2), ngoài lúc App bị borrow.
+pub const WM_APP_SHARE_CONSENT: u32 = WM_APP + 5;
 
 static QUEUE: Mutex<Vec<Action>> = Mutex::new(Vec::new());
 static APP_HWND: AtomicIsize = AtomicIsize::new(0);

@@ -41,6 +41,8 @@ objc2-service-management = "=0.3.2"
 objc2-vision = "=0.3.2"
 block2 = "=0.6.2"
 dispatch2 = "=0.3.1"
+# Keychain cho userhash catbox (SPEC 19).
+security-framework = "=3.7.0"
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
@@ -70,6 +72,7 @@ windows = { version = "=0.62.2", features = [
   "Win32_System_ProcessStatus",
   "Win32_System_Registry",
   "Win32_Security",
+  "Win32_Security_Credentials",
   "Win32_System_Threading",
   "Win32_System_WinRT",
   "Win32_UI_Accessibility",

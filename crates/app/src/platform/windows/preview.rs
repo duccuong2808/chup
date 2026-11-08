@@ -60,6 +60,8 @@ use super::{
 const CMD_COPY_TEXT: usize = 1;
 const CMD_SELECT_ALL: usize = 2;
 const CMD_COPY_IMAGE: usize = 3;
+/// Mục Upload trong menu chuột phải: `CMD_SHARE_BASE + i` (SPEC 19).
+const CMD_SHARE_BASE: usize = 10;
 
 const TIMER_PILL: usize = 1;
 /// Đổi DPI: vẽ lại sau, không vẽ ngay trong message Windows gửi giữa lúc đang đẩy ảnh lên cửa sổ.
@@ -109,6 +111,8 @@ struct State {
     pan: Option<(View, (i32, i32))>,
     /// File đang được OCR (nút [T] vẽ "bận" khi trùng file đang xem).
     ocr_busy: Option<PathBuf>,
+    /// File đang upload (SPEC 19): nút Upload của đúng file đó quay vòng bận.
+    uploading: Option<PathBuf>,
     /// Vòng "bận": bước quay và lúc bắt đầu OCR (nhãn "lần đầu có thể lâu").
     spin: u32,
     busy_since: Option<std::time::Instant>,
@@ -479,6 +483,7 @@ impl Preview {
                 bar: draw_bar,
                 hover: st.hover,
                 busy,
+                uploading: (st.uploading.as_ref() == Some(&st.path)).then_some(st.spin),
                 topmost: st.topmost,
                 pill: label.zip(pill_font.as_ref()),
             };
@@ -655,11 +660,31 @@ impl Preview {
             return;
         }
         unsafe {
-            if self.st.borrow().ocr_busy.is_some() {
+            let st = self.st.borrow();
+            if st.ocr_busy.is_some() {
                 SetTimer(Some(self.hwnd), TIMER_SPIN, SPIN_MS, None);
-            } else {
+            } else if st.uploading.is_none() {
                 let _ = KillTimer(Some(self.hwnd), TIMER_SPIN);
             }
+        }
+        if self.open.get() {
+            self.repaint();
+        }
+    }
+
+    /// File đang upload (`None` = không upload gì): nút Upload của đúng file đó quay vòng "bận".
+    pub fn set_uploading(&self, path: Option<PathBuf>) {
+        let changed = {
+            let mut st = self.st.borrow_mut();
+            let changed = st.uploading != path;
+            st.uploading = path;
+            changed
+        };
+        if !changed {
+            return;
+        }
+        if self.st.borrow().uploading.is_some() {
+            unsafe { SetTimer(Some(self.hwnd), TIMER_SPIN, SPIN_MS, None) };
         }
         if self.open.get() {
             self.repaint();
@@ -811,6 +836,8 @@ impl Preview {
             let _ = AppendMenuW(menu, item(has_text), CMD_SELECT_ALL, pc(&select_all));
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, windows::core::PCWSTR::null());
             let _ = AppendMenuW(menu, MF_STRING, CMD_COPY_IMAGE, pc(&copy_image));
+            let _ = AppendMenuW(menu, MF_SEPARATOR, 0, windows::core::PCWSTR::null());
+            super::share::append_items(menu, CMD_SHARE_BASE);
             // Không giữ borrow: menu chạy vòng lặp message riêng (wndproc vẫn nhận WM_MOUSELEAVE...).
             let cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, x, y, None, self.hwnd, None);
             let _ = DestroyMenu(menu);
@@ -820,7 +847,11 @@ impl Preview {
             CMD_COPY_TEXT => self.copy(),
             CMD_SELECT_ALL => self.select_all(),
             CMD_COPY_IMAGE => emit(Action::PreviewCopy(self.st.borrow().path.clone())),
-            _ => {}
+            c => {
+                if let Some(kind) = super::share::kind_of(c, CMD_SHARE_BASE) {
+                    emit(Action::PreviewUpload(self.st.borrow().path.clone(), kind));
+                }
+            }
         }
     }
 
@@ -835,6 +866,12 @@ impl Preview {
         match b {
             Btn::Ocr => emit(Action::PreviewOcr(path)),
             Btn::Pin => self.toggle_pin(),
+            Btn::Upload => {
+                let (x, y) = cursor_pos();
+                if let Some(kind) = super::share::pick(self.hwnd, x, y) {
+                    emit(Action::PreviewUpload(path, kind));
+                }
+            }
             Btn::Copy => emit(Action::PreviewCopy(path)),
             Btn::Folder => emit(Action::PreviewReveal(path)),
             Btn::Close => self.close(),
@@ -1105,7 +1142,7 @@ impl Handler for Preview {
                 let busy = {
                     let mut st = self.st.borrow_mut();
                     st.spin = st.spin.wrapping_add(1);
-                    st.ocr_busy.is_some()
+                    st.ocr_busy.is_some() || st.uploading.is_some()
                 };
                 if !busy {
                     unsafe {

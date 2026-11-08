@@ -8,7 +8,7 @@ license.workspace = true
 
 [dependencies]
 xcap = "=0.9.8"
-image = { version = "=0.25.10", default-features = false, features = ["png"] }
+image = { version = "=0.25.10", default-features = false, features = ["png", "webp"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }
@@ -17,6 +17,14 @@ log = "0.4"
 chup-ocr-proto = { path = "../ocr-proto" }
 unicode-normalization = "=0.1.26"
 sha2 = "=0.11.1"
+# Chia sẻ ảnh (SPEC 19): mã hoá PrivateBin v2, nén, mã hoá base64/base58.
+aes-gcm = "=0.11.1"
+aes = "=0.9.4"
+pbkdf2 = "=0.13.0"
+bs58 = "=0.5.1"
+base64 = "=0.23.1"
+flate2 = "=1.1.10"
+getrandom = "=0.4.3"
 
 # Windows: clipboard tự gọi Win32 (xem clipboard.rs). OS khác tạm dùng arboard (Phase 3).
 [target.'cfg(windows)'.dependencies]

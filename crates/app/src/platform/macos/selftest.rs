@@ -115,7 +115,28 @@ impl App {
                 save(&dir, "05-stack.png", s.snapshot());
                 s.inject(Ev::Enter);
                 s.inject(Ev::Move { p: (60, 60) });
+                save(&dir, "06a-stack-header.png", s.snapshot());
+                s.inject(Ev::Move { p: (160, 160) });
                 save(&dir, "06-stack-hover.png", s.snapshot());
+                // Đang upload ảnh này (SPEC 19): nút Upload hiện cả khi không hover, quay vòng bận.
+                if let Some(path) = self.model.stack.list().first().map(|sh| sh.path.clone()) {
+                    s.inject(Ev::Leave);
+                    s.set_uploading(Some(path.clone()));
+                    save(&dir, "06b-stack-uploading.png", s.snapshot());
+                    s.set_uploading(None);
+                    // Gọi thẳng thread upload (không qua Model: kết quả bị bỏ qua, không ghi clipboard). Log
+                    // `share: …` cho biết curl + Litterbox / PrivateBin chạy được trên máy này.
+                    for (id, kind) in [(9001, chup_core::share::ShareKind::Image), (9002, chup_core::share::ShareKind::Private)] {
+                        super::share::start(chup_core::share::UploadJob {
+                            id,
+                            path: path.clone(),
+                            kind,
+                            expiry: chup_core::share::Expiry::H1,
+                            burn: false,
+                            privatebin_url: chup_core::share::DEFAULT_PRIVATEBIN.into(),
+                        });
+                    }
+                }
                 emit(Action::Toast(chup_core::model::Toast::info("Thông báo thử: đã lưu ảnh vào thư mục Chup")));
                 next(5, 500);
             }
@@ -177,6 +198,9 @@ impl App {
                 p.set_ocr_busy(Some(dir.join("12-ocr-input.png")));
                 save(&dir, "14b-preview-busy.png", p.snapshot());
                 p.set_ocr_busy(None);
+                p.set_uploading(Some(dir.join("12-ocr-input.png")));
+                save(&dir, "14c-preview-uploading.png", p.snapshot());
+                p.set_uploading(None);
                 // OCR nền khi mở Preview (SPEC 17.2).
                 next(11, 2500);
             }

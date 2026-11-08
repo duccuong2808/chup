@@ -15,5 +15,6 @@ pub mod model;
 pub mod ocr;
 pub mod preview;
 pub mod selection;
+pub mod share;
 pub mod stack;
 pub mod update;

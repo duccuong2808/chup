@@ -29,7 +29,7 @@
 - Tự động chọn vùng (nhận diện cửa sổ, phần tử UI): làm ở Phase 2, xem mục 16.
 - Chụp cuộn (scroll capture).
 - Vùng chọn vắt qua nhiều màn hình (giới hạn trong 1 màn hình).
-- Upload cloud / share link.
+- Upload cloud / share link: làm sau, xem mục 19 (chỉ Litterbox và PrivateBin, không lưu trữ lâu dài).
 - Linux **Wayland** (lý do ở mục 11).
 - Lưu stack qua lần khởi động lại (khởi động app thì stack rỗng).
 
@@ -132,6 +132,7 @@
   - **Hover**: hiện các nút nhỏ:
     - Copy: copy ảnh vào clipboard.
     - Folder: mở Explorer và chọn sẵn file.
+    - Upload: menu Link ảnh / Link riêng tư / Link lâu dài (mục 19).
     - ✕: bỏ khỏi stack (không xoá file).
 - **Header** (chỉ hiện khi hover): nút **Xoá hết**, chỉ clear stack, không xoá file.
 - **Hành vi cửa sổ**:
@@ -168,6 +169,7 @@ thẻ nền trắng trên nền xám. Cửa sổ cỡ cố định theo trang ca
 | Chụp ảnh | Tự động chọn vùng (SPEC 16); sau khi chụp (copy clipboard, giữ/đóng vùng chọn); ẩn toolbar/stack lúc chụp |
 | Copy chữ (OCR) | Ngôn ngữ, trạng thái + nút tải/xoá gói tiếng Việt, tự nhận diện khi mở Preview |
 | Stack và Preview | Cạnh và màn hình của stack; các mục Preview (SPEC 17.4) |
+| Chia sẻ | Thời hạn link, kiểu mặc định, xoá sau lần xem đầu, instance PrivateBin, userhash catbox (mục 19.3) |
 | Giới thiệu | Đầu trang: icon app 48 px (macOS 64 pt), tên, "Phiên bản X"; dòng nhỏ commit (7 ký tự đầu; build tay lấy từ git, đánh dấu "bản build tay") · thời điểm build (UTC); mô tả; nút Trang dự án, Có gì mới (trang Releases), Báo lỗi, góp ý (Issues), Mở thư mục log. Mục Cập nhật (mục 18): tự kiểm tra mỗi ngày, "Kiểm tra lần cuối: …", nút Kiểm tra cập nhật. Windows: nguồn engine/dữ liệu OCR tiếng Việt, nút Giấy phép (`NOTICE-ocr.txt`) (chup-jpf) |
 
 Các mục:
@@ -414,6 +416,9 @@ Mục tiêu; đo thực tế ở bước 1.4 rồi chỉnh lại.
 | 3.1.3 | macOS: tự động chọn vùng | Pass mục 16.7 trên macOS |
 | 3.1.4 | macOS: `.dmg`, CI macOS | Cài từ `.dmg` chạy được trên tài khoản macOS mới |
 | 3.2 | Linux X11 | Pass mục 10 trên X11 |
+| **Khác** | | |
+| S.1 | Spike chia sẻ (mục 19.4) | Chốt định dạng PrivateBin, giới hạn cỡ |
+| S.2 | Chia sẻ ảnh qua link (mục 19) | Pass mục 19.5 trên Windows và macOS |
 
 ## 13. Quyết định đã chốt
 
@@ -803,7 +808,8 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-preview-design.md`.
 - **Opacity**: mặc định theo Cài đặt (100%, chọn 100–20%). `Ctrl` + lăn chuột chỉnh ±10% cho cửa sổ đang mở
   (không lưu). Không thấp hơn 20%.
 - **Luôn nằm trên** cửa sổ khác: Cài đặt (mặc định bật). Nút ghim trên toolbar bật/tắt cho cửa sổ đang mở.
-- **Toolbar** góc trên-phải, chỉ hiện khi hover: [T] [Ghim] [Copy] [Folder] [✕] ([T] = OCR, mục 15.2).
+- **Toolbar** góc trên-phải, chỉ hiện khi hover: [T] [Ghim] [Upload] [Copy] [Folder] [✕] ([T] = OCR, mục 15.2;
+  Upload: mục 19).
 - **Chọn chữ** (khi đã nhận diện, mục 15.2):
   - Con trỏ I-beam trên chữ. Kéo bắt đầu trên chữ là chọn theo từng ký tự (qua nhiều dòng được); kéo bắt đầu ở
     chỗ khác là di chuyển cửa sổ (đang phóng to thì kéo ảnh). `Alt` + kéo luôn di chuyển cửa sổ. Bấm đúp chọn một từ, bấm 3 lần chọn cả dòng.
@@ -904,3 +910,61 @@ Thiết kế chi tiết: `docs/plans/2026-11-01-preview-design.md`.
       mở lại đúng bản mới (Giới thiệu ghi phiên bản mới), cấu hình và OCR tiếng Việt đã tải còn nguyên.
 - [ ] Đang có frame / Preview khi tìm thấy bản mới: chỉ hỏi sau khi đóng.
 - [ ] Mất mạng, bấm "Kiểm tra cập nhật": toast lỗi, app vẫn chạy.
+
+## 19. Chia sẻ ảnh qua link
+
+Thiết kế: `docs/plans/2026-11-08-share-design.md` (epic beads `chup-share`).
+
+### 19.1 Mục tiêu
+
+- Bấm một nút để có link ảnh dán vào chat, issue. Không cần tài khoản hay API key.
+- Ảnh nhạy cảm có lựa chọn mã hoá đầu cuối: dịch vụ lưu ảnh không đọc được nội dung.
+- Link mặc định đều có hạn; link lâu dài chỉ khi người dùng dùng tài khoản catbox của mình. Chup không tự host gì.
+
+### 19.2 Hành vi
+
+- Nút **Upload** ở hàng nút hover của thumbnail (mục 5.4) và toolbar Preview (mục 17.2), cộng mục trong menu chuột phải
+  Preview. Bấm thì mở menu:
+  - **Link ảnh**: gửi PNG lên Litterbox (catbox.moe), link ảnh trực tiếp, app chat hiện ảnh ngay. Litterbox xem được ảnh.
+  - **Link riêng tư**: Chup mã hoá ảnh (AES-256-GCM, định dạng PrivateBin v2) rồi gửi lên instance PrivateBin (mặc
+    định `https://privatebin.net`). Khoá nằm sau `#` của link nên không tới server. Người nhận mở link, trang
+    PrivateBin giải mã trong trình duyệt.
+  - **Link lâu dài (catbox)**: chỉ hiện khi đã nhập userhash catbox trong Cài đặt. Gửi PNG lên catbox.moe bằng tài
+    khoản người dùng: không hết hạn, xoá trên trang quản lý của catbox. catbox xem được ảnh.
+  - Mục đầu menu là kiểu mặc định trong Cài đặt; hai kiểu đầu ghi kèm hạn ("· 1 ngày").
+- Toast "Đang upload…"; xong thì link vào clipboard, toast "Đã copy link · hết hạn sau …". Lỗi: toast ngắn, chi tiết
+  ghi log. Mỗi lúc một lần upload; bấm khi đang bận thì toast báo bận.
+- Lần đầu dùng mỗi kiểu: hộp thoại nói ảnh được gửi tới đâu và ai xem được; đồng ý thì không hỏi lại.
+- File gửi lên luôn tên `chup.png` (không lộ tên file thật). Không gửi gì khi người dùng chưa chọn mục trong menu.
+- Link riêng tư, ảnh quá cỡ với instance (privatebin.net: PNG ~2,4 MB): Chup gửi lại một lần dạng WebP lossless (giữ
+  nguyên pixel, nhỏ hơn 35–50%); vẫn quá cỡ thì toast gợi ý dùng Link ảnh hoặc đổi instance. Server báo lỗi (ví dụ
+  "đợi 60 giây giữa hai lần đăng") thì hiện nguyên câu đó.
+- Log không bao giờ chứa khoá, userhash hay link riêng tư đầy đủ.
+
+### 19.3 Cài đặt (trang "Chia sẻ")
+
+- Thời hạn: 1 giờ / 12 giờ / **1 ngày** / 3 ngày (dùng chung cho hai kiểu).
+- Kiểu mặc định: Link ảnh / Link riêng tư.
+- Link riêng tư: "Xoá sau lần xem đầu" (mặc định tắt); địa chỉ instance PrivateBin (chỉ nhận `https://`).
+- Link lâu dài: ô userhash catbox (dạng mật khẩu; Lưu / Xoá; không hiện lại giá trị đã lưu), nút "Quản lý ảnh trên
+  catbox". Userhash lưu trong Credential Manager (Windows) / Keychain (macOS), không nằm trong config.
+
+Config (field mới, không tăng version): `"share": { "expiry": "1d", "defaultKind": "image", "burnAfterReading": false,
+"privatebinUrl": "https://privatebin.net/", "catboxAccount": false,
+"consent": { "image": false, "private": false, "permanent": false } }`. `expiry`: `1h` / `12h` / `1d` / `3d`.
+
+### 19.4 Spike (xong 2026-11-08, `docs/plans/2026-11-08-share-spike.md`)
+
+Gửi PNG thử (không có nội dung thật) lên Litterbox và privatebin.net: chốt dạng `attachment` của PrivateBin 2.x, mở
+link trên trình duyệt thấy ảnh, đo cỡ tối đa của privatebin.net, giữ một paste làm vector test giải mã.
+
+### 19.5 Nghiệm thu
+
+- [ ] Windows và macOS: Upload từ Stack và từ Preview, cả hai kiểu; link vào clipboard, toast đúng hạn.
+- [ ] Dán Link ảnh vào Slack / GitHub: hiện ảnh. Mở Link riêng tư trên trình duyệt khác (cả điện thoại): thấy ảnh.
+- [ ] "Xoá sau lần xem đầu": mở lần hai thì PrivateBin báo đã xoá.
+- [ ] Mất mạng: toast lỗi, app không treo. Hộp thoại đồng ý chỉ hiện lần đầu mỗi kiểu.
+- [ ] Đổi ngôn ngữ giao diện: menu, toast, hộp thoại, trang Cài đặt đổi theo.
+- [ ] Nhập userhash: mục Link lâu dài hiện; ảnh có trong trang quản lý catbox; Xoá userhash: mục biến mất; config.json
+      không chứa userhash.
+- [ ] Log không có khoá, userhash hay phần `#` của link riêng tư.

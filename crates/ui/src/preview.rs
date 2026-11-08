@@ -55,14 +55,17 @@ pub enum Btn {
     /// OCR: copy chữ trong ảnh (SPEC 15.2). Đang OCR thì vẽ vòng "bận", bấm lần nữa là huỷ.
     Ocr,
     Pin,
+    /// Chia sẻ qua link (SPEC 19): mở menu chọn kiểu. Đang upload thì vẽ vòng "bận".
+    Upload,
     Copy,
     Folder,
     Close,
 }
 
-pub const BUTTONS: [(Btn, Icon); 5] = [
+pub const BUTTONS: [(Btn, Icon); 6] = [
     (Btn::Ocr, Icon::Text),
     (Btn::Pin, Icon::Pin),
+    (Btn::Upload, Icon::Upload),
     (Btn::Copy, Icon::Copy),
     (Btn::Folder, Icon::Folder),
     (Btn::Close, Icon::Close),
@@ -235,6 +238,8 @@ pub struct Top<'a, F> {
     pub hover: Option<Btn>,
     /// Đang OCR ảnh này: bước quay của vòng "bận" trên nút [T]. Nút [T] hiện cả khi chuột ở ngoài cửa sổ.
     pub busy: Option<u32>,
+    /// Đang upload ảnh này: bước quay của vòng "bận" trên nút Upload (hiện cả khi chuột ở ngoài).
+    pub uploading: Option<u32>,
     pub topmost: bool,
     /// Nhãn zoom / opacity và font của nó.
     pub pill: Option<(&'a str, &'a F)>,
@@ -264,7 +269,12 @@ pub fn paint_top<C: Canvas>(c: &C, theme: &Theme, t: &Top<C::Font>) {
     let b = BTN * k;
     let x0 = bar_x0(w, k);
     for (i, (btn, icon)) in BUTTONS.iter().enumerate() {
-        let busy = *btn == Btn::Ocr && t.busy.is_some();
+        let spin = match btn {
+            Btn::Ocr => t.busy,
+            Btn::Upload => t.uploading,
+            _ => None,
+        };
+        let busy = spin.is_some();
         if !t.bar && !busy {
             continue;
         }
@@ -281,7 +291,7 @@ pub fn paint_top<C: Canvas>(c: &C, theme: &Theme, t: &Top<C::Font>) {
             Color::rgba(0, 0, 0, if hot { 0.85 } else { 0.6 })
         };
         c.fill_round(r, 6.0 * k, bg);
-        match t.busy.filter(|_| busy) {
+        match spin {
             Some(step) => paint_spinner(c, r, step, k),
             None => {
                 let is = 16.0 * k;
@@ -312,9 +322,9 @@ mod tests {
     #[test]
     fn bar_hits_are_right_aligned() {
         let hits = bar_hits(400.0, 1.0);
-        assert_eq!(hits.len(), 5);
-        assert_eq!(hits[4], (Btn::Close, Rect::new(400 - 8 - 28, 8, 28, 28)));
-        assert_eq!(hits[0].1.x, 400 - 8 - 5 * 28 - 4 * 4);
+        assert_eq!(hits.len(), 6);
+        assert_eq!(hits[5], (Btn::Close, Rect::new(400 - 8 - 28, 8, 28, 28)));
+        assert_eq!(hits[0].1.x, 400 - 8 - 6 * 28 - 5 * 4);
     }
 
     #[test]
@@ -364,6 +374,7 @@ mod tests {
             bar: true,
             hover: None,
             busy: Some(3),
+            uploading: None,
             topmost: true,
             pill: Some(("120%", &f)),
         };
@@ -383,6 +394,31 @@ mod tests {
     }
 
     #[test]
+    fn uploading_shows_upload_button_with_spinner() {
+        let theme = Theme::new(true);
+        let c = RecordingCanvas::default();
+        let t = Top {
+            k: 1.0,
+            m: 10,
+            size: (300.0, 200.0),
+            sel: &[],
+            bar: false,
+            hover: None,
+            busy: None,
+            uploading: Some(0),
+            topmost: false,
+            pill: None::<(&str, &FixedFont)>,
+        };
+        paint_top(&c, &theme, &t);
+        let ops = c.ops();
+        assert!(!ops.iter().any(|o| matches!(o, Op::Icon(..))), "chỉ vòng quay, không icon");
+        let accent = ops.iter().filter(|o| matches!(o, Op::Fill(_, _, col) if *col == theme.accent.with_alpha(0.9))).count();
+        assert_eq!(accent, 1, "chỉ nút Upload");
+        let hits = bar_hits(300.0, 1.0);
+        assert_eq!(hits[2].0, Btn::Upload);
+    }
+
+    #[test]
     fn busy_shows_ocr_button_without_hover() {
         let theme = Theme::new(true);
         let top = |busy| Top {
@@ -393,6 +429,7 @@ mod tests {
             bar: false,
             hover: None,
             busy,
+            uploading: None,
             topmost: false,
             pill: None::<(&str, &FixedFont)>,
         };

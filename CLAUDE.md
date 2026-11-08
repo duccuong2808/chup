@@ -21,6 +21,9 @@ Lõi (`chup-core`) và code vẽ (`chup-ui`, trait `Canvas`) tách riêng, khôn
 - Phase 3.1 macOS (SPEC 11, 12; thiết kế `docs/plans/2026-11-05-macos-design.md`, epic beads `chup-mac`): code đủ 5 mốc
   (crate `ui`, vỏ `platform/macos`, Preview, OCR Vision, tự chọn vùng, `.dmg`, CI macOS), đã chạy `CHUP_SELFTEST` trên máy
   dev. Test VM Windows sau refactor (`chup-mac.6`) xong, kết quả ở `docs/testing.md`. Còn: test tay trên Mac có quyền Ghi màn hình (`chup-mac.7`).
+- Chia sẻ ảnh qua link (SPEC mục 19; thiết kế `docs/plans/2026-11-08-share-design.md`, spike `…-share-spike.md`, epic
+  beads `chup-share`): Litterbox, PrivateBin v2 (mã hoá trong `core::share`), catbox bằng userhash (Credential Manager /
+  Keychain). Logic + test ở `crates/core/src/share/`; test mạng thật `cargo test -p chup-core share_live -- --ignored`.
 
 ## Lệnh
 

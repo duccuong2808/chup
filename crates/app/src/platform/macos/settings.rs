@@ -14,6 +14,7 @@ use chup_core::{
     config::{AfterCapture, Config, Edge, OcrLanguage, PreviewPosition, StackMonitor},
     hotkey_name::{record, vk_from_mac, Mods as HkMods, Recorded},
     i18n::{fill, t, Strings, UiLanguage},
+    share::{Expiry, ShareKind},
 };
 use objc2::{
     define_class, msg_send,
@@ -24,7 +25,8 @@ use objc2::{
 use objc2_app_kit::NSAppearanceCustomization;
 use objc2_app_kit::{
     NSApplication, NSBackingStoreType, NSButton, NSControlStateValueOff, NSControlStateValueOn, NSEvent,
-    NSEventMask, NSEventModifierFlags, NSFont, NSImageView, NSLayoutAttribute, NSOpenPanel, NSPopUpButton, NSStackView,
+    NSEventMask, NSEventModifierFlags, NSFont, NSImageView, NSLayoutAttribute, NSOpenPanel, NSPopUpButton, NSSecureTextField,
+    NSStackView,
     NSTabView, NSTabViewItem, NSTextField, NSUserInterfaceLayoutOrientation, NSView, NSWindow, NSWindowDelegate,
     NSWindowStyleMask,
 };
@@ -74,6 +76,31 @@ const ID_UPD_AUTO: isize = 72;
 const ID_UPD_CHECK: isize = 73;
 const ID_NEWS: isize = 74;
 const ID_ISSUES: isize = 75;
+const ID_SH_EXP: isize = 80;
+const ID_SH_DEFAULT: isize = 81;
+const ID_SH_BURN: isize = 82;
+const ID_SH_INST: isize = 83;
+const ID_SH_SAVE: isize = 84;
+const ID_SH_CLEAR: isize = 85;
+const ID_SH_MANAGE: isize = 86;
+
+/// Kiểu chọn được làm mặc định: Link lâu dài chỉ khi đã có tài khoản catbox.
+fn share_kinds(account: bool) -> Vec<ShareKind> {
+    let mut v = vec![ShareKind::Image, ShareKind::Private];
+    if account {
+        v.push(ShareKind::Permanent);
+    }
+    v
+}
+
+fn kind_name(k: ShareKind) -> &'static str {
+    let t = t();
+    match k {
+        ShareKind::Image => t.share_kind_image,
+        ShareKind::Private => t.share_kind_private,
+        ShareKind::Permanent => t.share_kind_permanent,
+    }
+}
 
 /// Chữ lấy theo ngôn ngữ giao diện hiện hành.
 type Text = fn(&Strings) -> &'static str;
@@ -149,6 +176,14 @@ struct Controls {
     pv_size: Option<Retained<NSPopUpButton>>,
     upd_auto: Option<Retained<NSButton>>,
     upd_last: Option<Retained<NSTextField>>,
+    // Chia sẻ (SPEC 19)
+    sh_exp: Option<Retained<NSPopUpButton>>,
+    sh_default: Option<Retained<NSPopUpButton>>,
+    sh_burn: Option<Retained<NSButton>>,
+    sh_inst: Option<Retained<NSTextField>>,
+    sh_hash: Option<Retained<NSSecureTextField>>,
+    sh_hash_state: Option<Retained<NSTextField>>,
+    sh_clear: Option<Retained<NSButton>>,
     status: Option<Retained<NSTextField>>,
 }
 
@@ -490,6 +525,54 @@ impl Settings {
         c.pv_pos = Some(pv_pos);
         c.pv_size = Some(pv_size);
 
+        // Chia sẻ (SPEC 19).
+        let sh_intro = self.hint(t.st_share_intro);
+        let exps: Vec<String> = Expiry::ALL.iter().map(|e| e.label().to_string()).collect();
+        let sh_exp = self.popup(&exps, ID_SH_EXP);
+        let row_exp = self.row(t.st_share_expiry, &sh_exp);
+        let sh_default = self.popup(&[], ID_SH_DEFAULT);
+        let row_default = self.row(t.st_share_default, &sh_default);
+        let sec_private = self.section(t.st_share_private_card);
+        let sh_burn = self.check(t.st_share_burn, ID_SH_BURN);
+        let sh_inst = NSTextField::textFieldWithString(&ns(""), self.mtm);
+        sh_inst.setTag(ID_SH_INST);
+        unsafe {
+            sh_inst.setTarget(Some(self.target()));
+            sh_inst.setAction(Some(sel!(onControl:)));
+        }
+        sh_inst.setTranslatesAutoresizingMaskIntoConstraints(false);
+        sh_inst.widthAnchor().constraintEqualToConstant(320.0).setActive(true);
+        let row_inst = self.row(t.st_share_instance, &sh_inst);
+        let sec_catbox = self.section(t.st_share_catbox_card);
+        let catbox_note = self.hint(t.st_share_catbox_note);
+        let sh_hash = NSSecureTextField::new(self.mtm);
+        sh_hash.setTranslatesAutoresizingMaskIntoConstraints(false);
+        sh_hash.widthAnchor().constraintEqualToConstant(220.0).setActive(true);
+        let sh_hash_state = self.hint("");
+        let row_hash = {
+            let l = self.label(t.st_share_userhash);
+            self.stack(&[&l, &sh_hash, &sh_hash_state], false)
+        };
+        let sh_save = self.button(t.st_share_save, ID_SH_SAVE);
+        let sh_clear = self.button(t.st_share_clear, ID_SH_CLEAR);
+        let sh_manage = self.button(t.st_share_manage, ID_SH_MANAGE);
+        let sh_buttons = self.stack(&[&sh_save, &sh_clear, &sh_manage], false);
+        self.page(
+            &tabs,
+            t.page_share,
+            &[
+                &sh_intro, &row_exp, &row_default, &sec_private, &sh_burn, &row_inst, &sec_catbox, &catbox_note,
+                &row_hash, &sh_buttons,
+            ],
+        );
+        c.sh_exp = Some(sh_exp);
+        c.sh_default = Some(sh_default);
+        c.sh_burn = Some(sh_burn);
+        c.sh_inst = Some(sh_inst);
+        c.sh_hash = Some(sh_hash);
+        c.sh_hash_state = Some(sh_hash_state);
+        c.sh_clear = Some(sh_clear);
+
         // Giới thiệu: icon + tên + phiên bản, dòng build nhỏ, mô tả, liên kết; rồi mục Cập nhật.
         let name = self.label("Chup");
         name.setFont(Some(&NSFont::boldSystemFontOfSize(20.0)));
@@ -601,6 +684,27 @@ impl Settings {
             };
             select(&c.pv_pos, pos);
             select(&c.pv_size, SIZES.iter().position(|s| *s >= cfg.preview.size).unwrap_or(SIZES.len() - 1));
+            let sc = &cfg.share;
+            select(&c.sh_exp, Expiry::ALL.iter().position(|e| *e == sc.expiry).unwrap_or(2));
+            if let Some(p) = &c.sh_default {
+                let kinds = share_kinds(sc.catbox_account);
+                p.removeAllItems();
+                let titles: Vec<Retained<NSString>> = kinds.iter().map(|k| ns(kind_name(*k))).collect();
+                p.addItemsWithTitles(&NSArray::from_retained_slice(&titles));
+                p.selectItemAtIndex(kinds.iter().position(|k| *k == sc.default_kind).unwrap_or(0) as isize);
+            }
+            set_on(&c.sh_burn, sc.burn_after_reading);
+            if let Some(f) = &c.sh_inst {
+                if self.window.firstResponder().is_none_or(|r| !std::ptr::eq(Retained::as_ptr(&r).cast::<u8>(), Retained::as_ptr(f).cast())) {
+                    f.setStringValue(&ns(&sc.privatebin_url));
+                }
+            }
+            if let Some(l) = &c.sh_hash_state {
+                l.setStringValue(&ns(if sc.catbox_account { t.st_share_saved } else { t.st_share_not_saved }));
+            }
+            if let Some(b) = &c.sh_clear {
+                b.setEnabled(sc.catbox_account);
+            }
         }
         *self.view.borrow_mut() = Some(v);
     }
@@ -696,6 +800,33 @@ impl Settings {
             ID_LOG => emit(Action::Open(super::util::dirs().log_dir.join("chup.log"))),
             ID_UPD_AUTO => self.patch(json!({ "update": { "autoCheck": is_on(sender) } })),
             ID_UPD_CHECK => emit(Action::CheckUpdateNow),
+            ID_SH_EXP => {
+                let e = Expiry::ALL[selected(sender).min(Expiry::ALL.len() - 1)];
+                self.patch(json!({ "share": { "expiry": e } }));
+            }
+            ID_SH_DEFAULT => {
+                let account = self.view.borrow().as_ref().is_some_and(|v| v.config.share.catbox_account);
+                if let Some(k) = share_kinds(account).get(selected(sender)) {
+                    self.patch(json!({ "share": { "defaultKind": k } }));
+                }
+            }
+            ID_SH_BURN => self.patch(json!({ "share": { "burnAfterReading": is_on(sender) } })),
+            ID_SH_INST => {
+                let s: Retained<NSString> = unsafe { msg_send![sender, stringValue] };
+                self.patch(json!({ "share": { "privatebinUrl": s.to_string() } }));
+            }
+            ID_SH_SAVE => {
+                let field = self.c.borrow().sh_hash.clone();
+                if let Some(f) = field {
+                    let v = f.stringValue().to_string();
+                    if !v.trim().is_empty() {
+                        f.setStringValue(&ns(""));
+                        emit(Action::CatboxUserhash(Some(v)));
+                    }
+                }
+            }
+            ID_SH_CLEAR => emit(Action::CatboxUserhash(None)),
+            ID_SH_MANAGE => emit(Action::Open(chup_core::share::catbox::MANAGE_URL.into())),
             _ => {}
         }
     }

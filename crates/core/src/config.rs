@@ -1,6 +1,7 @@
 //! Load / save / migrate `config.json` (SPEC 6.10).
 
 use crate::i18n::{fill, t, UiLanguage};
+use crate::share::{self, Expiry, ShareKind};
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -142,6 +143,55 @@ impl Default for AutoDetectConfig {
     }
 }
 
+/// Người dùng đã đồng ý gửi ảnh ra ngoài theo từng kiểu (hộp thoại lần đầu, SPEC 19.2).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ShareConsent {
+    pub image: bool,
+    pub private: bool,
+    pub permanent: bool,
+}
+
+/// Chia sẻ ảnh qua link (SPEC 19.3). Field mới có serde default nên không tăng version.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct ShareConfig {
+    pub expiry: Expiry,
+    /// Kiểu ở đầu menu Upload.
+    pub default_kind: ShareKind,
+    /// PrivateBin: xoá sau lần xem đầu.
+    pub burn_after_reading: bool,
+    /// Đã chuẩn hoá (`https://…/`).
+    pub privatebin_url: String,
+    /// Đã cất userhash catbox trong kho bí mật của OS (bản thân userhash không bao giờ nằm trong config).
+    pub catbox_account: bool,
+    pub consent: ShareConsent,
+}
+
+impl Default for ShareConfig {
+    fn default() -> Self {
+        Self {
+            expiry: Expiry::default(),
+            default_kind: ShareKind::Image,
+            burn_after_reading: false,
+            privatebin_url: share::DEFAULT_PRIVATEBIN.into(),
+            catbox_account: false,
+            consent: ShareConsent::default(),
+        }
+    }
+}
+
+impl ShareConfig {
+    /// Địa chỉ hỏng thì về mặc định; chưa có tài khoản catbox thì Link lâu dài không làm mặc định được.
+    fn normalize(&mut self) {
+        self.privatebin_url =
+            share::normalize_privatebin_url(&self.privatebin_url).unwrap_or_else(|| share::DEFAULT_PRIVATEBIN.into());
+        if self.default_kind == ShareKind::Permanent && !self.catbox_account {
+            self.default_kind = ShareKind::Image;
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct StackConfig {
@@ -239,6 +289,8 @@ pub struct Config {
     pub ui_language: UiLanguage,
     /// Tự cập nhật (chup-22n), không tăng version.
     pub update: UpdateConfig,
+    /// Chia sẻ ảnh qua link (SPEC 19), không tăng version.
+    pub share: ShareConfig,
 }
 
 impl Default for Config {
@@ -258,6 +310,7 @@ impl Default for Config {
             auto_detect: AutoDetectConfig::default(),
             ui_language: UiLanguage::System,
             update: UpdateConfig::default(),
+            share: ShareConfig::default(),
         }
     }
 }
@@ -299,6 +352,7 @@ impl Config {
         }
         self.version = CONFIG_VERSION;
         self.preview.clamp();
+        self.share.normalize();
         self
     }
 }
@@ -366,6 +420,11 @@ pub fn apply_patch(cfg: &Config, patch: &serde_json::Value) -> Result<Config, St
     let mut next: Config = serde_json::from_value(v).map_err(|e| fill(t().err_config_value, &[&e]))?;
     next.version = CONFIG_VERSION;
     next.preview.clamp();
+    next.share.privatebin_url =
+        share::normalize_privatebin_url(&next.share.privatebin_url).ok_or(t().st_share_instance_bad)?;
+    if next.share.default_kind == ShareKind::Permanent && !next.share.catbox_account {
+        next.share.default_kind = ShareKind::Image;
+    }
     if next.file_name_pattern.trim().is_empty() {
         return Err(t().err_pattern_empty.into());
     }
@@ -391,6 +450,27 @@ mod tests {
         assert_eq!(next.hotkeys.select_region, DEFAULT_SELECT);
         assert_eq!(next.stack.edge, Edge::Left);
         assert_eq!(next.save_dir, PathBuf::from("/tmp/pics"));
+    }
+
+    #[test]
+    fn share_defaults_and_privatebin_url_validation() {
+        let cfg = Config::with_save_dir(Path::new("/x"));
+        assert_eq!(cfg.share.privatebin_url, "https://privatebin.net/");
+        assert_eq!(cfg.share.expiry, Expiry::D1);
+        let next = apply_patch(&cfg, &json!({ "share": { "privatebinUrl": " https://paste.example.org/pb " } })).unwrap();
+        assert_eq!(next.share.privatebin_url, "https://paste.example.org/pb/");
+        assert!(apply_patch(&cfg, &json!({ "share": { "privatebinUrl": "http://x.org" } })).is_err());
+        let next = apply_patch(&cfg, &json!({ "share": { "defaultKind": "permanent" } })).unwrap();
+        assert_eq!(next.share.default_kind, ShareKind::Image, "chưa có tài khoản catbox");
+        // Config cũ (chưa có "share"): mặc định; địa chỉ hỏng trong file: về mặc định.
+        let dir = std::env::temp_dir().join(format!("chup-cfg-share-{}", ulid::Ulid::generate()));
+        fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("config.json");
+        fs::write(&p, r#"{ "version": 4, "share": { "privatebinUrl": "ftp://x", "expiry": "3d" } }"#).unwrap();
+        let cfg = load(&p, &dir).config;
+        assert_eq!(cfg.share.privatebin_url, "https://privatebin.net/");
+        assert_eq!(cfg.share.expiry, Expiry::D3);
+        assert!(!cfg.share.consent.image);
     }
 
     #[test]

@@ -67,6 +67,8 @@ struct State {
     /// Đang kéo nền để di chuyển cửa sổ: rect cửa sổ lúc bấm, con trỏ lúc bấm.
     moving: Option<(Rect, (i32, i32))>,
     ocr_busy: Option<PathBuf>,
+    /// File đang upload (SPEC 19): nút Upload của đúng file đó quay vòng bận.
+    uploading: Option<PathBuf>,
     /// Vòng "bận" của nút [T]: bước quay, lúc bắt đầu OCR (nhãn "lần đầu có thể lâu"), timer quay.
     spin: u32,
     busy_since: Option<std::time::Instant>,
@@ -397,6 +399,7 @@ impl Preview {
                     bar: st.hovering,
                     hover: st.hover,
                     busy,
+                    uploading: (st.uploading.as_ref() == Some(&st.path)).then_some(st.spin),
                     topmost: st.topmost,
                     pill: label.zip(pill_font.as_ref()),
                 };
@@ -574,7 +577,7 @@ impl Preview {
             if changed {
                 st.busy_since = busy.as_ref().map(|_| std::time::Instant::now());
                 st.spin = 0;
-                if busy.is_none() {
+                if busy.is_none() && st.uploading.is_none() {
                     st.spin_timer = None;
                 }
             }
@@ -592,6 +595,24 @@ impl Preview {
         }
     }
 
+    /// File đang upload (`None` = không upload gì): nút Upload của đúng file đó quay vòng "bận".
+    pub fn set_uploading(&self, path: Option<PathBuf>) {
+        let (changed, start) = {
+            let mut st = self.st.borrow_mut();
+            let changed = st.uploading != path;
+            // Vòng quay đang chạy cho OCR thì dùng chung, không hẹn thêm.
+            let start = changed && path.is_some() && st.spin_timer.is_none();
+            st.uploading = path;
+            (changed, start)
+        };
+        if start {
+            self.spin_later();
+        }
+        if changed && self.open.get() {
+            self.paint();
+        }
+    }
+
     /// Hẹn bước quay tiếp theo của vòng "bận". Dừng khi hết bận.
     fn spin_later(&self) {
         let me = self.me.borrow().clone();
@@ -600,7 +621,7 @@ impl Preview {
             let busy = {
                 let mut st = p.st.borrow_mut();
                 st.spin = st.spin.wrapping_add(1);
-                st.ocr_busy.is_some()
+                st.ocr_busy.is_some() || st.uploading.is_some()
             };
             if busy {
                 if p.open.get() {
@@ -708,11 +729,19 @@ impl Preview {
         st.img.as_ref().filter(|_| self.open.get() && st.path == path).cloned()
     }
 
-    fn click(&self, b: Btn) {
+    /// Bấm nút toolbar; `wp`: điểm bấm (toạ độ cửa sổ, px) để mở menu Upload ngay đó.
+    fn click(&self, b: Btn, wp: (i32, i32)) {
         let path = self.st.borrow().path.clone();
         match b {
             Btn::Ocr => emit(Action::PreviewOcr(path)),
             Btn::Pin => self.toggle_pin(),
+            Btn::Upload => {
+                let k = self.panel.window.backingScaleFactor();
+                let at = NSPoint::new(wp.0 as f64 / k, wp.1 as f64 / k);
+                super::share::popup(&self.panel.view, at, self.mtm, move |kind| {
+                    emit(Action::PreviewUpload(path.clone(), kind))
+                });
+            }
             Btn::Copy => emit(Action::PreviewCopy(path)),
             Btn::Folder => emit(Action::PreviewReveal(path)),
             Btn::Close => self.close(),
@@ -739,6 +768,7 @@ impl Preview {
             (t.menu_select_all_text, CMD_SELECT_ALL, has_text),
             ("", 0, true),
             (t.menu_copy_image, CMD_COPY_IMAGE, true),
+            ("", 0, true),
         ] {
             let item = if tag == 0 {
                 NSMenuItem::separatorItem(self.mtm)
@@ -758,6 +788,8 @@ impl Preview {
             };
             menu.addItem(&item);
         }
+        let path = self.st.borrow().path.clone();
+        super::share::add_items(&menu, self.mtm, move |kind| emit(Action::PreviewUpload(path.clone(), kind)));
         let k = self.panel.window.backingScaleFactor();
         let at = NSPoint::new(p.0 as f64 / k, p.1 as f64 / k);
         // Không giữ borrow: menu chạy vòng lặp riêng.
@@ -868,7 +900,7 @@ impl Preview {
         let up = self.hit(x, y);
         let press = self.st.borrow_mut().press.take();
         if let Some(b) = press.filter(|b| Some(*b) == up) {
-            self.click(b);
+            self.click(b, wp);
         }
     }
 

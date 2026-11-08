@@ -288,6 +288,41 @@ strings! {
     menu_select_all_text: "Chọn tất cả chữ", "Select all text";
     menu_copy_image: "Copy ảnh", "Copy image";
 
+    // ---- Chia sẻ ảnh qua link (SPEC 19) ----
+    share_upload: "Upload", "Upload";
+    share_kind_image: "Link ảnh", "Image link";
+    share_kind_private: "Link riêng tư", "Private link";
+    share_kind_permanent: "Link lâu dài (catbox)", "Permanent link (catbox)";
+    share_menu_expiry: "{} · {}", "{} · {}";
+    share_exp_h1: "1 giờ", "1 hour";
+    share_exp_h12: "12 giờ", "12 hours";
+    share_exp_d1: "1 ngày", "1 day";
+    share_exp_d3: "3 ngày", "3 days";
+    share_uploading: "Đang upload…", "Uploading…";
+    share_busy: "Đang upload ảnh khác, đợi chút nhé", "Another image is uploading, please wait";
+    share_done: "Đã copy link · hết hạn sau {}", "Link copied · expires in {}";
+    share_done_private: "Đã copy link riêng tư · hết hạn sau {}", "Private link copied · expires in {}";
+    share_done_burn: "Đã copy link riêng tư · xoá sau lần xem đầu, hết hạn sau {}",
+        "Private link copied · deleted after first view, expires in {}";
+    share_done_permanent: "Đã copy link catbox", "catbox link copied";
+    share_err_read: "Không đọc được file ảnh", "Couldn't read the image file";
+    share_err_network: "Không upload được. Hãy kiểm tra kết nối mạng", "Couldn't upload. Check your network connection";
+    share_err_too_large: "Ảnh quá lớn với dịch vụ này", "The image is too large for this service";
+    share_err_too_large_private: "Ảnh quá lớn với {}. Hãy dùng Link ảnh hoặc đổi instance PrivateBin trong Cài đặt",
+        "The image is too large for {}. Use an image link or change the PrivateBin instance in Settings";
+    share_err_server: "Dịch vụ upload báo lỗi: {}", "The upload service returned an error: {}";
+    share_err_no_account: "Chưa có userhash catbox. Hãy nhập lại trong Cài đặt > Chia sẻ",
+        "No catbox userhash saved. Enter it again in Settings > Share";
+    share_consent_title: "Chia sẻ ảnh qua link", "Share image via link";
+    share_consent_image: "Ảnh sẽ được gửi lên Litterbox (catbox.moe), một dịch vụ bên ngoài. Ai có link đều xem được cho tới khi hết hạn; app chat có thể giữ bản xem trước lâu hơn.\n\nNếu ảnh có thông tin nhạy cảm, hãy chọn Link riêng tư.",
+        "The image will be sent to Litterbox (catbox.moe), an outside service. Anyone with the link can see it until it expires; chat apps may keep a preview longer.\n\nIf the image has sensitive information, choose Private link.";
+    share_consent_private: "Ảnh sẽ được mã hoá trên máy này rồi gửi lên {}. Server không đọc được ảnh, nhưng ai có link đều xem được cho tới khi hết hạn.",
+        "The image will be encrypted on this computer and sent to {}. The server can't read it, but anyone with the link can see it until it expires.";
+    share_consent_permanent: "Ảnh sẽ được gửi lên tài khoản catbox.moe của bạn và không tự hết hạn. Ai có link đều xem được cho tới khi bạn xoá ảnh trên trang quản lý của catbox.",
+        "The image will be sent to your catbox.moe account and won't expire. Anyone with the link can see it until you delete it on catbox's management page.";
+    share_consent_ok: "Upload", "Upload";
+    share_consent_cancel: "Huỷ", "Cancel";
+
     // ---- Menu tray ----
     tray_section_capture: "Chụp", "Capture";
     tray_select: "Chọn vùng", "Select region";
@@ -309,6 +344,25 @@ strings! {
     page_ocr: "Copy chữ (OCR)", "Copy text (OCR)";
     page_stack_preview: "Stack và Preview", "Stack and Preview";
     page_about: "Giới thiệu", "About";
+    page_share: "Chia sẻ", "Share";
+    st_share_intro: "Nút Upload ở stack và Preview tạo link ảnh rồi copy vào clipboard.",
+        "The Upload button in the stack and Preview creates a link and copies it to the clipboard.";
+    st_share_expiry: "Thời hạn link", "Link expires after";
+    st_share_default: "Kiểu ở đầu menu Upload", "First choice in the Upload menu";
+    st_share_private_card: "Link riêng tư (PrivateBin)", "Private link (PrivateBin)";
+    st_share_burn: "Xoá sau lần xem đầu", "Delete after the first view";
+    st_share_instance: "Instance PrivateBin", "PrivateBin instance";
+    st_share_instance_bad: "Địa chỉ phải bắt đầu bằng https://", "The address must start with https://";
+    st_share_catbox_card: "Link lâu dài (catbox)", "Permanent link (catbox)";
+    st_share_catbox_note: "Dán userhash của tài khoản catbox.moe (trang Manage Account). Userhash được cất trong kho mật khẩu của hệ điều hành.",
+        "Paste the userhash of your catbox.moe account (Manage Account page). It is kept in the operating system's password store.";
+    st_share_userhash: "Userhash", "Userhash";
+    st_share_saved: "Đã lưu", "Saved";
+    st_share_not_saved: "Chưa có", "Not set";
+    st_share_save: "Lưu", "Save";
+    st_share_clear: "Xoá", "Remove";
+    st_share_manage: "Quản lý ảnh trên catbox", "Manage images on catbox";
+    st_share_secret_failed: "Không lưu được userhash: {}", "Couldn't save the userhash: {}";
     st_saved: "Đã lưu", "Saved";
     st_sec_save: "Lưu ảnh", "Saving";
     st_save_dir: "Folder lưu ảnh", "Screenshots folder";

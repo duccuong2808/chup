@@ -16,6 +16,7 @@ use super::{
     app::Action,
     gfx::{self, Canvas, Color, Font, Surface},
     panel::{Cursor, Ev, Handler, Opts, Panel, LEVEL_UI},
+    share,
     util::cursor_pos,
     win::{self, emit, Timer},
 };
@@ -43,6 +44,8 @@ struct State {
     images: HashMap<String, CFRetained<CGImage>>,
     hits: Vec<(Hit, Rect)>,
     leave: Option<Timer>,
+    /// File đang upload (nút Upload của thẻ đó quay vòng bận).
+    uploading: Option<std::path::PathBuf>,
 }
 
 pub struct StackWin {
@@ -85,6 +88,19 @@ impl StackWin {
     pub fn window_rect(&self) -> Option<Rect> {
         let st = self.st.borrow();
         (st.visible && !st.hidden_for_capture).then(|| self.panel.rect())
+    }
+
+    /// File đang upload (`None` = không upload gì).
+    pub fn set_uploading(&self, path: Option<std::path::PathBuf>) {
+        let changed = {
+            let mut st = self.st.borrow_mut();
+            let changed = st.uploading != path;
+            st.uploading = path;
+            changed
+        };
+        if changed {
+            self.relayout();
+        }
     }
 
     pub fn toast(&self, t: Toast) {
@@ -164,6 +180,7 @@ impl StackWin {
                 hovering: st.hovering,
                 hover: st.hover,
                 edge_right: st.edge_right,
+                uploading: st.uploading.as_deref(),
                 k,
             };
             ui_stack::layout(&input, &fonts)
@@ -196,6 +213,7 @@ impl StackWin {
                 hovering: st.hovering,
                 hover: st.hover,
                 edge_right: st.edge_right,
+                uploading: st.uploading.as_deref(),
                 k,
             };
             c.begin(Color::CLEAR);
@@ -310,6 +328,14 @@ impl Handler for StackWin {
                     Hit::Card(i) => {
                         if let Some(id) = self.shot_id(i) {
                             emit(Action::ShotOpen(id));
+                        }
+                    }
+                    Hit::Upload(i) => {
+                        if let Some(id) = self.shot_id(i) {
+                            let k = self.panel.window.backingScaleFactor();
+                            let at = objc2_foundation::NSPoint::new(p.0 as f64 / k, p.1 as f64 / k);
+                            let mtm = MainThreadMarker::new().expect("stack chạy trên main thread");
+                            share::popup(&self.panel.view, at, mtm, move |kind| emit(Action::ShotUpload(id.clone(), kind)));
                         }
                     }
                     Hit::Copy(i) => {

@@ -11,6 +11,7 @@ use chup_core::{
     config::{Edge, StackMonitor},
     model::{Effect, FrameMode, FreezeAction, FreezePhase, Model, OcrJob, OcrSource, Toast, FREEZE_DELAY_MS},
     ocr::pack,
+    share::{ShareError, ShareKind},
 };
 use image::RgbaImage;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -26,6 +27,7 @@ use super::{
     overlay::Overlay,
     preview::Preview,
     settings::{Settings, SettingsView},
+    share,
     stack::StackWin,
     toolbar::Toolbar,
     tray::Tray,
@@ -118,6 +120,16 @@ pub enum Action {
     OcrRemove,
     /// Hộp thoại tải gói đã đóng.
     OcrPack(Outcome),
+    /// Menu Upload của thumbnail (SPEC 19).
+    ShotUpload(String, ShareKind),
+    /// Menu Upload của Preview.
+    PreviewUpload(std::path::PathBuf, ShareKind),
+    /// Kết quả hộp thoại đồng ý lần đầu.
+    ShareConsent(ShareKind, bool),
+    /// Thread upload xong.
+    UploadDone(u32, Result<String, ShareError>),
+    /// Cài đặt: lưu (`Some`) / xoá (`None`) userhash catbox.
+    CatboxUserhash(Option<String>),
 }
 
 /// Id timer hẹn giờ "Chụp đóng băng sau 3 giây" trên cửa sổ chính (mod.rs bắn `FreezeTimerFired`).
@@ -216,6 +228,7 @@ impl App {
         }
         app.apply_hotkeys();
         app.sync_autostart();
+        app.sync_share_menu();
         Ok(app)
     }
 
@@ -457,6 +470,24 @@ impl App {
                 }
             },
             Action::CopyText(text) => vec![Effect::CopyText(text)],
+            Action::ShotUpload(id, kind) => self.model.upload_shot(&id, kind),
+            Action::PreviewUpload(path, kind) => self.model.upload_request(path, kind),
+            Action::ShareConsent(kind, ok) => self.model.share_consent(kind, ok),
+            Action::UploadDone(id, r) => self.model.upload_done(id, r),
+            Action::CatboxUserhash(hash) => {
+                let on = hash.as_deref().is_some_and(|h| !h.trim().is_empty());
+                match share::set_userhash(hash.as_deref().filter(|_| on)) {
+                    Ok(()) => self.model.set_catbox_account(on),
+                    Err(e) => {
+                        log::error!("share: không ghi được userhash: {e}");
+                        let msg = fill(t().st_share_secret_failed, &[&e]);
+                        if let Some(s) = &self.settings {
+                            s.set_status(&msg, true);
+                        }
+                        vec![]
+                    }
+                }
+            }
             Action::OcrDownload => {
                 // Exe phụ còn sống (gói vừa hỏng/xoá dở) giữ thư mục gói: tắt trước để bước rename khi cài không lỗi.
                 self.ocr.stop_helper();
@@ -600,8 +631,10 @@ impl App {
                     }
                     // Đăng ký lại phím tắt: câu báo lỗi (nếu có) sinh theo ngôn ngữ lúc đăng ký. Cũng refresh Cài đặt.
                     self.apply_hotkeys();
+                    self.sync_share_menu();
                 }
                 Effect::ConfigChanged => {
+                    self.sync_share_menu();
                     self.refresh_settings();
                     let p = &self.model.config.preview;
                     self.preview.apply_config(p.always_on_top, p.opacity);
@@ -653,6 +686,22 @@ impl App {
                 Effect::PreviewText(path, text) => self.preview.set_text(&path, text),
                 Effect::CheckUpdate { manual } => updater::check(manual),
                 Effect::AskUpdate(u) => updater::post_ask(u),
+                Effect::AskShareConsent(kind) => share::post_consent(kind, self.model.config.share.privatebin_url.clone()),
+                Effect::StartUpload(job) => share::start(job),
+                Effect::UploadBusyChanged => {
+                    let busy = self.model.upload_busy.as_ref().map(|j| j.path.clone());
+                    self.stack.set_uploading(busy.clone());
+                    self.preview.set_uploading(busy);
+                }
+                Effect::CopyLink { link, message } => {
+                    std::thread::spawn(move || {
+                        let t = match chup_core::clipboard::copy_text(&link) {
+                            Ok(()) => Toast::info(message),
+                            Err(e) => Toast::error(e),
+                        };
+                        emit(Action::Toast(t));
+                    });
+                }
             }
         }
     }
@@ -759,6 +808,11 @@ impl App {
         // Chỉ cập nhật vị trí (giữ danh sách shot cũ) để toast hiện đúng chỗ.
         self.stack.update(self.model.stack.list(), edge_right, mon.work, mon.scale);
         Some(mon)
+    }
+
+    /// Mục menu Upload theo config và ngôn ngữ hiện hành (stack, Preview đọc khi mở menu).
+    fn sync_share_menu(&self) {
+        share::set_menu(self.model.share_kinds().into_iter().map(|k| (k, self.model.share_label(k))).collect());
     }
 
     fn layout_stack(&mut self) {

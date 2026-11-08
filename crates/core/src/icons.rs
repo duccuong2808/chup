@@ -36,6 +36,8 @@ pub enum Icon {
     Text,
     /// Đang chạy (vòng 3/4), thay nút đang bận.
     Busy,
+    /// Chia sẻ qua link (SPEC 19): mũi tên lên khỏi khay.
+    Upload,
 }
 
 impl Icon {
@@ -59,6 +61,7 @@ impl Icon {
             Icon::Pin => vec![Stroke(p("M9 3h6M10 3v6l-3 4h10l-3-4V3M12 13v8"))],
             Icon::Text => vec![Stroke(p("M5 7V5h14v2M12 5v14M9 19h6"))],
             Icon::Busy => vec![Stroke(p("M12 4a8 8 0 1 0 8 8"))],
+            Icon::Upload => vec![Stroke(p("M12 15V4M7 9l5-5 5 5M5 14v5h14v-5"))],
         }
     }
 }
@@ -239,6 +242,7 @@ mod tests {
             Icon::Pin,
             Icon::Text,
             Icon::Busy,
+            Icon::Upload,
         ] {
             assert!(!i.shapes().is_empty());
         }

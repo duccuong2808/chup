@@ -13,6 +13,7 @@ use crate::{
     coords::{self, frame_margin, monitor_at, MonitorInfo, Rect},
     i18n::{fill, t},
     ocr::TextLayout,
+    share::{ShareError, ShareKind, UploadJob},
     stack::{self, Stack},
 };
 
@@ -173,6 +174,14 @@ pub enum Effect {
     CheckUpdate { manual: bool },
     /// Có bản mới: hỏi người dùng (Cập nhật / Để sau) rồi lớp platform tải, kiểm tra và cài.
     AskUpdate(crate::update::Update),
+    /// Lần đầu dùng kiểu chia sẻ này: hỏi người dùng (Upload / Huỷ) rồi gọi `Model::share_consent` (SPEC 19.2).
+    AskShareConsent(ShareKind),
+    /// Giao việc upload cho thread nền (`share::run`), xong thì gọi `Model::upload_done`.
+    StartUpload(UploadJob),
+    /// Đang upload bật/tắt: nút Upload của stack, Preview vẽ lại (spinner).
+    UploadBusyChanged,
+    /// Ghi link vào clipboard rồi toast `message` (lỗi clipboard thì toast lỗi).
+    CopyLink { link: String, message: String },
 }
 
 pub struct Paths {
@@ -220,6 +229,11 @@ pub struct Model {
     update_checking: bool,
     /// Bản mới tìm thấy lúc người dùng đang bận (chọn vùng, Freeze, Preview): hỏi khi rảnh.
     update_pending: Option<crate::update::Update>,
+    /// Job upload đang chạy (mỗi lúc một job).
+    pub upload_busy: Option<UploadJob>,
+    upload_next_id: u32,
+    /// Yêu cầu upload đang chờ người dùng đồng ý (hộp thoại lần đầu).
+    upload_pending: Option<(PathBuf, ShareKind)>,
 }
 
 impl Model {
@@ -249,6 +263,9 @@ impl Model {
             preview_open: None,
             update_checking: false,
             update_pending: None,
+            upload_busy: None,
+            upload_next_id: 0,
+            upload_pending: None,
         }
     }
 
@@ -874,6 +891,152 @@ impl Model {
             }
         }
         fx
+    }
+
+    // ---------- chia sẻ ảnh qua link (SPEC 19) ----------
+
+    /// Các kiểu hiện trong menu Upload: kiểu mặc định đứng đầu; Link lâu dài chỉ khi đã có tài khoản catbox.
+    pub fn share_kinds(&self) -> Vec<ShareKind> {
+        let sc = &self.config.share;
+        let mut v = vec![ShareKind::Image, ShareKind::Private];
+        if sc.catbox_account {
+            v.push(ShareKind::Permanent);
+        }
+        if let Some(i) = v.iter().position(|k| *k == sc.default_kind) {
+            let k = v.remove(i);
+            v.insert(0, k);
+        }
+        v
+    }
+
+    /// Chữ của một mục trong menu Upload ("Link ảnh · 1 ngày").
+    pub fn share_label(&self, kind: ShareKind) -> String {
+        let s = t();
+        let exp = self.config.share.expiry.label();
+        match kind {
+            ShareKind::Image => fill(s.share_menu_expiry, &[&s.share_kind_image, &exp]),
+            ShareKind::Private => fill(s.share_menu_expiry, &[&s.share_kind_private, &exp]),
+            ShareKind::Permanent => s.share_kind_permanent.into(),
+        }
+    }
+
+    fn share_consented(&self, kind: ShareKind) -> bool {
+        let c = &self.config.share.consent;
+        match kind {
+            ShareKind::Image => c.image,
+            ShareKind::Private => c.private,
+            ShareKind::Permanent => c.permanent,
+        }
+    }
+
+    /// Nút Upload của thumbnail: kiểm tra file còn không rồi upload.
+    pub fn upload_shot(&mut self, id: &str, kind: ShareKind) -> Vec<Effect> {
+        let (path, mut fx) = self.ensure_shot_file(id);
+        if let Some(p) = path {
+            fx.extend(self.upload_request(p, kind));
+        }
+        fx
+    }
+
+    /// Người dùng chọn một mục trong menu Upload (stack hoặc Preview).
+    pub fn upload_request(&mut self, path: PathBuf, kind: ShareKind) -> Vec<Effect> {
+        if self.upload_busy.is_some() {
+            return vec![Effect::Toast(Toast::info(t().share_busy))];
+        }
+        if kind == ShareKind::Permanent && !self.config.share.catbox_account {
+            return vec![Effect::Toast(Toast::error(t().share_err_no_account))];
+        }
+        if !self.share_consented(kind) {
+            self.upload_pending = Some((path, kind));
+            return vec![Effect::AskShareConsent(kind)];
+        }
+        self.upload_start(path, kind)
+    }
+
+    /// Kết quả hộp thoại lần đầu. Đồng ý thì nhớ (không hỏi lại kiểu này) và upload ảnh đang chờ.
+    pub fn share_consent(&mut self, kind: ShareKind, ok: bool) -> Vec<Effect> {
+        let pending = self.upload_pending.take().filter(|(_, k)| *k == kind);
+        if !ok {
+            return vec![];
+        }
+        let mut next = self.config.clone();
+        let c = &mut next.share.consent;
+        match kind {
+            ShareKind::Image => c.image = true,
+            ShareKind::Private => c.private = true,
+            ShareKind::Permanent => c.permanent = true,
+        }
+        let mut fx = match self.commit_config(next) {
+            Ok(fx) => fx,
+            Err(e) => vec![Effect::Toast(Toast::error(e))],
+        };
+        if let Some((path, kind)) = pending {
+            fx.extend(self.upload_request(path, kind));
+        }
+        fx
+    }
+
+    fn upload_start(&mut self, path: PathBuf, kind: ShareKind) -> Vec<Effect> {
+        self.upload_next_id = self.upload_next_id.wrapping_add(1);
+        let sc = &self.config.share;
+        let job = UploadJob {
+            id: self.upload_next_id,
+            path,
+            kind,
+            expiry: sc.expiry,
+            burn: sc.burn_after_reading,
+            privatebin_url: sc.privatebin_url.clone(),
+        };
+        self.upload_busy = Some(job.clone());
+        vec![Effect::StartUpload(job), Effect::UploadBusyChanged, Effect::Toast(Toast::info(t().share_uploading))]
+    }
+
+    /// Thread nền báo kết quả. Job không còn chờ (id khác) thì bỏ qua.
+    pub fn upload_done(&mut self, id: u32, result: Result<String, ShareError>) -> Vec<Effect> {
+        let Some(job) = self.upload_busy.take_if(|j| j.id == id) else { return vec![] };
+        let mut fx = vec![Effect::UploadBusyChanged];
+        match result {
+            Ok(link) => {
+                let s = t();
+                let exp = job.expiry.label();
+                let message = match job.kind {
+                    ShareKind::Image => fill(s.share_done, &[&exp]),
+                    ShareKind::Private if job.burn => fill(s.share_done_burn, &[&exp]),
+                    ShareKind::Private => fill(s.share_done_private, &[&exp]),
+                    ShareKind::Permanent => s.share_done_permanent.into(),
+                };
+                fx.push(Effect::CopyLink { link, message });
+            }
+            Err(e) => {
+                if e == ShareError::NoAccount && self.config.share.catbox_account {
+                    // Userhash bị xoá ngoài Chup: ẩn mục Link lâu dài cho tới khi nhập lại.
+                    let mut next = self.config.clone();
+                    next.share.catbox_account = false;
+                    match self.commit_config(next) {
+                        Ok(f) => fx.extend(f),
+                        Err(err) => log::warn!("share: không ghi được config: {err}"),
+                    }
+                }
+                fx.push(Effect::Toast(Toast::error(e.user_message(&job))));
+            }
+        }
+        fx
+    }
+
+    /// Cài đặt lưu / xoá userhash catbox xong (lớp platform ghi kho bí mật trước).
+    pub fn set_catbox_account(&mut self, on: bool) -> Vec<Effect> {
+        if self.config.share.catbox_account == on {
+            return vec![Effect::ConfigChanged];
+        }
+        let mut next = self.config.clone();
+        next.share.catbox_account = on;
+        if !on && next.share.default_kind == ShareKind::Permanent {
+            next.share.default_kind = ShareKind::Image;
+        }
+        match self.commit_config(next) {
+            Ok(fx) => fx,
+            Err(e) => vec![Effect::Toast(Toast::error(e))],
+        }
     }
 
     // ---------- màn hình (SPEC 7) ----------
@@ -1524,6 +1687,82 @@ mod tests {
         m.config.preview.position = config::PreviewPosition::Center;
         assert!(m.preview_resized(r, img, base * 0.5).is_empty());
         assert_eq!(m.config.preview.size_scale, 150);
+    }
+
+    fn started_upload(fx: &[Effect]) -> UploadJob {
+        fx.iter()
+            .find_map(|e| match e {
+                Effect::StartUpload(j) => Some(j.clone()),
+                _ => None,
+            })
+            .expect("phải có StartUpload")
+    }
+
+    #[test]
+    fn upload_asks_consent_once_per_kind() {
+        let mut m = model();
+        let p = PathBuf::from("/pics/a.png");
+        assert_eq!(m.upload_request(p.clone(), ShareKind::Image), vec![Effect::AskShareConsent(ShareKind::Image)]);
+        assert!(m.share_consent(ShareKind::Image, false).is_empty(), "huỷ: không upload, không nhớ");
+        assert!(!m.config.share.consent.image);
+        m.upload_request(p.clone(), ShareKind::Image);
+        let fx = m.share_consent(ShareKind::Image, true);
+        let job = started_upload(&fx);
+        assert_eq!((job.kind, job.path.clone(), job.expiry), (ShareKind::Image, p.clone(), crate::share::Expiry::D1));
+        assert!(fx.contains(&Effect::UploadBusyChanged));
+        assert!(m.config.share.consent.image, "đã nhớ");
+        m.upload_done(job.id, Ok("https://litter.catbox.moe/a.png".into()));
+        // Lần sau không hỏi; kiểu khác vẫn hỏi.
+        started_upload(&m.upload_request(p.clone(), ShareKind::Image));
+        m.upload_busy = None;
+        assert_eq!(m.upload_request(p, ShareKind::Private), vec![Effect::AskShareConsent(ShareKind::Private)]);
+    }
+
+    #[test]
+    fn upload_one_at_a_time_and_results() {
+        let mut m = model();
+        m.config.share.consent = crate::config::ShareConsent { image: true, private: true, permanent: true };
+        m.config.share.burn_after_reading = true;
+        let job = started_upload(&m.upload_request(PathBuf::from("/a.png"), ShareKind::Private));
+        assert!(job.burn);
+        assert_eq!(job.privatebin_url, "https://privatebin.net/");
+        assert_eq!(m.upload_request(PathBuf::from("/b.png"), ShareKind::Image), vec![Effect::Toast(Toast::info(t().share_busy))]);
+        assert!(m.upload_done(job.id + 1, Ok("x".into())).is_empty(), "id lạ: bỏ qua");
+        let fx = m.upload_done(job.id, Ok("https://privatebin.net/?ab#k".into()));
+        assert_eq!(fx[0], Effect::UploadBusyChanged);
+        assert!(matches!(&fx[1], Effect::CopyLink { link, message } if link == "https://privatebin.net/?ab#k" && message.contains("1 ngày")));
+        assert!(m.upload_busy.is_none());
+        let job = started_upload(&m.upload_request(PathBuf::from("/a.png"), ShareKind::Image));
+        let fx = m.upload_done(job.id, Err(ShareError::Network("dns".into())));
+        assert_eq!(fx, vec![Effect::UploadBusyChanged, Effect::Toast(Toast::error(t().share_err_network))]);
+    }
+
+    #[test]
+    fn permanent_needs_catbox_account() {
+        let mut m = model();
+        m.config.share.consent.permanent = true;
+        assert_eq!(m.share_kinds(), vec![ShareKind::Image, ShareKind::Private]);
+        assert!(matches!(&m.upload_request(PathBuf::from("/a.png"), ShareKind::Permanent)[..], [Effect::Toast(t)] if t.kind == ToastKind::Error));
+        m.set_catbox_account(true);
+        m.config.share.default_kind = ShareKind::Permanent;
+        assert_eq!(m.share_kinds(), vec![ShareKind::Permanent, ShareKind::Image, ShareKind::Private]);
+        assert_eq!(m.share_label(ShareKind::Image), "Link ảnh · 1 ngày");
+        // Userhash mất khỏi kho: tắt tài khoản, báo nhập lại.
+        let job = started_upload(&m.upload_request(PathBuf::from("/a.png"), ShareKind::Permanent));
+        let fx = m.upload_done(job.id, Err(ShareError::NoAccount));
+        assert!(!m.config.share.catbox_account);
+        assert_eq!(fx.last(), Some(&Effect::Toast(Toast::error(t().share_err_no_account))));
+    }
+
+    #[test]
+    fn upload_shot_drops_missing_file() {
+        let mut m = model();
+        let shot = shot_at(Path::new("/khong/co/a.png"), 1.0);
+        let id = shot.id.clone();
+        m.stack.push(shot);
+        let fx = m.upload_shot(&id, ShareKind::Image);
+        assert_eq!(fx[0], Effect::StackChanged);
+        assert!(!fx.iter().any(|e| matches!(e, Effect::AskShareConsent(_))));
     }
 
     #[test]

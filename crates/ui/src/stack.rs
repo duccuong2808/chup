@@ -36,6 +36,8 @@ pub const MAX_TOASTS: usize = 3;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Hit {
     Card(usize),
+    /// Chia sẻ qua link (SPEC 19): mở menu chọn kiểu.
+    Upload(usize),
     Copy(usize),
     Folder(usize),
     Remove(usize),
@@ -68,6 +70,8 @@ pub struct StackState<'a> {
     pub hovering: bool,
     pub hover: Option<Hit>,
     pub edge_right: bool,
+    /// File đang upload: nút Upload của thẻ đó luôn hiện, vẽ vòng "bận".
+    pub uploading: Option<&'a std::path::Path>,
     /// Scale màn hình.
     pub k: f32,
 }
@@ -262,19 +266,24 @@ where
                     c.image_cover(b, r, rad);
                 }
                 c.stroke_round(r, rad, 1.0, theme.line);
-                let card_hovered = matches!(hover, Some(Hit::Card(j) | Hit::Copy(j) | Hit::Folder(j) | Hit::Remove(j)) if j == *i);
+                let card_hovered = matches!(hover, Some(Hit::Card(j) | Hit::Upload(j) | Hit::Copy(j) | Hit::Folder(j) | Hit::Remove(j)) if j == *i);
+                let uploading = s.uploading == Some(shot.path.as_path());
                 let b = 24.0 * k;
                 let btns = [
+                    (Hit::Upload(*i), if uploading { Icon::Busy } else { Icon::Upload }),
                     (Hit::Copy(*i), Icon::Copy),
                     (Hit::Folder(*i), Icon::Folder),
                     (Hit::Remove(*i), Icon::Close),
                 ];
+                let n_btn = btns.len();
                 for (n, (hit, icon)) in btns.iter().enumerate() {
-                    let bx = r.right - 4.0 * k - b * (3 - n) as f32 - 2.0 * k * (2 - n) as f32;
+                    let bx = r.right - 4.0 * k - b * (n_btn - n) as f32 - 2.0 * k * (n_btn - 1 - n) as f32;
                     let br = rectf(bx, r.top + 4.0 * k, b, b);
-                    if card_hovered {
+                    let busy = uploading && matches!(hit, Hit::Upload(_));
+                    if card_hovered || busy {
                         let a = if hover == Some(*hit) { 0.85 } else { 0.6 };
-                        c.fill_round(br, 6.0 * k, Color::rgba(0, 0, 0, a));
+                        let bg = if busy { theme.accent.with_alpha(0.9) } else { Color::rgba(0, 0, 0, a) };
+                        c.fill_round(br, 6.0 * k, bg);
                         c.icon(
                             *icon,
                             br.left + 5.0 * k,
@@ -354,7 +363,7 @@ mod tests {
     use image::RgbaImage;
 
     use super::*;
-    use crate::testing::{FakeImage, FixedFont, RecordingCanvas};
+    use crate::testing::{FakeImage, FixedFont, RecordingCanvas, Op};
 
     fn shot(id: &str, w: u32, h: u32) -> Shot {
         Shot {
@@ -391,6 +400,7 @@ mod tests {
             hovering: false,
             hover: None,
             edge_right: true,
+            uploading: None,
             k: 1.0,
         }
     }
@@ -433,16 +443,33 @@ mod tests {
         let order: Vec<Hit> = hits.iter().map(|(h, _)| *h).collect();
         assert_eq!(
             order,
-            vec![Hit::Copy(0), Hit::Folder(0), Hit::Remove(0), Hit::Card(0)]
+            vec![Hit::Upload(0), Hit::Copy(0), Hit::Folder(0), Hit::Remove(0), Hit::Card(0)]
         );
         // Nút Xoá sát góc trên-phải thẻ.
-        let remove = hits[2].1;
+        let remove = hits[3].1;
         assert_eq!((remove.right(), remove.y), (12 + 160 - 4, 6 + 4));
         assert_eq!(
             hit_at(&hits, remove.x + 1, remove.y + 1),
             Some(Hit::Remove(0))
         );
         assert_eq!(hit_at(&hits, 20, 60), Some(Hit::Card(0)));
+    }
+
+    #[test]
+    fn upload_button_stays_visible_while_uploading() {
+        let shots = [shot("a", 160, 90)];
+        let mut s = state(&shots, &[]);
+        let l = layout(&s, &fonts()).unwrap();
+        let img = FakeImage(160, 90);
+        let c = RecordingCanvas::default();
+        paint(&c, &Theme::new(false), &fonts(), &s, &l, |_| Some(&img));
+        assert!(!c.ops().iter().any(|o| matches!(o, Op::Icon(..))), "không hover: không vẽ nút");
+        let p = shots[0].path.clone();
+        s.uploading = Some(&p);
+        let c = RecordingCanvas::default();
+        paint(&c, &Theme::new(false), &fonts(), &s, &l, |_| Some(&img));
+        let icons: Vec<Icon> = c.ops().iter().filter_map(|o| match o { Op::Icon(i, ..) => Some(*i), _ => None }).collect();
+        assert_eq!(icons, vec![Icon::Busy], "chỉ nút Upload, vẽ vòng bận");
     }
 
     #[test]

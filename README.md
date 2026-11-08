@@ -1,8 +1,8 @@
 # Chup
 
 Chụp màn hình theo vùng cho Windows và macOS. Ảnh vừa chụp nằm thành stack ở cạnh màn hình và kéo thả thẳng được sang app
-khác. Có chụp đóng băng (menu, tooltip), Preview, OCR / chọn chữ trên ảnh, tự động chọn vùng; giao diện tiếng Việt và
-tiếng Anh. Đặc tả đầy đủ ở [SPEC.md](SPEC.md).
+khác. Có chụp đóng băng (menu, tooltip), Preview, OCR / chọn chữ trên ảnh, tự động chọn vùng, chia sẻ ảnh qua link (có kiểu
+mã hoá đầu cuối); giao diện tiếng Việt và tiếng Anh. Đặc tả đầy đủ ở [SPEC.md](SPEC.md).
 
 - **Trạng thái**: Phase 1 và Phase 2 (Freeze, Preview, OCR, Live Text, tự chọn vùng) xong, đã dùng trên Windows 11 x64
   thật. **macOS 26+** (Phase 3.1): đủ tính năng, đã chạy tự kiểm tra trên máy dev; chưa test tay đầy đủ (mục
@@ -34,6 +34,7 @@ Chup chạy nền ở khay hệ thống, không mở cửa sổ nào khi khởi 
 | Preview | Kéo để di chuyển, kéo mép để đổi cỡ, lăn chuột phóng to ảnh trong khung (kéo để xem chỗ khác, `Alt` + kéo di chuyển cửa sổ), `Ctrl` + lăn chuột đổi opacity, nút ghim để luôn nằm trên. `Esc` đóng |
 | Copy chữ trong ảnh (OCR) | Nút **[T]** trên Preview / toolbar, nút **Chữ** khi Freeze, hoặc hotkey "Chụp text" (gán trong Cài đặt) |
 | Chọn chữ trên ảnh | Trong Preview kéo trên chữ để bôi đen, bấm đúp chọn từ, 3 lần chọn dòng, `Ctrl+C` hoặc chuột phải để copy. `Alt`+kéo luôn di chuyển cửa sổ |
+| Chia sẻ qua link | Nút **Upload** (mũi tên lên) khi hover thumbnail hoặc trên Preview, chọn kiểu; link tự vào clipboard. **Link ảnh**: Litterbox, chat hiện ảnh ngay. **Link riêng tư**: mã hoá trên máy rồi gửi lên PrivateBin, server không đọc được ảnh. Cả hai tự hết hạn (1 giờ – 3 ngày, Cài đặt > Chia sẻ). **Link lâu dài**: catbox bằng userhash tài khoản của bạn (cất trong Credential Manager / Keychain) |
 
 Ngôn ngữ giao diện mặc định theo Windows, đổi ở Cài đặt > Chung.
 

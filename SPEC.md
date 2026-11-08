@@ -949,9 +949,9 @@ Thiết kế: `docs/plans/2026-11-08-share-design.md` (epic beads `chup-share`).
 - Link lâu dài: ô userhash catbox (dạng mật khẩu; Lưu / Xoá; không hiện lại giá trị đã lưu), nút "Quản lý ảnh trên
   catbox". Userhash lưu trong Credential Manager (Windows) / Keychain (macOS), không nằm trong config.
 
-Config v5: `"share": { "expiry": "1day", "defaultKind": "image", "burnAfterReading": false,
-"privatebinUrl": "https://privatebin.net", "catboxAccount": false,
-"consent": { "image": false, "private": false, "permanent": false } }`.
+Config (field mới, không tăng version): `"share": { "expiry": "1d", "defaultKind": "image", "burnAfterReading": false,
+"privatebinUrl": "https://privatebin.net/", "catboxAccount": false,
+"consent": { "image": false, "private": false, "permanent": false } }`. `expiry`: `1h` / `12h` / `1d` / `3d`.
 
 ### 19.4 Spike (xong 2026-11-08, `docs/plans/2026-11-08-share-spike.md`)
 

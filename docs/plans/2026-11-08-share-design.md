@@ -106,12 +106,12 @@ Crate mới (đã compile trong spike): `aes-gcm =0.11.1`, `aes =0.9.4`, `pbkdf2
   `Effect::StartUpload(UploadJob { id, path, kind, expiry, burn, privatebin_url })`.
 - `Action::ShareConsent(kind, bool)`: lưu config, đồng ý thì chạy tiếp như `Upload`.
 - `Action::UploadDone(id, Result<String, ShareError>)`: id cũ thì bỏ; Ok → `Effect::CopyText(link)` + toast; Err → toast.
-- Config v5: `"share": { "expiry": "1day", "defaultKind": "image", "burnAfterReading": false,
+- Config (field mới có serde default, **không tăng version**, như `preview`, `ocr`): `"share": { "expiry": "1d", "defaultKind": "image", "burnAfterReading": false,
   "privatebinUrl": "https://privatebin.net", "catboxAccount": false,
   "consent": { "image": false, "private": false, "permanent": false } }`. `catboxAccount` chỉ cho biết đã lưu
   userhash (để hiện mục menu); bản thân userhash không vào `Model` hay config: worker đọc từ kho bí mật lúc upload.
-  Kho không có (bị xoá ngoài Chup) → `ShareError::NoAccount`, toast mời nhập lại, đặt `catboxAccount = false`. Config v4 lên v5 lấy
-  mặc định.
+  Kho không có (bị xoá ngoài Chup) → `ShareError::NoAccount`, toast mời nhập lại, đặt `catboxAccount = false`. Config cũ thiếu
+  `share` thì lấy mặc định; địa chỉ instance hỏng trong file thì về mặc định.
 
 ## 3. UI: `crates/ui`
 
@@ -156,7 +156,7 @@ Kết quả: `docs/plans/2026-11-08-share-spike.md`.
   `tools/share-spike/vector-privatebin-v2.json` (chép vào fixture của core); `status 0/1`; 413; base58; link `#-` khi burn;
   WebP lossless giải mã lại đúng từng pixel.
 - `catbox`: body có `userhash`, đúng endpoint; `parse` như litterbox.
-- `Model`: hỏi đồng ý lần đầu; bận; `UploadDone` Ok/Err; id cũ bị bỏ; migrate config v4 → v5; không có
+- `Model`: hỏi đồng ý lần đầu; bận; `UploadDone` Ok/Err; id cũ bị bỏ; config cũ thiếu `share`; không có
   `catboxAccount` thì `Upload{Permanent}` bị từ chối; `NoAccount` tắt `catboxAccount`.
 - `ui`: nút Upload trong stack và Preview, hit-test.
 - Test mạng `#[ignore]` (`cargo test -- --ignored share_live`) gọi thật cả hai provider.
